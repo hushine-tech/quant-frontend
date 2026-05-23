@@ -1,0 +1,1874 @@
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { formatUTCWithLocal } from "@/utils/time";
+import {
+  getAccount,
+  getAccountWallet,
+  runStrategy,
+  getStrategyStatus,
+  getDownloadAndRunJob,
+  listStrategies,
+  listAccountStrategies,
+  mountStrategy,
+  unmountStrategy,
+  activateStrategy,
+  deactivateStrategy,
+  listSessions,
+  previewBacktestCoverage,
+  previewRunStrategy,
+  finishSession,
+  stopSession,
+  startDownloadAndRunBacktest,
+  loadDebugDataset,
+  queryMarketDataKlines,
+  runtimeRoleForSessionMode,
+  type Account,
+  type WalletSnapshot,
+  type Strategy,
+  type AccountStrategy,
+  type Session,
+  type BacktestCoveragePreview,
+  type DownloadRunJob,
+  type MarketDataKlines,
+  type StreamKey,
+  type PreviewRunStrategy,
+  type Runtime,
+  type DebugDatasetState,
+} from "@/api/client";
+import StopSessionDialog from "@/components/StopSessionDialog";
+import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
+import RuntimeSelector from "@/components/RuntimeSelector";
+
+function envBannerClass(mode: number): string {
+  switch (mode) {
+    case 0:
+      return "env-banner env-banner--backtest";
+    case 2:
+      return "env-banner env-banner--testnet";
+    case 1:
+      return "env-banner env-banner--live";
+    default:
+      return "env-banner env-banner--other";
+  }
+}
+
+function envLabel(mode: number): string {
+  switch (mode) {
+    case 0:
+      return "Backtest";
+    case 2:
+      return "Testnet";
+    case 1:
+      return "Live";
+    default:
+      return `Other mode (${mode})`;
+  }
+}
+
+function sessionStartedAtMs(session: Session): number {
+  return Date.parse(session.started_at || session.completed_at || "") || 0;
+}
+
+function canResumeSession(session: Session, allSessions: Session[]): boolean {
+  if (session.status !== "stopped" && session.status !== "recoverable") return false;
+  const baseStartedAt = sessionStartedAtMs(session)
+  return !allSessions.some((other) => (
+    other.session_id !== session.session_id
+    && other.account_id === session.account_id
+    && other.strategy_id === session.strategy_id
+    && other.mode === session.mode
+    && other.interval === session.interval
+    && (other.start_time_ms ?? 0) === (session.start_time_ms ?? 0)
+    && (other.end_time_ms ?? 0) === (session.end_time_ms ?? 0)
+    && sessionStartedAtMs(other) > baseStartedAt
+  ));
+}
+
+async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string): Promise<{ session_id: string }> {
+  const entries = await listAccountStrategies(accountId);
+  const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
+  const targetStrategyId = session.strategy_id;
+  if (!targetStrategyId || targetStrategyId <= 0) {
+    throw new Error("Cannot resume session: original strategy is missing");
+  }
+  const targetEntry = entries.find((entry) => entry.strategy.strategy_id === targetStrategyId) ?? null;
+  const changedActive = currentActiveId !== targetStrategyId;
+  let mountedForResume = false;
+
+  try {
+    if (!targetEntry) {
+      await mountStrategy(accountId, targetStrategyId);
+      mountedForResume = true;
+    }
+    if (changedActive || !targetEntry?.active) {
+      await activateStrategy(accountId, targetStrategyId);
+    }
+    return await runStrategy(accountId, {
+      strategy_path: "",
+      interval: session.interval || "1m",
+      start_time_ms: session.start_time_ms,
+      end_time_ms: session.end_time_ms,
+      runtime_id: runtimeId,
+    });
+  } catch (err) {
+    if (changedActive) {
+      try {
+        if (currentActiveId !== null) {
+          await activateStrategy(accountId, currentActiveId);
+        } else {
+          await deactivateStrategy(accountId, targetStrategyId);
+        }
+        if (mountedForResume) {
+          await unmountStrategy(accountId, targetStrategyId);
+        }
+      } catch {
+        // Best-effort rollback only; preserve the original error.
+      }
+    } else if (mountedForResume) {
+      try {
+        await unmountStrategy(accountId, targetStrategyId);
+      } catch {
+        // Best-effort rollback only; preserve the original error.
+      }
+    }
+    throw err;
+  }
+}
+
+export default function AccountDetail() {
+  const { id } = useParams<{ id: string }>();
+  const [acc, setAcc] = useState<Account | null>(null);
+  const [wallet, setWallet] = useState<WalletSnapshot | null>(null);
+  const [sessionRefreshTick, setSessionRefreshTick] = useState(0);
+  const [err, setErr] = useState<string | null>(null);
+  const [wErr, setWErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [wLoading, setWLoading] = useState(true);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const a = await getAccount(id);
+        if (!cancelled) setAcc(a);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : "Load failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      setWLoading(true);
+      setWErr(null);
+      try {
+        const w = await getAccountWallet(id);
+        if (!cancelled) setWallet(w);
+      } catch (e) {
+        if (!cancelled) setWErr(e instanceof Error ? e.message : "Wallet load failed");
+      } finally {
+        if (!cancelled) setWLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const mode = acc?.mode ?? wallet?.mode ?? 0;
+  function bumpSessionRefreshTick() {
+    setSessionRefreshTick((v) => v + 1);
+  }
+
+  return (
+    <div>
+      <p className="muted" style={{ marginBottom: "0.75rem" }}>
+        <Link to="/accounts">← Back to list</Link>
+      </p>
+      {loading ? <p className="muted">Loading…</p> : null}
+      {err ? <p className="error">{err}</p> : null}
+      {!loading && acc ? (
+        <>
+        <div className={envBannerClass(mode)} role="status">
+          {envLabel(mode)}
+        </div>
+        <div className="detail-layout">
+          {/* ════════ Left column: Account + Wallet ════════ */}
+          <div className="detail-layout__left">
+            <h2 className="section-title">Meta</h2>
+            <div className="card">
+              <p><strong style={{ fontSize: "1.1rem" }}>{acc.name}</strong></p>
+              <p className="muted">ID: {acc.account_id} · Mode: {acc.mode} · Created: {formatUTCWithLocal(acc.created_at)}</p>
+            </div>
+
+            <h2 className="section-title">Portfolio</h2>
+            {wLoading ? <p className="muted">Loading wallet…</p> : null}
+            {wErr ? <p className="error">{wErr}</p> : null}
+            {!wLoading && wallet ? (
+              <>
+                {/*
+                  canonical-wallet-display-boundary: left panel shows the
+                  canonical runtime balances (authoritative trading values);
+                  right panel shows provider-aligned USD display values —
+                  those match the exchange's wallet page but are NOT the
+                  numbers the strategy/risk engine uses. The card header
+                  wording makes that distinction explicit.
+                */}
+                {(() => {
+                  // Prefer the namespaced `display.*` surface, fall back to
+                  // the deprecated flat fields for pre-cutover backends.
+                  const display = wallet.display ?? {
+                    total_value: wallet.total_value,
+                    spot_estimated_value: wallet.spot_estimated_value,
+                    futures_position_equity: wallet.futures_position_equity,
+                    metrics_authoritative: wallet.metrics_authoritative,
+                    futures_display_usd: wallet.futures_display_usd ?? null,
+                  };
+                  return (
+                <div className="card">
+                  <div className="portfolio-grid">
+                    <div className="portfolio-panel">
+                      <div className="portfolio-panel__title">
+                        Canonical runtime (USDT)
+                      </div>
+                      <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
+                        Authoritative balances used by strategy execution, risk checks and reconciliation.
+                      </p>
+                      <div>
+                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                          Total Value (USDT)
+                        </div>
+                        <div style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}>
+                          {display.total_value.toFixed(4)}
+                        </div>
+                      </div>
+                      <div className="portfolio-metric">
+                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                          Spot (est.)
+                        </div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                          {display.spot_estimated_value.toFixed(4)}
+                        </div>
+                      </div>
+                      <div className="portfolio-metric">
+                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                          Futures Margin Balance (USDT)
+                        </div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                          {wallet.margin_balance.toFixed(4)}
+                        </div>
+                      </div>
+                      <div className="portfolio-metric">
+                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                          Unrealized PnL (USDT)
+                        </div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                          {wallet.futures?.total_unrealized_pnl.toFixed(4) ?? "0.0000"}
+                        </div>
+                      </div>
+                      <div className="portfolio-metric">
+                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                          Wallet Balance (USDT)
+                        </div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                          {wallet.futures?.wallet_balance.toFixed(4) ?? wallet.wallet_balance.toFixed(4)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {display.futures_display_usd ? (
+                      <div className="portfolio-panel portfolio-panel--secondary">
+                        <div className="portfolio-panel__title">
+                          Exchange-aligned display (USD)
+                        </div>
+                        <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
+                          Matches the exchange wallet page. Display-only — not used for risk or order sizing.
+                        </p>
+                        <div>
+                          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                            Futures Margin Balance (USD)
+                          </div>
+                          <div style={{ fontSize: "1.2rem", fontWeight: 700, lineHeight: 1.2 }}>
+                            {display.futures_display_usd.margin_balance.toFixed(4)}
+                          </div>
+                        </div>
+                        <div className="portfolio-metric">
+                          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                            Unrealized PnL (USD)
+                          </div>
+                          <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                            {display.futures_display_usd.unrealized_pnl.toFixed(4)}
+                          </div>
+                        </div>
+                        <div className="portfolio-metric">
+                          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                            Wallet Balance (USD)
+                          </div>
+                          <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                            {display.futures_display_usd.wallet_balance.toFixed(4)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  {display.metrics_authoritative === false ? (
+                    <p className="error" role="status">
+                      Display estimates may not reconcile to canonical total value; expand sections for raw balances.
+                    </p>
+                  ) : null}
+                  <p className="muted">Updated: {formatUTCWithLocal(wallet.updated_at)}</p>
+                </div>
+                  );
+                })()}
+
+                <details className="wallet-details">
+                  <summary>
+                    Spot details<span className="muted"> — click to expand</span>
+                  </summary>
+                  <div className="wallet-details__body">
+                    {wallet.spot ? (
+                      <>
+                        <ul className="wallet-stats">
+                          <li className="wallet-stats__item">
+                            <span className="wallet-stats__label">Free (USDT)</span>
+                            <span className="wallet-stats__value">
+                              {wallet.spot.free.toFixed(2)}
+                            </span>
+                          </li>
+                          <li className="wallet-stats__item">
+                            <span className="wallet-stats__label">Locked (USDT)</span>
+                            <span className="wallet-stats__value">
+                              {wallet.spot.locked.toFixed(2)}
+                            </span>
+                          </li>
+                        </ul>
+                        {(wallet.spot.assets ?? []).length === 0 ? (
+                          <p className="muted">No spot assets.</p>
+                        ) : (
+                          <table className="compact">
+                            <thead>
+                              <tr>
+                                <th>Symbol</th><th>Qty</th><th>Locked</th><th>Avg entry</th><th>Mark</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(wallet.spot.assets ?? []).map((a) => (
+                                <tr key={a.symbol}>
+                                  <td>{a.symbol}</td>
+                                  <td>{a.qty}</td>
+                                  <td>{a.locked}</td>
+                                  <td>{a.avg_entry_price}</td>
+                                  <td>{a.price ?? "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </>
+                    ) : <p className="muted">No spot wallet on snapshot.</p>}
+                  </div>
+                </details>
+
+                <details className="wallet-details">
+                  <summary>
+                    Futures details<span className="muted"> — click to expand</span>
+                  </summary>
+                  <div className="wallet-details__body">
+                    {wallet.futures ? (
+                      <>
+                        <ul className="wallet-stats">
+                          {wallet.futures.margin_mode ? (
+                            <li className="wallet-stats__item">
+                              <span className="wallet-stats__label">Margin mode</span>
+                              <span className="wallet-stats__value wallet-stats__value--muted">
+                                {wallet.futures.margin_mode}
+                              </span>
+                            </li>
+                          ) : null}
+                          {wallet.futures.position_mode ? (
+                            <li className="wallet-stats__item">
+                              <span className="wallet-stats__label">Position mode</span>
+                              <span className="wallet-stats__value wallet-stats__value--muted">
+                                {wallet.futures.position_mode.replace(/_/g, " ")}
+                              </span>
+                            </li>
+                          ) : null}
+                          <li className="wallet-stats__item">
+                            <span className="wallet-stats__label">Wallet balance</span>
+                            <span className="wallet-stats__value">
+                              {wallet.futures.wallet_balance.toFixed(2)}
+                            </span>
+                          </li>
+                          <li className="wallet-stats__item">
+                            <span className="wallet-stats__label">Margin balance</span>
+                            <span className="wallet-stats__value">
+                              {wallet.futures.margin_balance.toFixed(2)}
+                            </span>
+                          </li>
+                          <li className="wallet-stats__item">
+                            <span className="wallet-stats__label">Available</span>
+                            <span className="wallet-stats__value">
+                              {wallet.futures.available_balance.toFixed(2)}
+                            </span>
+                          </li>
+                          <li className="wallet-stats__item">
+                            <span className="wallet-stats__label">Unrealized PnL</span>
+                            <span className="wallet-stats__value">
+                              {wallet.futures.total_unrealized_pnl.toFixed(2)}
+                            </span>
+                          </li>
+                        </ul>
+                        {(wallet.futures.positions ?? []).length === 0 ? (
+                          <p className="muted">No open positions.</p>
+                        ) : (
+                          <table className="compact">
+                            <thead>
+                              <tr>
+                                <th>Symbol</th><th>Qty</th><th>Lev.</th><th>Entry</th><th>Mark</th>
+                                <th>uPnL</th><th>Side</th><th>Row est.</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(wallet.futures.positions ?? []).map((p, idx) => (
+                                <tr key={`${idx}-${p.symbol}-${p.position_side || "both"}`}>
+                                  <td>{p.symbol}</td>
+                                  <td>{p.qty}</td>
+                                  <td>{p.leverage ? `${p.leverage}x` : "—"}</td>
+                                  <td>{p.entry_price.toFixed(2)}</td>
+                                  <td>{p.mark_price.toFixed(2)}</td>
+                                  <td>{p.unrealized_pnl.toFixed(2)}</td>
+                                  <td>{p.position_side || "—"}</td>
+                                  <td>{p.display_equity != null ? p.display_equity.toFixed(2) : "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </>
+                    ) : <p className="muted">No futures wallet on snapshot.</p>}
+                  </div>
+                </details>
+              </>
+            ) : null}
+          </div>
+
+          {/* ════════ Middle column: Strategy ════════ */}
+          <div className="detail-layout__mid">
+            <StrategyPanel accountId={acc.account_id} mode={mode} onSessionsChanged={bumpSessionRefreshTick} />
+          </div>
+
+          {/* ════════ Right column: Sessions ════════ */}
+          <div className="detail-layout__right">
+            <SessionPanel accountId={acc.account_id} refreshTick={sessionRefreshTick} />
+          </div>
+        </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Strategy execution panel ─────────────────────────────────────────────────
+
+type SessionRecord = {
+  sessionId: string;
+  statusLabel: string;
+  barsProcessed: number;
+  error: string;
+};
+
+function badgeClass(status: string): string {
+  switch (status) {
+    case "running": return "status-badge status-badge--running";
+    case "stopping": return "status-badge status-badge--stopping";
+    case "completed":
+    case "finished": return "status-badge status-badge--completed";
+    case "failed": return "status-badge status-badge--failed";
+    case "recoverable": return "status-badge status-badge--recoverable";
+    case "stop_failed": return "status-badge status-badge--stop-failed";
+    case "stopped": return "status-badge status-badge--stopped";
+    default: return "status-badge status-badge--idle";
+  }
+}
+
+function parseDateTimeLocalMs(value: string): number | undefined {
+  if (!value) return undefined;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function sessionKindBadge(session: Session): React.ReactNode {
+  if (!session.session_type) return null;
+  return (
+    <span className="status-badge status-badge--idle" style={{ marginLeft: "0.5rem" }}>
+      {session.session_type}
+    </span>
+  );
+}
+
+// Live-start readiness hint for mode=2 accounts.
+//
+// Asks strategy-service's PreviewRunStrategy — the same evaluator the real
+// start uses — so the hint is byte-for-byte consistent with what the user
+// will see when they click "Start Testnet Session". This replaced an earlier
+// heuristic that looked at every market-data request on the user's account
+// (including streams unrelated to the current strategy), which could show
+// green on the wrong symbol/interval/account.
+function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; runtimeId: string }) {
+  const [preview, setPreview] = useState<PreviewRunStrategy | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!runtimeId) {
+        setPreview(null);
+        setErr(null);
+        return;
+      }
+      try {
+        // No start/end — live/testnet profile ignores them. Backend picks the
+        // declared strategy source from the active-strategy record.
+        const p = await previewRunStrategy(accountId, { runtime_id: runtimeId });
+        if (!cancelled) {
+          setPreview(p);
+          setErr(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setPreview(null);
+          setErr(e instanceof Error ? e.message : "Preflight failed");
+        }
+      }
+    }
+    load();
+    const id = window.setInterval(load, 15_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [accountId, runtimeId]);
+
+  if (err) {
+    return (
+      <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
+        <p style={{ margin: 0, fontSize: "0.9rem" }}>
+          <strong>Live start blocked:</strong>{" "}
+          <span className="muted">{err}</span>
+        </p>
+      </div>
+    );
+  }
+  if (!preview) return null;
+
+  // Unsupported profile (e.g. mode=1 live not yet wired) — surface the same
+  // profile-level failure backend would report on click.
+  if (!preview.supported) {
+    return (
+      <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #ef4444" }}>
+        <p style={{ margin: 0, fontSize: "0.9rem" }}>
+          <strong>Runtime profile unsupported:</strong>{" "}
+          profile <code>{preview.profile || "unknown"}</code> is not wired up for this account mode.
+          {preview.failures.length > 0 ? ` ${preview.failures[0].reason}` : ""}
+        </p>
+      </div>
+    );
+  }
+
+  if (preview.ok) {
+    return (
+      <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #16a34a" }}>
+        <p style={{ margin: 0, fontSize: "0.9rem" }}>
+          <strong>Streams ready:</strong>{" "}
+          {preview.required_streams.length} declared input(s) resolved and running.{" "}
+          <Link to="/market-data">Details</Link>
+        </p>
+      </div>
+    );
+  }
+
+  // Not-ok — enumerate failures per declared input.
+  return (
+    <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
+      <p style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>
+        <strong>Live start may be blocked:</strong>{" "}
+        {preview.failures.length} declared input(s) not ready.
+      </p>
+      <ul style={{ margin: 0, paddingLeft: "1.25rem", fontSize: "0.85rem" }}>
+        {preview.failures.map((f, i) => (
+          <li key={`${f.kind}-${i}`} className="muted">
+            {f.input_key ? (
+              <>
+                <code>{f.input_key.symbol} {f.input_key.market} {f.input_key.interval}</code>
+                {" — "}
+              </>
+            ) : null}
+            <span style={{ opacity: 0.75 }}>[{f.kind}]</span>{" "}
+            {f.reason}
+          </li>
+        ))}
+      </ul>
+      <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem" }}>
+        <Link to="/market-data">Manage streams →</Link>
+      </p>
+    </div>
+  );
+}
+
+function BacktestCoverageGate({
+  preview,
+  loading,
+  error,
+  job,
+  startTimeMs,
+  endTimeMs,
+  runtimeSelected,
+  busy,
+  onRefresh,
+  onDownloadAndRun,
+}: {
+  preview: BacktestCoveragePreview | null;
+  loading: boolean;
+  error: string | null;
+  job: DownloadRunJob | null;
+  startTimeMs?: number;
+  endTimeMs?: number;
+  runtimeSelected: boolean;
+  busy: boolean;
+  onRefresh: () => void;
+  onDownloadAndRun: () => void;
+}) {
+  const [sampleKey, setSampleKey] = useState("");
+  const [sampleData, setSampleData] = useState<MarketDataKlines | null>(null);
+  const [sampleLoading, setSampleLoading] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+
+  async function loadSampleData(key: StreamKey) {
+    if (!startTimeMs || !endTimeMs) return;
+    const id = `${key.exchange}-${key.market}-${key.symbol}-${key.interval}`;
+    setSampleKey(id);
+    setSampleLoading(true);
+    setSampleError(null);
+    try {
+      const rows = await queryMarketDataKlines({
+        exchange: key.exchange,
+        market: key.market,
+        kind: key.kind || "kline",
+        symbol: key.symbol,
+        interval: key.interval,
+        start_time_ms: startTimeMs,
+        end_time_ms: endTimeMs,
+        limit: 20,
+      });
+      setSampleData(rows);
+    } catch (err) {
+      setSampleData(null);
+      setSampleError(err instanceof Error ? err.message : "Sample Kline query failed");
+    } finally {
+      setSampleLoading(false);
+    }
+  }
+
+  if (!runtimeSelected) {
+    return (
+      <div className="card" style={{ marginTop: "0.75rem", marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
+        <p className="muted" style={{ margin: 0, fontSize: "0.9rem" }}>
+          Select a runtime to check historical coverage.
+        </p>
+      </div>
+    );
+  }
+
+  const blocked = !preview?.complete;
+  const canDownloadAndRun = Boolean(preview && !preview.complete && preview.can_auto_download && !busy);
+
+  return (
+    <div className="card" style={{ marginTop: "0.75rem", marginBottom: "0.75rem", borderLeft: blocked ? "4px solid #eab308" : "4px solid #16a34a" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <p style={{ margin: 0, fontWeight: 600 }}>Historical coverage</p>
+        <button type="button" onClick={onRefresh} disabled={loading || busy}>
+          {loading ? "Checking…" : "Check Coverage"}
+        </button>
+      </div>
+
+      {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}
+      {loading && !preview ? <p className="muted" style={{ marginTop: "0.5rem" }}>Checking historical data…</p> : null}
+
+      {preview ? (
+        <>
+          <p style={{ marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+            {preview.complete ? (
+              <span className="status-badge status-badge--completed">complete</span>
+            ) : (
+              <span className="status-badge status-badge--running">missing data</span>
+            )}
+            <span className="muted" style={{ marginLeft: "0.5rem" }}>
+              {preview.inputs.length} declared input(s)
+            </span>
+          </p>
+
+          <div className="table-scroll">
+            <table className="compact" style={{ width: "100%", minWidth: "620px" }}>
+              <thead>
+                <tr>
+                  <th>Input</th>
+                  <th>Bars</th>
+                  <th>Missing</th>
+                  <th>Data</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.inputs.map((input) => {
+                  const id = `${input.key.exchange}-${input.key.market}-${input.key.symbol}-${input.key.interval}`;
+                  return (
+                    <tr key={id}>
+                      <td>
+                        <code>{input.key.symbol}</code>{" "}
+                        <span className="muted">{input.key.market} {input.key.interval}</span>
+                      </td>
+                      <td>{input.covered_count}/{input.expected_count}</td>
+                      <td>
+                        {input.complete ? (
+                          <span className="status-badge status-badge--completed">ok</span>
+                        ) : input.non_downloadable_reason ? (
+                          <span className="error">{input.non_downloadable_reason}</span>
+                        ) : (
+                          input.missing_segments.slice(0, 3).map((gap) => (
+                            <div key={`${gap.start_at}-${gap.end_at}`} className="muted" style={{ fontSize: "0.8rem" }}>
+                              {formatUTCWithLocal(gap.start_at)} → {formatUTCWithLocal(gap.end_at)}
+                            </div>
+                          ))
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => { void loadSampleData(input.key); }}
+                          disabled={sampleLoading || !startTimeMs || !endTimeMs}
+                        >
+                          {sampleLoading && sampleKey === id ? "Loading…" : "View sample data"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {sampleError ? <p className="error" style={{ marginTop: "0.5rem" }}>{sampleError}</p> : null}
+          {sampleData ? <BacktestSampleKlines result={sampleData} /> : null}
+
+          {!preview.complete ? (
+            <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+              <button type="button" className="primary" onClick={onDownloadAndRun} disabled={!canDownloadAndRun}>
+                Download data and run backtest
+              </button>
+              <span className="muted" style={{ fontSize: "0.85rem" }}>
+                Direct run is disabled until the full range is available.
+              </span>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {job ? (
+        <p className="muted" style={{ marginTop: "0.75rem" }}>
+          download job: {job.status} · {Math.round((job.progress || 0) * 100)}%
+          {job.error ? ` · ${job.error}` : ""}
+        </p>
+      ) : null}
+
+      <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem" }}>
+        <Link to="/market-data">Open Market Data</Link>
+      </p>
+    </div>
+  );
+}
+
+function BacktestSampleKlines({ result }: { result: MarketDataKlines }) {
+  return (
+    <div style={{ marginTop: "0.75rem" }}>
+      <p style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Sample Klines</p>
+      {result.rows.length === 0 ? (
+        <p className="muted">No raw Kline rows in this range.</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="compact" style={{ width: "100%", minWidth: "720px" }}>
+            <thead>
+              <tr>
+                <th>Open Time</th>
+                <th>Open</th>
+                <th>High</th>
+                <th>Low</th>
+                <th>Close</th>
+                <th>Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.rows.map((row) => (
+                <tr key={`${row.open_time}-${row.close_time}`}>
+                  <td>{formatUTCWithLocal(row.open_time)}</td>
+                  <td>{row.open}</td>
+                  <td>{row.high}</td>
+                  <td>{row.low}</td>
+                  <td>{row.close}</td>
+                  <td>{row.volume}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StrategyPanel({
+  accountId,
+  mode,
+  onSessionsChanged,
+}: {
+  accountId: number;
+  mode: number;
+  onSessionsChanged: () => void;
+}) {
+  // Interval is no longer user-selectable: the strategy's declared INPUTS
+  // are the authoritative universe, so a UI-level interval override would
+  // only appear in session metadata without affecting the actual run.
+  // Keep a fixed fallback for the RunStrategy proto's still-present
+  // ``interval`` field (used as session metadata only).
+  const sessionMetadataInterval = "1m";
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [stopError, setStopError] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [activePollSession, setActivePollSession] = useState<SessionRecord | null>(null);
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [startDialogOpen, setStartDialogOpen] = useState(false);
+  const [startRuntimeId, setStartRuntimeId] = useState("");
+  const [startRuntime, setStartRuntime] = useState<Runtime | null>(null);
+  const [pendingStart, setPendingStart] = useState<{
+    kind: "backtest" | "testnet";
+    interval: string;
+    startTimeMs?: number;
+    endTimeMs?: number;
+  } | null>(null);
+  const [debugMarket, setDebugMarket] = useState("futures");
+  const [debugSymbol, setDebugSymbol] = useState("ETHUSDT");
+  const [debugInterval, setDebugInterval] = useState("1m");
+  const [debugDataset, setDebugDataset] = useState<DebugDatasetState | null>(null);
+  const [coveragePreview, setCoveragePreview] = useState<BacktestCoveragePreview | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
+  const [downloadJob, setDownloadJob] = useState<DownloadRunJob | null>(null);
+
+  // Account strategies (mounting panel)
+  const [accountStrats, setAccountStrats] = useState<AccountStrategy[]>([]);
+  const [allStrats, setAllStrats] = useState<Strategy[]>([]);
+  const [mountErr, setMountErr] = useState<string | null>(null);
+  const [selectedMountId, setSelectedMountId] = useState<number | "">("");
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (downloadPollRef.current) clearInterval(downloadPollRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    loadAccountStrats();
+    listStrategies(undefined, true).then(setAllStrats).catch(() => {});
+  }, [accountId]);
+
+  useEffect(() => {
+    setCoveragePreview(null);
+    setCoverageError(null);
+    setDownloadJob(null);
+    if (!pendingStart || pendingStart.kind !== "backtest" || !startRuntimeId) return;
+    if ((startRuntime?.role || "").toLowerCase() === "debugger") return;
+    void loadBacktestCoverage(pendingStart, startRuntimeId);
+  }, [pendingStart, startRuntimeId, startRuntime]);
+
+  async function loadAccountStrats() {
+    try {
+      const list = await listAccountStrategies(accountId);
+      setAccountStrats(list);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleMount() {
+    if (!selectedMountId) return;
+    setMountErr(null);
+    try {
+      await mountStrategy(accountId, selectedMountId);
+      await loadAccountStrats();
+      setSelectedMountId("");
+    } catch (e) {
+      setMountErr(e instanceof Error ? e.message : "Mount failed");
+    }
+  }
+
+  async function handleUnmount(sid: number) {
+    setMountErr(null);
+    try {
+      await unmountStrategy(accountId, sid);
+      await loadAccountStrats();
+    } catch (e) {
+      setMountErr(e instanceof Error ? e.message : "Unmount failed");
+    }
+  }
+
+  async function handleActivate(sid: number) {
+    setMountErr(null);
+    try {
+      await activateStrategy(accountId, sid);
+      await loadAccountStrats();
+    } catch (e) {
+      setMountErr(e instanceof Error ? e.message : "Activate failed");
+    }
+  }
+
+  async function handleDeactivate(sid: number) {
+    setMountErr(null);
+    try {
+      await deactivateStrategy(accountId, sid);
+      await loadAccountStrats();
+    } catch (e) {
+      setMountErr(e instanceof Error ? e.message : "Deactivate failed");
+    }
+  }
+
+  function beginSessionPoll(sessionId: string) {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    onSessionsChanged();
+    setActivePollSession({ sessionId, statusLabel: "running", barsProcessed: 0, error: "" });
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const st = await getStrategyStatus(sessionId);
+        setActivePollSession((prev) =>
+          prev ? { ...prev, statusLabel: st.status, barsProcessed: st.bars_processed, error: st.error } : prev
+        );
+        if (st.status !== "running" && st.status !== "stopping") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setRunning(false);
+          setActivePollSession(null);
+          onSessionsChanged();
+        }
+      } catch (pollErr) {
+        setActivePollSession((prev) =>
+          prev ? { ...prev, statusLabel: "failed", error: pollErr instanceof Error ? pollErr.message : "Poll failed" } : prev
+        );
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        setRunning(false);
+        setActivePollSession(null);
+        onSessionsChanged();
+      }
+    }, 2000);
+  }
+
+  async function startStrategyRun(
+    params: { interval: string; startTimeMs?: number; endTimeMs?: number },
+    runtimeId: string,
+  ) {
+    if (!runtimeId) {
+      setError("Select a runtime before starting the session.");
+      return;
+    }
+    setRunning(true);
+    setError(null);
+
+    try {
+      const sess = await runStrategy(accountId, {
+        strategy_path: "",
+        interval: params.interval,
+        start_time_ms: params.startTimeMs,
+        end_time_ms: params.endTimeMs,
+        runtime_id: runtimeId,
+      });
+      setStartDialogOpen(false);
+      setPendingStart(null);
+      beginSessionPoll(sess.session_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start");
+      setRunning(false);
+    }
+  }
+
+  async function loadBacktestCoverage(
+    params: { interval: string; startTimeMs?: number; endTimeMs?: number },
+    runtimeId: string,
+  ) {
+    if (!params.startTimeMs || !params.endTimeMs || !runtimeId) return;
+    setCoverageLoading(true);
+    setCoverageError(null);
+    try {
+      const result = await previewBacktestCoverage(accountId, {
+        strategy_path: "",
+        start_time_ms: params.startTimeMs,
+        end_time_ms: params.endTimeMs,
+        runtime_id: runtimeId,
+      });
+      setCoveragePreview(result);
+    } catch (err) {
+      setCoveragePreview(null);
+      setCoverageError(err instanceof Error ? err.message : "Coverage preview failed");
+    } finally {
+      setCoverageLoading(false);
+    }
+  }
+
+  function clearDownloadPoll() {
+    if (downloadPollRef.current) {
+      clearInterval(downloadPollRef.current);
+      downloadPollRef.current = null;
+    }
+  }
+
+  function handleDownloadJobUpdate(job: DownloadRunJob) {
+    setDownloadJob(job);
+    if (job.status === "ready" && job.session_id) {
+      clearDownloadPoll();
+      setStartDialogOpen(false);
+      setPendingStart(null);
+      setDownloadJob(null);
+      setCoveragePreview(null);
+      beginSessionPoll(job.session_id);
+      return;
+    }
+    if (job.status === "error") {
+      clearDownloadPoll();
+      setError(job.error || "Download data and run backtest failed");
+      setRunning(false);
+    }
+  }
+
+  function pollDownloadAndRunJob(jobId: string) {
+    clearDownloadPoll();
+    downloadPollRef.current = setInterval(async () => {
+      try {
+        handleDownloadJobUpdate(await getDownloadAndRunJob(jobId));
+      } catch (err) {
+        clearDownloadPoll();
+        setError(err instanceof Error ? err.message : "Download job polling failed");
+        setRunning(false);
+      }
+    }, 2000);
+  }
+
+  async function handleDownloadDataAndRun() {
+    if (!pendingStart || pendingStart.kind !== "backtest" || !pendingStart.startTimeMs || !pendingStart.endTimeMs) return;
+    if (!startRuntimeId) {
+      setError("Select a runtime before starting the session.");
+      return;
+    }
+    setRunning(true);
+    setError(null);
+    try {
+      const job = await startDownloadAndRunBacktest(accountId, {
+        strategy_path: "",
+        interval: pendingStart.interval,
+        start_time_ms: pendingStart.startTimeMs,
+        end_time_ms: pendingStart.endTimeMs,
+        runtime_id: startRuntimeId,
+      });
+      handleDownloadJobUpdate(job);
+      if (job.status !== "ready" && job.status !== "error") {
+        pollDownloadAndRunJob(job.job_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Download data and run backtest failed");
+      setRunning(false);
+    }
+  }
+
+  function openStartDialog(params: { kind: "backtest" | "testnet"; interval: string; startTimeMs?: number; endTimeMs?: number }) {
+    setError(null);
+    setPendingStart(params);
+    setStartDialogOpen(true);
+  }
+
+  async function handleConfirmStart() {
+    if (!pendingStart) return;
+    const selectedRole = (startRuntime?.role || "").toLowerCase();
+    if (pendingStart.kind === "backtest" && selectedRole === "debugger") {
+      if (!pendingStart.startTimeMs || !pendingStart.endTimeMs) return;
+      setRunning(true);
+      setError(null);
+      try {
+        const ds = await loadDebugDataset(accountId, {
+          runtime_id: startRuntimeId,
+          market: debugMarket,
+          symbol: debugSymbol,
+          interval: debugInterval,
+          start_time_ms: pendingStart.startTimeMs,
+          end_time_ms: pendingStart.endTimeMs,
+        });
+        setDebugDataset(ds);
+        setStartDialogOpen(false);
+        setPendingStart(null);
+        setNotice("Debug dataset loaded. Run `hushine-debug replay` inside the debugger container.");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Load debug dataset failed");
+      } finally {
+        setRunning(false);
+      }
+      return;
+    }
+    if (pendingStart.kind === "backtest" && !coveragePreview?.complete) {
+      setError("Historical data coverage is incomplete. Download missing data before running this backtest.");
+      return;
+    }
+    if (pendingStart.kind === "backtest" && !activeStrat) {
+      setError("Activate a strategy before running on an executor runtime.");
+      return;
+    }
+    await startStrategyRun(pendingStart, startRuntimeId);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!startTime || !endTime) return;
+    const startTimeMs = parseDateTimeLocalMs(startTime);
+    const endTimeMs = parseDateTimeLocalMs(endTime);
+    if (!startTimeMs || !endTimeMs) {
+      setError("Invalid start or end time.");
+      return;
+    }
+    openStartDialog({
+      kind: "backtest",
+      interval: sessionMetadataInterval,
+      startTimeMs,
+      endTimeMs,
+    });
+  }
+
+  async function handleLiveStart() {
+    openStartDialog({ kind: "testnet", interval: sessionMetadataInterval });
+  }
+
+  async function handleStopCurrentSession() {
+    if (!activePollSession) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      const stopped = await stopSession(activePollSession.sessionId, "STOP_ACTION_STOP_ONLY");
+      if (!stopped) {
+        setStopError("Session is not running or has already been stopped.");
+        return;
+      }
+      setStopDialogOpen(false);
+      onSessionsChanged();
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to stop session");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function handleFinishCurrentSession() {
+    if (!activePollSession) return;
+    setFinishing(true);
+    setStopError(null);
+    try {
+      const stopped = await finishSession(activePollSession.sessionId);
+      if (!stopped) {
+        setStopError("Session is not running or could not be finished.");
+        return;
+      }
+      onSessionsChanged();
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to finish session");
+    } finally {
+      setFinishing(false);
+    }
+  }
+
+  async function handleStopAndCloseCurrentSession() {
+    if (!activePollSession) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      const stopped = await stopSession(activePollSession.sessionId, "STOP_ACTION_STOP_AND_CLOSE_POSITIONS");
+      if (!stopped) {
+        setStopError("Session stop-and-close was not accepted.");
+        return;
+      }
+      setStopDialogOpen(false);
+      onSessionsChanged();
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to stop and close session");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const activeStrat = accountStrats.find((s) => s.active);
+  const mountedIds = new Set(accountStrats.map((s) => s.strategy.strategy_id));
+  const unmountedStrats = allStrats.filter((s) => !mountedIds.has(s.strategy_id));
+  const startRuntimeRole = (startRuntime?.role || "").toLowerCase();
+  const selectedDebuggerRuntime = mode === 0 && startRuntimeRole === "debugger";
+  const pendingDebuggerStart = pendingStart?.kind === "backtest" && startRuntimeRole === "debugger";
+
+  return (
+    <>
+      <h2 className="section-title">Strategy</h2>
+
+      {/* ── Mounted strategies ── */}
+      <div className="card" style={{ marginBottom: "1rem", opacity: selectedDebuggerRuntime ? 0.55 : 1 }}>
+        <p style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Mounted strategies</p>
+        {selectedDebuggerRuntime ? (
+          <p className="muted">Debugger runtime uses <code>/workspace/self_hosted_strategy.py</code>; mounted strategy selection is ignored.</p>
+        ) : null}
+        {accountStrats.length === 0 ? (
+          <p className="muted">No strategies mounted.</p>
+        ) : (
+          accountStrats.map((as) => (
+            <div
+              key={as.strategy.strategy_id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "0.4rem 0",
+                borderBottom: "1px solid #f1f5f9",
+              }}
+            >
+              <div>
+                <span style={{ fontWeight: 500 }}>{as.strategy.name}</span>{" "}
+                <span className="muted">v{as.strategy.version}</span>
+                {as.active ? (
+                  <span className="status-badge status-badge--completed" style={{ marginLeft: "0.5rem" }}>active</span>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                {!as.active ? (
+                  <>
+                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleActivate(as.strategy.strategy_id)} disabled={selectedDebuggerRuntime}>
+                      Activate
+                    </button>
+                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleUnmount(as.strategy.strategy_id)} disabled={selectedDebuggerRuntime}>
+                      Unmount
+                    </button>
+                  </>
+                ) : (
+                  <button style={{ fontSize: "0.8rem" }} onClick={() => handleDeactivate(as.strategy.strategy_id)} disabled={selectedDebuggerRuntime}>
+                    Deactivate
+                  </button>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+        {mountErr ? <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{mountErr}</p> : null}
+
+        {unmountedStrats.length > 0 ? (
+          <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <select
+              value={selectedMountId}
+              onChange={(e) => setSelectedMountId(e.target.value === "" ? "" : Number(e.target.value))}
+              style={{ flex: 1 }}
+              disabled={selectedDebuggerRuntime}
+            >
+              <option value="">-- Mount a strategy --</option>
+              {unmountedStrats.map((s) => (
+                <option key={s.strategy_id} value={s.strategy_id}>
+                  {s.name} v{s.version}
+                </option>
+              ))}
+            </select>
+            <button onClick={handleMount} disabled={!selectedMountId || selectedDebuggerRuntime}>Mount</button>
+          </div>
+        ) : null}
+      </div>
+
+      {/* ── Active poll session ── */}
+      {activePollSession ? (
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <p style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Running</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            <div>
+              <span className="muted" style={{ fontSize: "0.85rem" }}>{activePollSession.sessionId.slice(0, 8)}…</span>
+              {activePollSession.barsProcessed > 0 ? (
+                <span className="muted" style={{ marginLeft: "0.5rem" }}>{activePollSession.barsProcessed} bars</span>
+              ) : null}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span className={badgeClass(activePollSession.statusLabel)}>{activePollSession.statusLabel}</span>
+              {activePollSession.statusLabel === "running" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleFinishCurrentSession()}
+                    disabled={finishing || stopping}
+                  >
+                    {finishing ? "Finishing…" : "Finish"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStopDialogOpen(true)}
+                    disabled={stopping || finishing}
+                  >
+                    Stop Session
+                  </button>
+                </>
+              ) : null}
+              {activePollSession.statusLabel === "stopping" ? (
+                <button type="button" disabled>
+                  Stopping…
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {activePollSession.error ? (
+            <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{activePollSession.error}</p>
+          ) : null}
+          {stopError ? (
+            <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{stopError}</p>
+          ) : null}
+          <p className="muted" style={{ marginTop: "0.5rem", marginBottom: 0, fontSize: "0.8rem" }}>
+            `仅停止 session` 是 soft stop。`先清仓后停止 session` 会尝试把账户风险敞口清到空状态。
+          </p>
+        </div>
+      ) : null}
+
+      {/* ── Run backtest (mode=0 only) ── */}
+      {mode === 0 ? (
+      <div className="card">
+        {selectedDebuggerRuntime ? (
+          <p className="muted">Debugger runtime will use the self-hosted workspace strategy template.</p>
+        ) : !activeStrat ? (
+          <p className="muted">Activate a strategy above to run on an executor runtime. Debugger runtime can run without a mounted strategy.</p>
+        ) : (
+          <p className="muted" style={{ marginBottom: "0.5rem" }}>
+            Active: <strong>{activeStrat.strategy.name} v{activeStrat.strategy.version}</strong>
+          </p>
+        )}
+        <form onSubmit={handleSubmit}>
+          <p className="muted" style={{ fontSize: "0.8rem", marginTop: 0, marginBottom: "0.75rem" }}>
+            Intervals are read from the active strategy's declared <code>INPUTS</code> —
+            the backtest replays every declared <code>(market, symbol, interval)</code>.
+          </p>
+          <RuntimeSelector
+            value={startRuntimeId}
+            onChange={(runtimeId, runtime) => {
+              setStartRuntimeId(runtimeId);
+              setStartRuntime(runtime ?? null);
+              setCoveragePreview(null);
+              setCoverageError(null);
+              setDebugDataset(null);
+              setNotice(null);
+            }}
+            mode={0}
+            label="Runtime"
+          />
+          <div style={{ marginBottom: "0.75rem" }}>
+            <div style={{ fontSize: "0.85rem", color: "#475569", marginBottom: "0.35rem" }}>Start</div>
+            <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={{ width: "100%", maxWidth: "20rem" }} />
+          </div>
+          <div style={{ marginBottom: "0.75rem" }}>
+            <div style={{ fontSize: "0.85rem", color: "#475569", marginBottom: "0.35rem" }}>End</div>
+            <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={{ width: "100%", maxWidth: "20rem" }} />
+          </div>
+
+          {notice ? <p className="muted" style={{ marginTop: "0.5rem" }}>{notice}</p> : null}
+          {debugDataset?.dataset_id ? (
+            <p className="muted" style={{ marginTop: "0.5rem" }}>
+              Debug dataset: <code>{debugDataset.dataset_id}</code> · {debugDataset.symbol} {debugDataset.market} {debugDataset.interval} · {debugDataset.bar_count || 0} bars
+            </p>
+          ) : null}
+          {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}
+
+          <p style={{ marginTop: "0.75rem" }}>
+            <button type="submit" className="primary" disabled={running || !startTime || !endTime || !startRuntimeId || (!selectedDebuggerRuntime && !activeStrat)}>
+              {running ? "Running…" : selectedDebuggerRuntime ? "Run debugger" : "Run backtest"}
+            </button>
+          </p>
+        </form>
+      </div>
+      ) : null}
+
+      {/* ── Start mode=2 session ── */}
+      {mode === 2 ? (
+      <div className="card">
+        {!activeStrat ? (
+          <p className="muted">Activate a strategy above to start a testnet session.</p>
+        ) : (
+          <p className="muted" style={{ marginBottom: "0.5rem" }}>
+            Active: <strong>{activeStrat.strategy.name} v{activeStrat.strategy.version}</strong>
+          </p>
+        )}
+
+        <p className="muted" style={{ fontSize: "0.85rem", marginTop: 0 }}>
+          This starts a live <code>mode=2</code> testnet session using the active strategy's
+          declared <code>INPUTS</code> — each <code>(market, symbol, interval)</code> is
+          subscribed independently; the UI no longer picks an interval here.
+        </p>
+        <RuntimeSelector
+          value={startRuntimeId}
+          onChange={(runtimeId, runtime) => {
+            setStartRuntimeId(runtimeId);
+            setStartRuntime(runtime ?? null);
+          }}
+          mode={2}
+          role="executor"
+          label="Executor runtime"
+        />
+
+        {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}
+
+        <p style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+          <button
+            type="button"
+            className="primary"
+            disabled={running || !activeStrat || !startRuntimeId}
+            onClick={() => { void handleLiveStart(); }}
+          >
+            {running ? "Starting…" : "Start Testnet Session"}
+          </button>
+        </p>
+      </div>
+      ) : null}
+
+      <StopSessionDialog
+        open={stopDialogOpen}
+        sessionId={activePollSession?.sessionId}
+        busy={stopping}
+        error={stopError}
+        onCancel={() => {
+          if (stopping) return;
+          setStopDialogOpen(false);
+          setStopError(null);
+        }}
+        onStopOnly={() => { void handleStopCurrentSession(); }}
+        onStopAndClose={() => { void handleStopAndCloseCurrentSession(); }}
+      />
+      <RuntimeSelectionDialog
+        open={startDialogOpen}
+        title={pendingStart?.kind === "testnet" ? "Start Testnet Session" : pendingDebuggerStart ? "Run Debugger" : "Run Backtest"}
+        description={pendingStart?.kind === "testnet"
+          ? <>Choose where the active strategy will run.</>
+          : pendingDebuggerStart
+            ? <>Load the selected historical dataset into the debugger runtime.</>
+            : <>Choose where the backtest session will run.</>}
+        runtimeId={startRuntimeId}
+        runtimeLabel={pendingStart?.kind === "testnet" ? "Executor runtime" : "Runtime"}
+        mode={pendingStart?.kind === "testnet" ? 2 : 0}
+        role={runtimeRoleForSessionMode(pendingStart?.kind === "testnet" ? 2 : 0)}
+        busy={running}
+        error={error}
+        confirmLabel={pendingStart?.kind === "testnet" ? "Start Session" : pendingDebuggerStart ? "Load Dataset" : "Run Backtest"}
+        confirmDisabled={pendingStart?.kind === "backtest" && !pendingDebuggerStart && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error"))}
+        onRuntimeChange={(runtimeId, runtime) => {
+          setStartRuntimeId(runtimeId);
+          setStartRuntime(runtime ?? null);
+        }}
+        onCancel={() => {
+          if (running) return;
+          setStartDialogOpen(false);
+          setPendingStart(null);
+          setError(null);
+        }}
+        onConfirm={() => { void handleConfirmStart(); }}
+      >
+        {pendingStart?.kind === "backtest" && pendingDebuggerStart ? (
+          <div style={{ marginTop: "0.75rem" }}>
+            <div style={{ display: "grid", gap: "0.65rem", gridTemplateColumns: "repeat(auto-fit, minmax(8rem, 1fr))" }}>
+              <label>
+                <span>Market</span>
+                <select value={debugMarket} onChange={(e) => setDebugMarket(e.target.value)}>
+                  <option value="futures">futures</option>
+                  <option value="spot">spot</option>
+                </select>
+              </label>
+              <label>
+                <span>Symbol</span>
+                <input value={debugSymbol} onChange={(e) => setDebugSymbol(e.target.value.toUpperCase())} />
+              </label>
+              <label>
+                <span>Interval</span>
+                <input value={debugInterval} onChange={(e) => setDebugInterval(e.target.value)} />
+              </label>
+            </div>
+            <p className="muted" style={{ marginBottom: 0 }}>
+              After loading, enter the debugger container and run <code>hushine-debug replay</code>.
+            </p>
+          </div>
+        ) : pendingStart?.kind === "backtest" ? (
+          <BacktestCoverageGate
+            preview={coveragePreview}
+            loading={coverageLoading}
+            error={coverageError}
+            job={downloadJob}
+            startTimeMs={pendingStart.startTimeMs}
+            endTimeMs={pendingStart.endTimeMs}
+            runtimeSelected={Boolean(startRuntimeId)}
+            busy={running}
+            onRefresh={() => {
+              if (pendingStart && startRuntimeId) void loadBacktestCoverage(pendingStart, startRuntimeId);
+            }}
+            onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
+          />
+        ) : pendingStart?.kind === "testnet" && startRuntimeId ? (
+          <LiveStartReadinessHint accountId={accountId} runtimeId={startRuntimeId} />
+        ) : null}
+      </RuntimeSelectionDialog>
+    </>
+  );
+}
+
+// ── Session Panel (pagination + search, click → session detail page) ───────
+
+const PAGE_SIZE = 20;
+
+function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTick: number }) {
+  const navigate = useNavigate();
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [stopError, setStopError] = useState<string | null>(null);
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
+  const [finishingSessionId, setFinishingSessionId] = useState<string | null>(null);
+  const [stopDialogSessionId, setStopDialogSessionId] = useState<string | null>(null);
+  const [resumeDialogSession, setResumeDialogSession] = useState<Session | null>(null);
+  const [resumeRuntimeId, setResumeRuntimeId] = useState("");
+  const [resuming, setResuming] = useState(false);
+
+  useEffect(() => {
+    setOffset(0);
+  }, [accountId]);
+
+  useEffect(() => {
+    void load(true);
+  }, [accountId, offset, refreshTick]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void load(false);
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [accountId, offset, refreshTick]);
+
+  async function load(showLoading: boolean) {
+    if (showLoading) setLoading(true);
+    try {
+      const list = await listSessions(accountId, offset, PAGE_SIZE);
+      setSessions(list);
+    } catch { /* ignore */ }
+    if (showLoading) setLoading(false);
+  }
+
+  async function handleStopListedSession(sessionId: string) {
+    setStoppingSessionId(sessionId);
+    setStopError(null);
+    try {
+      const stopped = await stopSession(sessionId, "STOP_ACTION_STOP_ONLY");
+      if (!stopped) {
+        setStopError("Session is not running or has already been stopped.");
+        return;
+      }
+      setStopDialogSessionId(null);
+      setStopError(null);
+      await load(false);
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to stop session");
+    } finally {
+      setStoppingSessionId(null);
+    }
+  }
+
+  async function handleStopAndCloseListedSession(sessionId: string) {
+    setStoppingSessionId(sessionId);
+    setStopError(null);
+    try {
+      const stopped = await stopSession(sessionId, "STOP_ACTION_STOP_AND_CLOSE_POSITIONS");
+      if (!stopped) {
+        setStopError("Session stop-and-close was not accepted.");
+        return;
+      }
+      setStopDialogSessionId(null);
+      await load(false);
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to stop and close session");
+    } finally {
+      setStoppingSessionId(null);
+    }
+  }
+
+  async function handleFinishListedSession(session: Session) {
+    setFinishingSessionId(session.session_id);
+    setStopError(null);
+    try {
+      const finished = await finishSession(session.session_id);
+      if (!finished) {
+        setStopError("Session is not running or could not be finished.");
+        return;
+      }
+      setStopDialogSessionId(null);
+      await load(false);
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to finish session");
+    } finally {
+      setFinishingSessionId(null);
+    }
+  }
+
+  async function handleResumeWithNewSession(session: Session) {
+    setStopError(null);
+    if (!resumeRuntimeId) {
+      setStopError("Select a runtime before resuming.");
+      return;
+    }
+    setResuming(true);
+    try {
+      const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId);
+      await load(false);
+      setResumeDialogSession(null);
+      setResumeRuntimeId("");
+      navigate(`/accounts/${accountId}/sessions/${resumed.session_id}`);
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : "Failed to resume session");
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  function openResumeDialog(session: Session) {
+    setStopError(null);
+    setResumeRuntimeId("");
+    setResumeDialogSession(session);
+  }
+
+  const filtered = search
+    ? sessions.filter((s) => s.session_id.startsWith(search))
+    : sessions;
+  const latestSession = sessions[0] ?? null;
+
+  return (
+    <>
+    <h2 className="section-title">Reconciliation</h2>
+    <div className="card" style={{ marginBottom: "1rem" }}>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Reconciliation 目前按 session 组织。打开某个 session 后，可以查看
+        `checkpoint / event / sampled` runs、diff 明细和本地 / 交易所双快照。
+      </p>
+      {latestSession ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 600 }}>Latest session</div>
+            <div className="muted" style={{ fontSize: "0.85rem" }}>
+              {latestSession.session_id.slice(0, 12)}… · {latestSession.interval} · {latestSession.status}
+              {sessionKindBadge(latestSession)}
+              {latestSession.runtime_id ? (
+                <>
+                  {" · Runtime: "}
+                  <Link to={`/runtimes/${encodeURIComponent(latestSession.runtime_id)}`}>
+                    {latestSession.runtime_name || latestSession.runtime_id}
+                  </Link>
+                  {" · "}
+                  <Link to="/runtimes">Runtime Management</Link>
+                </>
+              ) : (
+                " · Runtime: unbound"
+              )}
+              {latestSession.status === "recoverable" && latestSession.error ? ` · ${latestSession.error}` : ""}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/accounts/${accountId}/sessions/${latestSession.session_id}`)}
+          >
+            View reconciliation
+          </button>
+        </div>
+      ) : (
+        <p className="muted" style={{ marginBottom: 0 }}>No sessions yet.</p>
+      )}
+    </div>
+
+    <h2 className="section-title">Sessions</h2>
+    <div className="card" style={{ marginBottom: "1rem" }}>
+      <input
+        type="text"
+        placeholder="Search session ID..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{ width: "100%", fontSize: "0.85rem", padding: "0.35rem 0.5rem", marginBottom: "0.75rem", boxSizing: "border-box" }}
+      />
+
+      {loading ? <p className="muted">Loading...</p> : null}
+      {stopError ? <p className="error" style={{ marginBottom: "0.75rem" }}>{stopError}</p> : null}
+
+      {!loading && filtered.length === 0 ? (
+        <p className="muted">No sessions found.</p>
+      ) : null}
+
+      {filtered.map((s) => (
+        <div
+          key={s.session_id}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "0.4rem 0.25rem",
+            borderBottom: "1px solid #f1f5f9",
+            cursor: "pointer",
+            borderRadius: "2px",
+          }}
+          onClick={() => navigate(`/accounts/${accountId}/sessions/${s.session_id}`)}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+        >
+          <div>
+            <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{s.session_id.slice(0, 10)}…</span>
+            <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.interval}</span>
+            {s.bars_processed > 0 ? (
+              <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.bars_processed} bars</span>
+            ) : null}
+            {sessionKindBadge(s)}
+            {s.runtime_id ? (
+              <span className="muted" style={{ marginLeft: "0.5rem" }}>
+                Runtime:{" "}
+                <Link
+                  to={`/runtimes/${encodeURIComponent(s.runtime_id)}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {s.runtime_name || s.runtime_id}
+                </Link>
+              </span>
+            ) : (
+              <span className="muted" style={{ marginLeft: "0.5rem" }}>Runtime: unbound</span>
+            )}
+            {s.status === "recoverable" && s.error ? (
+              <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.error}</span>
+            ) : null}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span className={badgeClass(s.status)}>{s.status}</span>
+            {s.status === "running" ? (
+              <>
+                <button
+                  type="button"
+                  style={{ fontSize: "0.8rem" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleFinishListedSession(s);
+                  }}
+                  disabled={finishingSessionId === s.session_id || stoppingSessionId === s.session_id}
+                >
+                  {finishingSessionId === s.session_id ? "Finishing…" : "Finish"}
+                </button>
+                <button
+                  type="button"
+                  style={{ fontSize: "0.8rem" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setStopDialogSessionId(s.session_id);
+                  }}
+                  disabled={stoppingSessionId === s.session_id || finishingSessionId === s.session_id}
+                >
+                  {stoppingSessionId === s.session_id ? "Stopping…" : "Stop"}
+                </button>
+              </>
+            ) : null}
+            {s.status === "stopping" ? (
+              <button type="button" style={{ fontSize: "0.8rem" }} disabled>
+                Stopping…
+              </button>
+            ) : null}
+            {canResumeSession(s, sessions) ? (
+              <button
+                type="button"
+                style={{ fontSize: "0.8rem" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openResumeDialog(s);
+                }}
+              >
+                Resume With New Session
+              </button>
+            ) : null}
+            <span className="muted" style={{ fontSize: "0.8rem" }}>Open</span>
+          </div>
+        </div>
+      ))}
+
+      {/* Pagination */}
+      {!search ? (
+        <div style={{ display: "flex", justifyContent: "center", gap: "1rem", marginTop: "0.75rem" }}>
+          <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
+            Previous
+          </button>
+          {filtered.length > 0 ? (
+            <span className="muted" style={{ lineHeight: "2" }}>
+              {offset + 1}–{offset + filtered.length}
+            </span>
+          ) : null}
+          <button disabled={sessions.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>
+            Next
+          </button>
+        </div>
+      ) : null}
+    </div>
+    <StopSessionDialog
+      open={stopDialogSessionId !== null}
+      sessionId={stopDialogSessionId ?? undefined}
+      busy={stoppingSessionId === stopDialogSessionId}
+      error={stopError}
+      onCancel={() => {
+        if (stoppingSessionId === stopDialogSessionId) return;
+        setStopDialogSessionId(null);
+        setStopError(null);
+      }}
+      onStopOnly={() => {
+        if (!stopDialogSessionId) return;
+        void handleStopListedSession(stopDialogSessionId);
+      }}
+      onStopAndClose={() => {
+        if (!stopDialogSessionId) return;
+        void handleStopAndCloseListedSession(stopDialogSessionId);
+      }}
+    />
+    <RuntimeSelectionDialog
+      open={resumeDialogSession !== null}
+      title="Resume With New Session"
+      description={resumeDialogSession ? <>Session <code>{resumeDialogSession.session_id}</code></> : null}
+      runtimeId={resumeRuntimeId}
+      runtimeLabel={resumeDialogSession?.mode === 0 ? "Backtest runtime" : "Executor runtime"}
+      mode={resumeDialogSession?.mode}
+      role={runtimeRoleForSessionMode(resumeDialogSession?.mode)}
+      busy={resuming}
+      error={stopError}
+      confirmLabel="Resume"
+      onRuntimeChange={setResumeRuntimeId}
+      onCancel={() => {
+        if (resuming) return;
+        setResumeDialogSession(null);
+        setResumeRuntimeId("");
+        setStopError(null);
+      }}
+      onConfirm={() => {
+        if (resumeDialogSession) void handleResumeWithNewSession(resumeDialogSession);
+      }}
+    />
+    </>
+  );
+}

@@ -1,0 +1,29 @@
+{
+  "name": "quant-frontend",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test:backtest-coverage-gate": "node scripts/backtest-coverage-gate.test.mjs",
+    "test:market-data-coverage": "node scripts/market-data-coverage.test.mjs",
+    "test:market-data-klines": "node scripts/market-data-klines.test.mjs",
+    "test:runtime-management-layout": "node scripts/runtime-management-layout.test.mjs",
+    "test:runtime-role-routing": "node scripts/runtime-role-routing.test.mjs",
+    "test:runtime-status": "node scripts/runtime-status.test.mjs",
+    "build": "tsc --noEmit -p tsconfig.app.json && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.3.1"
+  }
+}

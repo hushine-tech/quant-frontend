@@ -1,0 +1,1051 @@
+/*
+ * Responsive breakpoints (semantic values; CSS media queries use literals):
+ *   --bp-mobile:  640px   — phones portrait         (≤ 640)
+ *   --bp-tablet:  1024px  — phones landscape/tablet (641 – 1024)
+ *   desktop:              — laptops & bigger        (≥ 1025)
+ *
+ * All @media rules in this file MUST only use 640px or 1024px as thresholds.
+ */
+:root {
+  --bp-mobile: 640px;
+  --bp-tablet: 1024px;
+
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  line-height: 1.5;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+a {
+  color: #2563eb;
+}
+
+/* ── App layout: header + sidebar + content ──────────────────── */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-header {
+  position: relative;
+  text-align: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  position: relative;
+}
+
+.sidebar {
+  width: 220px;
+  min-width: 220px;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 1.5rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Hamburger button (mobile only) ──────────────────────────── */
+.hamburger-btn {
+  display: none;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+  color: #475569;
+}
+
+.hamburger-btn:hover {
+  background: #f1f5f9;
+}
+
+.hamburger-btn svg {
+  display: block;
+}
+
+/* ── Sidebar overlay backdrop (mobile drawer) ────────────────── */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  z-index: 99;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.sidebar-overlay--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Mobile: sidebar becomes off-canvas drawer ───────────────── */
+@media (max-width: 640px) {
+  .app-header {
+    text-align: left;
+    padding-left: 4rem;
+  }
+
+  .hamburger-btn {
+    display: flex;
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 260px;
+    min-width: 260px;
+    padding-top: 1.5rem;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 2px 0 12px rgba(15, 23, 42, 0.15);
+  }
+
+  .sidebar--open {
+    transform: translateX(0);
+  }
+
+  /* Hide sidebar from a11y tree + Tab order when closed on mobile */
+  .sidebar:not(.sidebar--open) {
+    visibility: hidden;
+  }
+}
+
+/* Tablet & desktop: overlay/drawer classes are inert */
+@media (min-width: 641px) {
+  .sidebar-overlay,
+  .sidebar-overlay--visible {
+    display: none;
+  }
+}
+
+.sidebar-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-nav li a {
+  display: block;
+  padding: 0.65rem 1.5rem;
+  color: #475569;
+  text-decoration: none;
+  font-size: 0.95rem;
+  border-left: 3px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sidebar-nav li a:hover {
+  background: #f1f5f9;
+}
+
+.sidebar-nav li a.active {
+  color: #1e293b;
+  font-weight: 600;
+  border-left-color: #2563eb;
+  background: #eff6ff;
+}
+
+.content-area {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5rem 2rem;
+  overflow-x: auto;
+}
+
+@media (max-width: 1024px) {
+  .content-area {
+    padding: 1.25rem 1.5rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .content-area {
+    padding: 1rem;
+  }
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* ── Account detail three-column layout ───────────────────────── */
+.detail-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1.25rem;
+  align-items: stretch;
+}
+
+@media (max-width: 1024px) {
+  .detail-layout {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .detail-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.detail-layout__left,
+.detail-layout__mid,
+.detail-layout__right {
+  min-width: 0;
+}
+
+.portfolio-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.portfolio-panel {
+  min-width: 0;
+}
+
+.portfolio-panel--secondary {
+  border-left: 1px solid #e2e8f0;
+  padding-left: 1rem;
+}
+
+.portfolio-panel__title {
+  margin-bottom: 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.portfolio-metric {
+  margin-top: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .portfolio-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-panel--secondary {
+    border-left: 0;
+    border-top: 1px solid #e2e8f0;
+    padding-left: 0;
+    padding-top: 1rem;
+  }
+}
+
+/* Horizontal-scroll wrapper for wide tables on narrow screens */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Strategy status badge ────────────────────────────────────── */
+.status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.status-badge--running {
+  background: #dbeafe;
+  color: #1e40af;
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+.status-badge--completed {
+  background: #dcfce7;
+  color: #14532d;
+}
+
+.status-badge--failed {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.status-badge--stopped {
+  background: #fef9c3;
+  color: #713f12;
+}
+
+.status-badge--recoverable {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge--stopping {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.status-badge--stop-failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-badge--unknown {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.status-badge--recovering {
+  background: #ede9fe;
+  color: #6d28d9;
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+.status-badge--recovered {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-badge--recovery-failed {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge--idle {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 120;
+}
+
+.dialog-card {
+  width: min(34rem, 100%);
+  padding: 1.25rem;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
+}
+
+.dialog-action-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.dialog-action-list--inline {
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  margin-bottom: 0;
+}
+
+/* ── Strategy form grid (two columns for fields) ──────────────── */
+/* ── New Strategy form (StrategyList "+ New Strategy" card) ──────────────
+ * Same label-above-input pattern as Market Data. Form is wider (40rem) so
+ * the Code textarea gets comfortable space; Name + Version sit in a 2-col
+ * sub-grid at the top.
+ */
+.strategy-new-form {
+  max-width: 40rem;
+}
+
+.strategy-new-form__row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1rem;
+}
+
+.strategy-new-form .field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.85rem;
+}
+
+.strategy-new-form .field > span {
+  font-size: 0.85rem;
+  color: #475569;
+  margin-bottom: 0.35rem;
+  font-weight: 500;
+}
+
+.strategy-new-form .field > input,
+.strategy-new-form .field > textarea {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.strategy-new-form .field > textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+/* ── Market Data stream-request form ──────────────────────────────────────
+ * Compact single-column layout. Labels go above inputs with real spacing;
+ * form itself is narrower than the default form max-width so the controls
+ * don't sprawl across the whole card.
+ */
+.market-data-form {
+  max-width: 22rem;
+}
+
+.market-data-form .field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.85rem;
+}
+
+.market-data-form .field > span {
+  font-size: 0.85rem;
+  color: #475569;
+  margin-bottom: 0.35rem;
+  font-weight: 500;
+}
+
+.market-data-form .field > input,
+.market-data-form .field > select {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.market-data-form .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.market-data-form .checkbox-row > input {
+  width: auto;
+  max-width: none;
+  margin: 0;
+}
+
+/* old nav removed — replaced by .sidebar-nav */
+
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.page-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.page-heading h1 {
+  margin: 0 0 0.25rem;
+}
+
+.runtime-create-card {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.runtime-create-card--stacked {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.runtime-create-card label,
+.runtime-selector label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 12rem;
+}
+
+.runtime-create-card label > span,
+.runtime-selector label > span {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #475569;
+}
+
+.runtime-create-card input,
+.runtime-create-card select,
+.runtime-selector select {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.runtime-create-card--stacked label,
+.runtime-create-card--stacked input,
+.runtime-create-card--stacked select,
+.runtime-create-card--stacked button {
+  width: 100%;
+}
+
+.runtime-management-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+  gap: 1rem;
+  align-items: start;
+}
+
+.runtime-management-main {
+  min-width: 0;
+}
+
+.runtime-management-sidebar {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.runtime-management-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.runtime-management-tab {
+  flex: 0 0 auto;
+  min-height: 2.25rem;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
+.runtime-management-tab--active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.runtime-management-panel {
+  min-width: 0;
+}
+
+.runtime-action-card {
+  margin-bottom: 0;
+}
+
+.runtime-action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  text-decoration: none;
+  background: #fff;
+}
+
+.runtime-side-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.runtime-failure-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.runtime-failure-item {
+  padding-top: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.runtime-failure-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.runtime-failure-item p {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.runtime-failure-item__title {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-weight: 600;
+}
+
+.runtime-selector {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.runtime-selector--compact {
+  max-width: 26rem;
+  margin-bottom: 0.75rem;
+}
+
+.runtime-selector__meta {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.runtime-table .runtime-id {
+  margin-top: 0.15rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}
+
+.runtime-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.notification-toggle-grid {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.notification-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  flex-wrap: wrap;
+}
+
+.notification-toggle input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.notification-bind-code {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.notification-bind-code code {
+  display: inline-block;
+  margin: 0.25rem 0;
+  font-size: 1.05rem;
+  letter-spacing: 0;
+}
+
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.notification-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.notification-tab {
+  flex: 0 0 auto;
+  min-height: 2.25rem;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
+.notification-tab--active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.notification-availability {
+  margin-top: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.notification-availability__header,
+.notification-availability__row {
+  display: grid;
+  grid-template-columns: 1.2fr repeat(3, minmax(7rem, 1fr));
+  gap: 0.75rem;
+  min-width: 34rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.notification-availability__header {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.notification-availability__row + .notification-availability__row {
+  border-top: 1px solid #e2e8f0;
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+@media (max-width: 1024px) {
+  .runtime-management-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .page-heading,
+  .runtime-create-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .runtime-create-card label,
+  .runtime-selector label,
+  .runtime-create-card input,
+  .runtime-create-card select,
+  .runtime-selector select {
+    width: 100%;
+  }
+
+  .runtime-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.order-history-filters {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.order-history-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.order-history-filter > span {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #475569;
+}
+
+.order-history-filter > select {
+  height: 2.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.order-history-filter--account > select {
+  width: 14rem;
+}
+
+.order-history-filter--strategy > select {
+  width: 18rem;
+}
+
+@media (max-width: 640px) {
+  .order-history-filters {
+    align-items: stretch;
+  }
+
+  .order-history-filter,
+  .order-history-filter > select {
+    width: 100%;
+  }
+}
+
+.muted {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
+button.primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+}
+
+button.danger {
+  background: #b91c1c;
+  color: #fff;
+  border-color: #991b1b;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.35rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+form label {
+  display: block;
+  margin: 0.5rem 0 0.2rem;
+}
+
+form input,
+form select {
+  width: 100%;
+  max-width: 28rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.section-title {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.env-banner {
+  padding: 0.45rem 0.85rem;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+.env-banner--backtest {
+  background: #dcfce7;
+  color: #14532d;
+}
+
+.env-banner--testnet {
+  background: #fef9c3;
+  color: #713f12;
+}
+
+.env-banner--live {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.env-banner--other {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.wallet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .wallet-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wallet-details {
+  margin-bottom: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.wallet-details > summary {
+  cursor: pointer;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+}
+
+.wallet-details[open] > summary {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.wallet-details__body {
+  padding: 0.75rem 1rem 1rem;
+}
+
+.wallet-details__body table {
+  margin-top: 0.35rem;
+}
+
+/*
+ * Compact stat grid used inside `.wallet-details__body` for the
+ * "Spot details" / "Futures details" headers. Replaces the
+ * run-on "·"-separated single paragraph with a labelled
+ * auto-filling grid so the numbers line up and empty
+ * `margin_mode` / `position_mode` values don't leave stray "·"
+ * glyphs hanging around.
+ */
+.wallet-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.35rem 1rem;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  list-style: none;
+}
+
+.wallet-stats__item {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wallet-stats__label {
+  font-size: 0.75rem;
+  color: #64748b;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-bottom: 0.1rem;
+}
+
+.wallet-stats__value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-stats__value--muted {
+  color: #475569;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.symbol-hits {
+  list-style: none;
+  padding: 0;
+  margin: 0.35rem 0 0;
+  max-height: 10rem;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+}
+
+.symbol-hits li {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.symbol-hits li:last-child {
+  border-bottom: none;
+}
+
+.symbol-hits button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.5rem;
+}
+
+.symbol-hits button:hover {
+  background: #f8fafc;
+}
+
+table.compact {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.table-input {
+  width: 100%;
+  max-width: 7rem;
+  padding: 0.2rem 0.35rem;
+}

@@ -1,0 +1,14 @@
+node_modules
+dist
+.DS_Store
+*.local
+/logs
+/.run.pid
+.pytest_cache/
+.claude/
+.cursor/
+.idea/
+.opencode/
+
+# Local process documents live outside the code repository.
+/openspec/
