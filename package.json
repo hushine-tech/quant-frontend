@@ -11,6 +11,9 @@
     "test:runtime-management-layout": "node scripts/runtime-management-layout.test.mjs",
     "test:runtime-role-routing": "node scripts/runtime-role-routing.test.mjs",
     "test:runtime-status": "node scripts/runtime-status.test.mjs",
+    "test:layout-shell": "node scripts/layout-shell.test.mjs",
+    "test:primary-pages-tabs": "node scripts/primary-pages-tabs.test.mjs",
+    "test:session-management": "node scripts/session-management.test.mjs",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview"
   },
