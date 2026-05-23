@@ -1,14 +1,16 @@
 PID_FILE=.run.pid
 VITE=./node_modules/.bin/vite
 PORT?=5173
+NPM?=npm
+NPM_CACHE?=.npm-cache
 
 .PHONY: build dev start stop clean test install
 
 install node_modules:
-	npm install
+	$(NPM) install --cache $(NPM_CACHE)
 
 build: node_modules
-	npm run build
+	$(NPM) run build
 
 dev: node_modules
 	$(VITE) --port $(PORT) --host
@@ -25,4 +27,4 @@ test:
 	@echo "No tests configured"
 
 clean:
-	rm -rf dist $(PID_FILE) logs
+	rm -rf dist $(PID_FILE) logs $(NPM_CACHE)
