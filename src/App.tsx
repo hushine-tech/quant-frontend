@@ -270,7 +270,7 @@ export default function App() {
           path="/runtimes"
           element={<RequireAuth><RuntimeManagement /></RequireAuth>}
         />
-        <Route path="/runtimes/credentials" element={<Navigate to="/runtimes?tab=create" replace />} />
+        <Route path="/runtimes/credentials" element={<Navigate to="/runtimes?tab=credentials" replace />} />
         <Route
           path="/runtimes/:runtimeId"
           element={<RequireAuth><RuntimeDetailPage /></RequireAuth>}
@@ -279,7 +279,7 @@ export default function App() {
           path="/notifications"
           element={<RequireAuth><NotificationManagement /></RequireAuth>}
         />
-        <Route path="/settings/runtime-credentials" element={<Navigate to="/runtimes?tab=create" replace />} />
+        <Route path="/settings/runtime-credentials" element={<Navigate to="/runtimes?tab=credentials" replace />} />
         <Route path="/" element={<Navigate to="/accounts" replace />} />
         <Route path="*" element={<p>Not found</p>} />
       </Routes>

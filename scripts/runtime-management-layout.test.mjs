@@ -43,8 +43,12 @@ assert.equal(
   "Runtime Management primary page should no longer render a right-side operation sidebar",
 );
 
-for (const token of ["PageHeader", "PageTabs", "All Runtimes", "Create Runtime", "Failure Overview", "RuntimeCredentialsPanel", "showAdmissionFailures={false}"]) {
+for (const token of ["PageHeader", "PageTabs", "All Runtimes", "Create Runtime", "Credentials", "Failure Overview", "RuntimeCredentialsPanel", "showAdmissionFailures={false}"]) {
   assert.equal(source.includes(token), true, `Runtime Management should include ${token}`);
+}
+
+for (const token of ['variant="create"', 'variant="list"', "runtime-create-stack"]) {
+  assert.equal(source.includes(token), true, `Runtime Management should separate credential creation/list mode with ${token}`);
 }
 
 assert.equal(

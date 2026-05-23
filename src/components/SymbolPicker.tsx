@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { listSymbols } from "@/api/client";
 
 type Props = {
@@ -21,6 +21,7 @@ type Props = {
 };
 
 export default function SymbolPicker({ market, label, onAdd, disabled, extraSymbols, selected, className }: Props) {
+  const inputId = useId();
   const singleSelect = selected !== undefined;
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<string[]>([]);
@@ -101,10 +102,12 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
 
   return (
     <div ref={rootRef} className={className} style={className ? undefined : { marginTop: "0.75rem" }}>
-      <label>
+      <label htmlFor={inputId}>
         <span>{label}</span>
       </label>
       <input
+        id={inputId}
+        name="symbol_search"
         type="search"
         placeholder="Type to search symbols…"
         value={displayValue}

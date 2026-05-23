@@ -26,7 +26,7 @@ const MARKET_DATA_TABS: Array<PageTab<MarketDataTab>> = [
   { id: "live", label: "Live Streams" },
   { id: "coverage", label: "Historical Coverage" },
   { id: "data", label: "Data Viewer" },
-  { id: "requests", label: "Requests" },
+  { id: "requests", label: "Request Live Streams" },
 ];
 
 function statusBadge(text: string, tone: "good" | "warn" | "bad" | "idle") {
@@ -85,7 +85,6 @@ export default function MarketDataPage() {
   const [entries, setEntries] = useState<MarketDataEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
   const [activeTab, setActiveTab] = useState<MarketDataTab>("live");
 
   async function load() {
@@ -118,7 +117,6 @@ export default function MarketDataPage() {
   }
 
   const liveEntries = entries.filter((entry) => entry.request.scope === "live");
-  const historicalEntries = entries.filter((entry) => entry.request.scope === "historical");
 
   return (
     <div>
@@ -127,18 +125,12 @@ export default function MarketDataPage() {
         description="Manage live streams, historical coverage, raw kline inspection, and download requests."
         loading={loading}
         onRefresh={load}
-        actions={(
-        <button className="primary" onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? "Cancel Request" : "Request Market Data"}
-        </button>
-        )}
       />
 
       <PageTabs tabs={MARKET_DATA_TABS} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Market data sections">
-        {showCreate || activeTab === "requests" ? (
+        {activeTab === "requests" ? (
           <CreateRequestForm
             onCreated={() => {
-              setShowCreate(false);
               load();
             }}
           />
@@ -161,9 +153,9 @@ export default function MarketDataPage() {
 
         {activeTab === "requests" ? (
           <RequestList
-            entries={historicalEntries}
+            entries={liveEntries}
             loading={loading}
-            emptyText="No historical requests yet."
+            emptyText="No live stream requests yet."
             onCancel={handleCancel}
           />
         ) : null}
@@ -397,7 +389,11 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
       <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Historical Coverage</p>
       <form className="filter-panel" onSubmit={handleQuery}>
         <FilterField label="Exchange">
-          <select value={exchange} onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}>
+          <select
+            name="exchange"
+            value={exchange}
+            onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}
+          >
             {SUPPORTED_EXCHANGES.map((x) => (
               <option key={x} value={x}>{x}</option>
             ))}
@@ -405,7 +401,7 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
         </FilterField>
 
         <FilterField label="Market">
-          <select value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
+          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
             <option value="futures">futures</option>
             <option value="spot">spot</option>
           </select>
@@ -420,7 +416,7 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
         />
 
         <FilterField label="Interval">
-          <select value={interval} onChange={(e) => setInterval(e.target.value)}>
+          <select name="interval" value={interval} onChange={(e) => setInterval(e.target.value)}>
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}
@@ -530,7 +526,11 @@ function KlineDataViewerPanel() {
       <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Data Viewer</p>
       <form className="filter-panel" onSubmit={handleQuery}>
         <FilterField label="Exchange">
-          <select value={exchange} onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}>
+          <select
+            name="exchange"
+            value={exchange}
+            onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}
+          >
             {SUPPORTED_EXCHANGES.map((x) => (
               <option key={x} value={x}>{x}</option>
             ))}
@@ -538,7 +538,7 @@ function KlineDataViewerPanel() {
         </FilterField>
 
         <FilterField label="Market">
-          <select value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
+          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
             <option value="futures">futures</option>
             <option value="spot">spot</option>
           </select>
@@ -553,7 +553,7 @@ function KlineDataViewerPanel() {
         />
 
         <FilterField label="Interval">
-          <select value={interval} onChange={(e) => setInterval(e.target.value)}>
+          <select name="interval" value={interval} onChange={(e) => setInterval(e.target.value)}>
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}
@@ -841,14 +841,10 @@ function CoverageGaps({
 }
 
 function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
-  const [scope, setScope] = useState<"live" | "historical">("live");
   const [exchange, setExchange] = useState<(typeof SUPPORTED_EXCHANGES)[number]>("binance");
   const [market, setMarket] = useState<"futures" | "spot">("futures");
   const [symbol, setSymbol] = useState("");
   const [interval, setInterval] = useState("1m");
-  const [needsLive, setNeedsLive] = useState(true);
-  const [startAt, setStartAt] = useState(() => toLocalInputValue(new Date(Date.now() - 24 * 60 * 60_000)));
-  const [endAt, setEndAt] = useState(() => toLocalInputValue(new Date()));
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -869,21 +865,9 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
       kind: "kline",
       symbol: symbol.trim().toUpperCase(),
       interval,
-      scope,
+      scope: "live",
+      needs_live_delivery: true,
     };
-    if (scope === "live") {
-      payload.needs_live_delivery = needsLive;
-    } else {
-      const startMs = parseLocalInputMs(startAt);
-      const endMs = parseLocalInputMs(endAt);
-      if (startMs == null || endMs == null) {
-        setErr("Historical requests require a valid start and end time.");
-        return;
-      }
-      payload.start_time_ms = startMs;
-      payload.end_time_ms = endMs;
-      payload.needs_live_delivery = false;
-    }
 
     setErr(null);
     setSubmitting(true);
@@ -898,17 +882,14 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
 
   return (
     <div className="card" style={{ marginBottom: "1rem" }}>
-      <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>New Market-Data Request</p>
+      <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Request Live Stream</p>
       <form className="filter-panel" onSubmit={handleSubmit}>
-        <FilterField label="Scope">
-          <select value={scope} onChange={(e) => setScope(e.target.value as "live" | "historical")}>
-            <option value="live">live</option>
-            <option value="historical">historical</option>
-          </select>
-        </FilterField>
-
         <FilterField label="Exchange">
-          <select value={exchange} onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}>
+          <select
+            name="exchange"
+            value={exchange}
+            onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}
+          >
             {SUPPORTED_EXCHANGES.map((x) => (
               <option key={x} value={x}>{x}</option>
             ))}
@@ -916,7 +897,7 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
         </FilterField>
 
         <FilterField label="Market">
-          <select value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
+          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
             <option value="futures">futures</option>
             <option value="spot">spot</option>
           </select>
@@ -931,33 +912,17 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
         />
 
         <FilterField label="Interval">
-          <select value={interval} onChange={(e) => setInterval(e.target.value)}>
+          <select name="interval" value={interval} onChange={(e) => setInterval(e.target.value)}>
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}
           </select>
         </FilterField>
 
-        {scope === "historical" ? (
-          <>
-            <FilterField label="Start">
-              <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
-            </FilterField>
-            <FilterField label="End">
-              <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
-            </FilterField>
-          </>
-        ) : (
-          <label className="checkbox-row">
-            <input type="checkbox" checked={needsLive} onChange={(e) => setNeedsLive(e.target.checked)} />
-            Push finalized bars to Kafka live delivery
-          </label>
-        )}
-
         {err ? <p className="error" style={{ marginTop: "0.5rem" }}>{err}</p> : null}
         <p className="filter-action">
           <button type="submit" className="primary" disabled={submitting || !symbol}>
-            {submitting ? "Requesting…" : scope === "historical" ? "Request Historical Data" : "Request Live Data"}
+            {submitting ? "Requesting…" : "Request Live Stream"}
           </button>
         </p>
       </form>

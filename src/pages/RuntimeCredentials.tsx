@@ -104,7 +104,19 @@ function dockerCommandForCredential(issued: IssuedRuntimeCredential): string {
   return lines.join("\n");
 }
 
-export function RuntimeCredentialsPanel({ showAdmissionFailures = true }: { showAdmissionFailures?: boolean }) {
+type RuntimeCredentialsPanelVariant = "full" | "create" | "list";
+
+type RuntimeCredentialsPanelProps = {
+  showAdmissionFailures?: boolean;
+  variant?: RuntimeCredentialsPanelVariant;
+};
+
+export function RuntimeCredentialsPanel({
+  showAdmissionFailures = true,
+  variant = "full",
+}: RuntimeCredentialsPanelProps) {
+  const showCreate = variant === "full" || variant === "create";
+  const showList = variant === "full" || variant === "list";
   const [creds, setCreds] = useState<RuntimeCredential[]>([]);
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,8 +151,12 @@ export function RuntimeCredentialsPanel({ showAdmissionFailures = true }: { show
   };
 
   useEffect(() => {
-    void load(includeInactive);
-  }, [includeInactive]);
+    if (showList || showAdmissionFailures) {
+      void load(includeInactive);
+      return;
+    }
+    setLoading(false);
+  }, [includeInactive, showList, showAdmissionFailures]);
 
   // Clear the in-memory private key when the component unmounts. This
   // is belt-and-suspenders — the variable goes out of scope anyway, but
@@ -163,8 +179,9 @@ export function RuntimeCredentialsPanel({ showAdmissionFailures = true }: { show
       setJustIssued(issued);
       setJustIssuedLabel(newLabel.trim());
       setNewLabel("");
-      // Refresh the list so the new credential shows.
-      await load(includeInactive);
+      if (showList) {
+        await load(includeInactive);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -190,14 +207,20 @@ export function RuntimeCredentialsPanel({ showAdmissionFailures = true }: { show
 
   return (
     <div>
-      <h2 className="section-title" style={{ marginTop: 0 }}>Self-hosted runtime</h2>
-      <p className="muted">
-        Each self-hosted strategy-runtime container needs a credential to
-        connect to the platform. The credential is an Ed25519 keypair —
-        the private half is downloaded once when you generate it and is
-        never stored on the platform. Mount the downloaded file at{" "}
-        <code>/etc/hushine/runtime.cred</code> in your runtime container.
-      </p>
+      <h2 className="section-title" style={{ marginTop: 0 }}>
+        {showCreate && !showList ? "Self-hosted runtime" : "Credentials"}
+      </h2>
+      {showCreate ? (
+        <p className="muted">
+          Each self-hosted strategy-runtime container needs a credential to
+          connect to the platform. The credential is an Ed25519 keypair —
+          the private half is downloaded once when you generate it and is
+          never stored on the platform. Mount the downloaded file at{" "}
+          <code>/etc/hushine/runtime.cred</code> in your runtime container.
+        </p>
+      ) : (
+        <p className="muted">Review runtime credentials, consumed runtimes, and revoke credentials when needed.</p>
+      )}
 
       {error && (
         <div
@@ -253,129 +276,135 @@ export function RuntimeCredentialsPanel({ showAdmissionFailures = true }: { show
         </div>
       )}
 
-      <section className="card">
-        <h2 className="section-title" style={{ marginTop: 0 }}>Generate credential</h2>
-        <p className="muted">Generate a one-time credential, then use the downloaded command to start the runtime container.</p>
-        <FilterPanel>
-          <FilterField label="Label">
-          <input
-            type="text"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-            disabled={issuing}
-            maxLength={64}
-            placeholder="home VPS"
-          />
-          </FilterField>
-          <FilterField label="Role">
-          <select
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value as "executor" | "debugger")}
-            disabled={issuing}
-          >
-            <option value="executor">Executor</option>
-            <option value="debugger">Debugger</option>
-          </select>
-          </FilterField>
-          <div className="filter-action">
-            <button type="button" className="primary" onClick={onIssue} disabled={issuing}>
-              {issuing ? "Generating..." : "Generate credential"}
+      {showCreate ? (
+        <section className="card">
+          <h2 className="section-title" style={{ marginTop: 0 }}>Generate credential</h2>
+          <p className="muted">Generate a one-time credential, then use the downloaded command to start the runtime container.</p>
+          <FilterPanel>
+            <FilterField label="Label">
+              <input
+                type="text"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                disabled={issuing}
+                maxLength={64}
+                placeholder="home VPS"
+              />
+            </FilterField>
+            <FilterField label="Role">
+              <select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value as "executor" | "debugger")}
+                disabled={issuing}
+              >
+                <option value="executor">Executor</option>
+                <option value="debugger">Debugger</option>
+              </select>
+            </FilterField>
+            <div className="filter-action">
+              <button type="button" className="primary" onClick={onIssue} disabled={issuing}>
+                {issuing ? "Generating..." : "Generate credential"}
+              </button>
+            </div>
+          </FilterPanel>
+        </section>
+      ) : null}
+
+      {showList ? (
+        <>
+          <div className="primary-toolbar">
+            <label>
+              <input
+                type="checkbox"
+                checked={includeInactive}
+                onChange={(e) => setIncludeInactive(e.target.checked)}
+              />{" "}
+              Include inactive
+            </label>
+            <button
+              type="button"
+              onClick={() => load(includeInactive)}
+            >
+              Refresh
             </button>
           </div>
-        </FilterPanel>
-      </section>
 
-      <div className="primary-toolbar">
-        <label>
-          <input
-            type="checkbox"
-            checked={includeInactive}
-            onChange={(e) => setIncludeInactive(e.target.checked)}
-          />{" "}
-          Include inactive
-        </label>
-        <button
-          type="button"
-          onClick={() => load(includeInactive)}
-        >
-          Refresh
-        </button>
-      </div>
-
-      {loading && <p>Loading...</p>}
-      {!loading && creds.length === 0 && (
-        <p style={{ color: "#666" }}>
-          No {includeInactive ? "" : "active or consumed "}credentials yet. Generate one above to get started.
-        </p>
-      )}
-      {!loading && creds.length > 0 && (
-        <div className="table-scroll">
-          <table className="compact" style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "2px solid #ccc", textAlign: "left" }}>
-                <th style={{ padding: "0.5rem" }}>Label</th>
-                <th style={{ padding: "0.5rem" }}>Key ID</th>
-                <th style={{ padding: "0.5rem" }}>Role</th>
-                <th style={{ padding: "0.5rem" }}>Status</th>
-                <th style={{ padding: "0.5rem" }}>Created</th>
-                <th style={{ padding: "0.5rem" }}>Downloaded</th>
-                <th style={{ padding: "0.5rem" }}>Consumed</th>
-                <th style={{ padding: "0.5rem" }}>Expires</th>
-                <th style={{ padding: "0.5rem" }}>Runtime</th>
-                <th style={{ padding: "0.5rem" }}>Last used</th>
-                <th style={{ padding: "0.5rem" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {creds.map((c) => (
-                <tr
-                  key={c.key_id}
-                  style={{
-                    borderBottom: "1px solid #eee",
-                    opacity: ["revoked", "expired"].includes(c.status) ? 0.55 : 1,
-                    textDecoration: ["revoked", "expired"].includes(c.status) ? "line-through" : "none",
-                  }}
-                >
-                  <td style={{ padding: "0.5rem" }}>{c.label || <em style={{ color: "#888" }}>(no label)</em>}</td>
-                  <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.85rem" }}>
-                    {c.key_id}
-                  </td>
-                  <td style={{ padding: "0.5rem" }}>
-                    {c.role}
-                    {c.hosted_internal ? <span className="muted"> · internal</span> : null}
-                  </td>
-                  <td style={{ padding: "0.5rem" }}>{c.status}</td>
-                  <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.created_at)}</td>
-                  <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.downloaded_at)}</td>
-                  <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.consumed_at)}</td>
-                  <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.expires_at)}</td>
-                  <td style={{ padding: "0.5rem" }}>
-                    {c.consumed_runtime_id ? (
-                      <Link to={`/runtimes/${encodeURIComponent(c.consumed_runtime_id)}`}>
-                        {c.consumed_runtime_id}
-                      </Link>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.last_used_at)}</td>
-                  <td style={{ padding: "0.5rem" }}>
-                    {c.status === "active" || c.status === "downloaded" || c.status === "consumed" ? (
-                      <button type="button" onClick={() => onRevoke(c)}>
-                        Revoke
-                      </button>
-                    ) : (
-                      <span style={{ color: "#888" }}>
-                        Revoked {formatTimestamp(c.revoked_at)}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+          {loading && <p>Loading...</p>}
+          {!loading && creds.length === 0 && (
+            <p style={{ color: "#666" }}>
+              No {includeInactive ? "" : "active or consumed "}credentials yet. Generate one from Create Runtime to get started.
+            </p>
+          )}
+          {!loading && creds.length > 0 && (
+            <div className="table-scroll">
+              <table className="compact" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #ccc", textAlign: "left" }}>
+                    <th style={{ padding: "0.5rem" }}>Label</th>
+                    <th style={{ padding: "0.5rem" }}>Key ID</th>
+                    <th style={{ padding: "0.5rem" }}>Role</th>
+                    <th style={{ padding: "0.5rem" }}>Status</th>
+                    <th style={{ padding: "0.5rem" }}>Created</th>
+                    <th style={{ padding: "0.5rem" }}>Downloaded</th>
+                    <th style={{ padding: "0.5rem" }}>Consumed</th>
+                    <th style={{ padding: "0.5rem" }}>Expires</th>
+                    <th style={{ padding: "0.5rem" }}>Runtime</th>
+                    <th style={{ padding: "0.5rem" }}>Last used</th>
+                    <th style={{ padding: "0.5rem" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {creds.map((c) => (
+                    <tr
+                      key={c.key_id}
+                      style={{
+                        borderBottom: "1px solid #eee",
+                        opacity: ["revoked", "expired"].includes(c.status) ? 0.55 : 1,
+                        textDecoration: ["revoked", "expired"].includes(c.status) ? "line-through" : "none",
+                      }}
+                    >
+                      <td style={{ padding: "0.5rem" }}>{c.label || <em style={{ color: "#888" }}>(no label)</em>}</td>
+                      <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.85rem" }}>
+                        {c.key_id}
+                      </td>
+                      <td style={{ padding: "0.5rem" }}>
+                        {c.role}
+                        {c.hosted_internal ? <span className="muted"> · internal</span> : null}
+                      </td>
+                      <td style={{ padding: "0.5rem" }}>{c.status}</td>
+                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.created_at)}</td>
+                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.downloaded_at)}</td>
+                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.consumed_at)}</td>
+                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.expires_at)}</td>
+                      <td style={{ padding: "0.5rem" }}>
+                        {c.consumed_runtime_id ? (
+                          <Link to={`/runtimes/${encodeURIComponent(c.consumed_runtime_id)}`}>
+                            {c.consumed_runtime_id}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.last_used_at)}</td>
+                      <td style={{ padding: "0.5rem" }}>
+                        {c.status === "active" || c.status === "downloaded" || c.status === "consumed" ? (
+                          <button type="button" onClick={() => onRevoke(c)}>
+                            Revoke
+                          </button>
+                        ) : (
+                          <span style={{ color: "#888" }}>
+                            Revoked {formatTimestamp(c.revoked_at)}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      ) : null}
 
       {showAdmissionFailures && !loading && admissionFailures.length > 0 && (
         <section

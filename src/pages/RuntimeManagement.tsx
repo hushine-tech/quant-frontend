@@ -73,16 +73,18 @@ function isActiveSessionStatus(status: string): boolean {
   return status === "running" || status === "stopping";
 }
 
-type RuntimeManagementTab = "runtimes" | "create" | "failures";
+type RuntimeManagementTab = "runtimes" | "create" | "credentials" | "failures";
 
 const runtimeTabs: Array<PageTab<RuntimeManagementTab>> = [
   { id: "runtimes", label: "All Runtimes" },
   { id: "create", label: "Create Runtime" },
+  { id: "credentials", label: "Credentials" },
   { id: "failures", label: "Failure Overview" },
 ];
 
 function normalizeRuntimeTab(value: string | null): RuntimeManagementTab {
-  if (value === "create" || value === "credentials") return "create";
+  if (value === "create") return "create";
+  if (value === "credentials") return "credentials";
   if (value === "failures") return "failures";
   return "runtimes";
 }
@@ -286,7 +288,7 @@ export default function RuntimeManagement() {
         ) : null}
 
         {activeTab === "create" ? (
-          <div className="runtime-create-grid">
+          <div className="runtime-create-stack">
             <section className="card">
               <h2 className="section-title" style={{ marginTop: 0 }}>Hosted runtime</h2>
               <p className="muted">Create a platform-owned executor runtime for backtest and testnet sessions.</p>
@@ -313,8 +315,12 @@ export default function RuntimeManagement() {
                 </div>
               </FilterPanel>
             </section>
-            <RuntimeCredentialsPanel showAdmissionFailures={false} />
+            <RuntimeCredentialsPanel variant="create" showAdmissionFailures={false} />
           </div>
+        ) : null}
+
+        {activeTab === "credentials" ? (
+          <RuntimeCredentialsPanel variant="list" showAdmissionFailures={false} />
         ) : null}
 
         {activeTab === "failures" ? (
