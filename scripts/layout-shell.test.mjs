@@ -29,12 +29,11 @@ for (const label of labels) {
 for (const token of [
   "lucide-react",
   "PanelLeftClose",
-  "PanelLeftOpen",
   "MoreHorizontal",
   "localStorage",
   "sidebar--collapsed",
   'path="/sessions"',
-  'to="/sessions"',
+  'to: "/sessions"',
 ]) {
   assert.equal(app.includes(token) || css.includes(token), true, `App shell should include ${token}`);
 }

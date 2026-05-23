@@ -7,19 +7,31 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
+import {
+  Bell,
+  BriefcaseBusiness,
+  ChartCandlestick,
+  ClipboardList,
+  Database,
+  History,
+  LogIn,
+  LogOut,
+  MoreHorizontal,
+  PanelLeftClose,
+  ScrollText,
+} from "lucide-react";
 import { getToken, setToken } from "@/api/client";
+import AccountManagement from "@/pages/AccountManagement";
 import AccountDetail from "@/pages/AccountDetail";
-import AccountList from "@/pages/AccountList";
-import AccountNew from "@/pages/AccountNew";
 import Login from "@/pages/Login";
 import SessionDetailPage from "@/pages/SessionDetailPage";
+import SessionManagement from "@/pages/SessionManagement";
 import Signup from "@/pages/Signup";
 import StrategyList from "@/pages/StrategyList";
 import StrategyDetail from "@/pages/StrategyDetail";
 import OrderHistory from "@/pages/OrderHistory";
 import MarketDataPage from "@/pages/MarketData";
 import NotificationManagement from "@/pages/NotificationManagement";
-import RuntimeCredentials from "@/pages/RuntimeCredentials";
 import RuntimeManagement, { RuntimeDetailPage } from "@/pages/RuntimeManagement";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -27,66 +39,85 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return children;
 }
 
+const PRIMARY_NAV_ITEMS = [
+  { to: "/accounts", label: "Account Management", icon: BriefcaseBusiness },
+  { to: "/strategies", label: "Strategy Management", icon: ScrollText },
+  { to: "/market-data", label: "Market Data", icon: ChartCandlestick },
+  { to: "/runtimes", label: "Runtime Management", icon: Database },
+  { to: "/sessions", label: "Session Management", icon: History },
+  { to: "/orders", label: "Order History", icon: ClipboardList },
+  { to: "/notifications", label: "Notification Management", icon: Bell },
+];
+
 type SidebarProps = {
   drawerOpen: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onNavigate: () => void;
   firstLinkRef: React.RefObject<HTMLAnchorElement>;
 };
 
-function Sidebar({ drawerOpen, onNavigate, firstLinkRef }: SidebarProps) {
+function Sidebar({
+  drawerOpen,
+  collapsed,
+  onToggleCollapsed,
+  onNavigate,
+  firstLinkRef,
+}: SidebarProps) {
   const nav = useNavigate();
   const authed = !!getToken();
-  const className = `sidebar${drawerOpen ? " sidebar--open" : ""}`;
+  const className = `sidebar${drawerOpen ? " sidebar--open" : ""}${collapsed ? " sidebar--collapsed" : ""}`;
   return (
     <aside id="primary-sidebar" className={className} aria-label="Primary navigation">
+      <div className="sidebar-collapse-row">
+        <button
+          type="button"
+          className="sidebar-icon-button"
+          aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+          onClick={onToggleCollapsed}
+          title={collapsed ? "Expand navigation" : "Collapse navigation"}
+        >
+          {collapsed ? <MoreHorizontal size={20} aria-hidden="true" /> : <PanelLeftClose size={20} aria-hidden="true" />}
+        </button>
+      </div>
       <ul className="sidebar-nav">
-        <li>
-          <NavLink to="/accounts" ref={firstLinkRef} onClick={onNavigate}>
-            Account Management
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/strategies" onClick={onNavigate}>
-            Strategy Management
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/orders" onClick={onNavigate}>
-            Order History
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/market-data" onClick={onNavigate}>
-            Market Data
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/runtimes" onClick={onNavigate}>
-            Runtime Management
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/notifications" onClick={onNavigate}>
-            Notification Management
-          </NavLink>
-        </li>
+        {PRIMARY_NAV_ITEMS.map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <li key={item.to}>
+              <NavLink
+                to={item.to}
+                ref={index === 0 ? firstLinkRef : undefined}
+                onClick={onNavigate}
+                title={collapsed ? item.label : undefined}
+              >
+                <Icon size={18} aria-hidden="true" />
+                <span className="sidebar-label">{item.label}</span>
+                {collapsed ? <span className="sidebar-tooltip">{item.label}</span> : null}
+              </NavLink>
+            </li>
+          );
+        })}
       </ul>
       <div className="sidebar-bottom">
         {authed ? (
           <button
             type="button"
-            style={{ width: "100%", fontSize: "0.85rem" }}
+            className="sidebar-logout"
             onClick={() => {
               setToken(null);
               onNavigate();
               nav("/login", { replace: true });
             }}
+            title={collapsed ? "Log out" : undefined}
           >
-            Log out
+            <LogOut size={18} aria-hidden="true" />
+            <span className="sidebar-label">Log out</span>
           </button>
         ) : (
           <NavLink to="/login" onClick={onNavigate}>
-            Log in
+            <LogIn size={18} aria-hidden="true" />
+            <span className="sidebar-label">Log in</span>
           </NavLink>
         )}
       </div>
@@ -111,6 +142,9 @@ function HamburgerIcon({ open }: { open: boolean }) {
 
 function Layout({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return window.localStorage.getItem("hushine.sidebarCollapsed") === "1";
+  });
   const location = useLocation();
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const firstLinkRef = useRef<HTMLAnchorElement>(null!);
@@ -121,6 +155,10 @@ function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setDrawerOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    window.localStorage.setItem("hushine.sidebarCollapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   // Esc to close
   useEffect(() => {
@@ -170,9 +208,11 @@ function Layout({ children }: { children: React.ReactNode }) {
         </button>
         Quantitative Trading System
       </header>
-      <div className="app-body">
+      <div className={`app-body${sidebarCollapsed ? " app-body--sidebar-collapsed" : ""}`}>
         <Sidebar
           drawerOpen={drawerOpen}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
           onNavigate={closeDrawer}
           firstLinkRef={firstLinkRef}
         />
@@ -195,12 +235,9 @@ export default function App() {
         <Route path="/signup" element={<Signup />} />
         <Route
           path="/accounts"
-          element={<RequireAuth><AccountList /></RequireAuth>}
+          element={<RequireAuth><AccountManagement /></RequireAuth>}
         />
-        <Route
-          path="/accounts/new"
-          element={<RequireAuth><AccountNew /></RequireAuth>}
-        />
+        <Route path="/accounts/new" element={<Navigate to="/accounts?tab=create" replace />} />
         <Route
           path="/accounts/:id"
           element={<RequireAuth><AccountDetail /></RequireAuth>}
@@ -208,6 +245,10 @@ export default function App() {
         <Route
           path="/accounts/:id/sessions/:sessionId"
           element={<RequireAuth><SessionDetailPage /></RequireAuth>}
+        />
+        <Route
+          path="/sessions"
+          element={<RequireAuth><SessionManagement /></RequireAuth>}
         />
         <Route
           path="/strategies"
@@ -229,10 +270,7 @@ export default function App() {
           path="/runtimes"
           element={<RequireAuth><RuntimeManagement /></RequireAuth>}
         />
-        <Route
-          path="/runtimes/credentials"
-          element={<RequireAuth><RuntimeCredentials /></RequireAuth>}
-        />
+        <Route path="/runtimes/credentials" element={<Navigate to="/runtimes?tab=credentials" replace />} />
         <Route
           path="/runtimes/:runtimeId"
           element={<RequireAuth><RuntimeDetailPage /></RequireAuth>}
@@ -241,7 +279,7 @@ export default function App() {
           path="/notifications"
           element={<RequireAuth><NotificationManagement /></RequireAuth>}
         />
-        <Route path="/settings/runtime-credentials" element={<Navigate to="/runtimes/credentials" replace />} />
+        <Route path="/settings/runtime-credentials" element={<Navigate to="/runtimes?tab=credentials" replace />} />
         <Route path="/" element={<Navigate to="/accounts" replace />} />
         <Route path="*" element={<p>Not found</p>} />
       </Routes>
