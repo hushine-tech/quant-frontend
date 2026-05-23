@@ -39,15 +39,13 @@ assert.equal(
 
 assert.equal(
   source.includes("runtime-management-sidebar"),
-  true,
-  "Runtime Management should render a right-side operation sidebar",
+  false,
+  "Runtime Management primary page should no longer render a right-side operation sidebar",
 );
 
-assert.equal(
-  source.includes("New self-hosted runtime"),
-  true,
-  "Runtime Management should expose self-hosted runtime creation guidance in the sidebar",
-);
+for (const token of ["PageHeader", "PageTabs", "All Runtimes", "Credentials", "Failure Overview", "RuntimeCredentialsPanel"]) {
+  assert.equal(source.includes(token), true, `Runtime Management should include ${token}`);
+}
 
 assert.equal(
   source.includes("listRuntimeAdmissionFailures(5)"),

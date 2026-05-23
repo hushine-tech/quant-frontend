@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
+import PageHeader from "@/components/PageHeader";
+import PageTabs, { type PageTab } from "@/components/PageTabs";
 import {
   cancelMarketDataRequest,
   createMarketDataRequest,
@@ -20,7 +21,7 @@ const SUPPORTED_EXCHANGES = ["binance"] as const;
 const SUPPORTED_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
 type MarketDataTab = "live" | "coverage" | "data" | "requests";
 
-const MARKET_DATA_TABS: Array<{ id: MarketDataTab; label: string }> = [
+const MARKET_DATA_TABS: Array<PageTab<MarketDataTab>> = [
   { id: "live", label: "Live Streams" },
   { id: "coverage", label: "Historical Coverage" },
   { id: "data", label: "Data Viewer" },
@@ -120,64 +121,52 @@ export default function MarketDataPage() {
 
   return (
     <div>
-      <p className="muted" style={{ marginBottom: "0.75rem" }}>
-        <Link to="/accounts">← Back to accounts</Link>
-      </p>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <h1 style={{ margin: 0 }}>Market Data</h1>
+      <PageHeader
+        title="Market Data"
+        description="Manage live streams, historical coverage, raw kline inspection, and download requests."
+        loading={loading}
+        onRefresh={load}
+        actions={(
         <button className="primary" onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? "Cancel" : "+ Request Market Data"}
+          {showCreate ? "Cancel Request" : "Request Market Data"}
         </button>
-      </div>
+        )}
+      />
 
-      <div className="runtime-management-tabs" role="tablist" aria-label="Market data sections">
-        {MARKET_DATA_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            className={`runtime-management-tab ${activeTab === tab.id ? "runtime-management-tab--active" : ""}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <PageTabs tabs={MARKET_DATA_TABS} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Market data sections">
+        {showCreate || activeTab === "requests" ? (
+          <CreateRequestForm
+            onCreated={() => {
+              setShowCreate(false);
+              load();
+            }}
+          />
+        ) : null}
 
-      {showCreate || activeTab === "requests" ? (
-        <CreateRequestForm
-          onCreated={() => {
-            setShowCreate(false);
-            load();
-          }}
-        />
-      ) : null}
+        {err ? <p className="error">{err}</p> : null}
+        {loading && entries.length === 0 ? <p className="muted">Loading…</p> : null}
 
-      {err ? <p className="error">{err}</p> : null}
-      {loading && entries.length === 0 ? <p className="muted">Loading…</p> : null}
+        {activeTab === "coverage" ? <HistoricalCoveragePanel onRequestCreated={load} /> : null}
+        {activeTab === "data" ? <KlineDataViewerPanel /> : null}
 
-      {activeTab === "coverage" ? <HistoricalCoveragePanel onRequestCreated={load} /> : null}
-      {activeTab === "data" ? <KlineDataViewerPanel /> : null}
+        {activeTab === "live" ? (
+          <RequestList
+            entries={liveEntries}
+            loading={loading}
+            emptyText="No live streams yet."
+            onCancel={handleCancel}
+          />
+        ) : null}
 
-      {activeTab === "live" ? (
-        <RequestList
-          entries={liveEntries}
-          loading={loading}
-          emptyText="No live streams yet."
-          onCancel={handleCancel}
-        />
-      ) : null}
-
-      {activeTab === "requests" ? (
-        <RequestList
-          entries={historicalEntries}
-          loading={loading}
-          emptyText="No historical requests yet."
-          onCancel={handleCancel}
-        />
-      ) : null}
+        {activeTab === "requests" ? (
+          <RequestList
+            entries={historicalEntries}
+            loading={loading}
+            emptyText="No historical requests yet."
+            onCancel={handleCancel}
+          />
+        ) : null}
+      </PageTabs>
     </div>
   );
 }

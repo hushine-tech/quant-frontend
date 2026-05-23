@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
+import PageHeader from "@/components/PageHeader";
+import PageTabs, { type PageTab } from "@/components/PageTabs";
+import { RuntimeCredentialsPanel } from "@/pages/RuntimeCredentials";
 import {
   cancelRuntime,
   ensureHostedRuntime,
@@ -69,14 +72,27 @@ function isActiveSessionStatus(status: string): boolean {
   return status === "running" || status === "stopping";
 }
 
-type RuntimeManagementTab = "runtimes" | "failures";
+type RuntimeManagementTab = "runtimes" | "credentials" | "failures";
+
+const runtimeTabs: Array<PageTab<RuntimeManagementTab>> = [
+  { id: "runtimes", label: "All Runtimes" },
+  { id: "credentials", label: "Credentials" },
+  { id: "failures", label: "Failure Overview" },
+];
+
+function normalizeRuntimeTab(value: string | null): RuntimeManagementTab {
+  if (value === "credentials") return "credentials";
+  if (value === "failures") return "failures";
+  return "runtimes";
+}
 
 export default function RuntimeManagement() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [runtimes, setRuntimes] = useState<Runtime[]>([]);
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [activeSessionCounts, setActiveSessionCounts] = useState<Map<string, number>>(new Map());
   const [activeSessionLinks, setActiveSessionLinks] = useState<Map<string, Session>>(new Map());
-  const [activeTab, setActiveTab] = useState<RuntimeManagementTab>("runtimes");
+  const [activeTab, setActiveTab] = useState<RuntimeManagementTab>(() => normalizeRuntimeTab(searchParams.get("tab")));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -128,6 +144,15 @@ export default function RuntimeManagement() {
     void load();
   }, []);
 
+  useEffect(() => {
+    setActiveTab(normalizeRuntimeTab(searchParams.get("tab")));
+  }, [searchParams]);
+
+  function changeTab(tab: RuntimeManagementTab) {
+    setActiveTab(tab);
+    setSearchParams(tab === "runtimes" ? {} : { tab });
+  }
+
   async function createHosted() {
     setCreating(true);
     setError(null);
@@ -166,44 +191,47 @@ export default function RuntimeManagement() {
 
   return (
     <div>
-      <div className="page-heading">
-        <div>
-          <h1>Runtime Management</h1>
-          <p className="muted">Hosted and self-hosted execution runtimes for this user.</p>
-        </div>
-        <Link to="/runtimes/credentials">Runtime Credentials</Link>
-      </div>
+      <PageHeader
+        title="Runtime Management"
+        description="Manage hosted and self-hosted runtimes for strategy execution and debugging."
+        loading={loading}
+        onRefresh={load}
+      />
 
       {notice ? <p className="muted">{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
       {loading ? <p className="muted">Loading runtimes...</p> : null}
 
-      <div className="runtime-management-shell">
-        <main className="runtime-management-main">
-          <div className="runtime-management-tabs" role="tablist" aria-label="Runtime management sections">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "runtimes"}
-              className={`runtime-management-tab ${activeTab === "runtimes" ? "runtime-management-tab--active" : ""}`}
-              onClick={() => setActiveTab("runtimes")}
-            >
-              All runtimes
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "failures"}
-              className={`runtime-management-tab ${activeTab === "failures" ? "runtime-management-tab--active" : ""}`}
-              onClick={() => setActiveTab("failures")}
-            >
-              Failure overview
-            </button>
-          </div>
-
-          {activeTab === "runtimes" ? (
-            <section className="card runtime-management-panel">
-              <h2 className="section-title" style={{ marginTop: 0 }}>All runtimes</h2>
+      <PageTabs tabs={runtimeTabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Runtime management sections">
+        {activeTab === "runtimes" ? (
+          <>
+            <div className="primary-toolbar">
+              <div className="runtime-create-card">
+                <label>
+                  <span>Runtime name</span>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={creating}
+                    placeholder="hosted-brave-river"
+                  />
+                </label>
+                <label>
+                  <span>Resource profile</span>
+                  <select value={resourceProfile} onChange={(e) => setResourceProfile(e.target.value)} disabled={creating}>
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
+                    <option value="large">large</option>
+                  </select>
+                </label>
+                <button type="button" className="primary" onClick={() => void createHosted()} disabled={creating}>
+                  {creating ? "Starting..." : "Start hosted runtime"}
+                </button>
+              </div>
+              <button type="button" onClick={() => changeTab("credentials")}>
+                New self-hosted runtime
+              </button>
+            </div>
               {!loading && runtimes.length === 0 ? (
                 <p className="muted" style={{ margin: 0 }}>No runtimes found.</p>
               ) : null}
@@ -280,12 +308,16 @@ export default function RuntimeManagement() {
                   </table>
                 </div>
               ) : null}
-            </section>
-          ) : null}
+          </>
+        ) : null}
 
-          {activeTab === "failures" ? (
-            <section className="card runtime-management-panel">
-              <h2 className="section-title" style={{ marginTop: 0 }}>Failure overview</h2>
+        {activeTab === "credentials" ? (
+          <RuntimeCredentialsPanel />
+        ) : null}
+
+        {activeTab === "failures" ? (
+          <>
+              <h2 className="section-title" style={{ marginTop: 0 }}>Failure Overview</h2>
               <p className="muted">Latest 5 self-hosted runtime startup or admission failures.</p>
               {!loading && admissionFailures.length === 0 ? (
                 <p className="muted" style={{ margin: 0 }}>No recent runtime startup failures.</p>
@@ -334,75 +366,9 @@ export default function RuntimeManagement() {
                   </table>
                 </div>
               ) : null}
-            </section>
-          ) : null}
-        </main>
-
-        <aside className="runtime-management-sidebar" aria-label="Runtime operations">
-          <section className="card runtime-action-card">
-            <h2 className="section-title" style={{ marginTop: 0 }}>New hosted runtime</h2>
-            <div className="runtime-create-card runtime-create-card--stacked">
-              <label>
-                <span>Runtime name</span>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={creating}
-                  placeholder="hosted-brave-river"
-                />
-              </label>
-              <label>
-                <span>Resource profile</span>
-                <select value={resourceProfile} onChange={(e) => setResourceProfile(e.target.value)} disabled={creating}>
-                  <option value="small">small</option>
-                  <option value="medium">medium</option>
-                  <option value="large">large</option>
-                </select>
-              </label>
-              <button type="button" className="primary" onClick={() => void createHosted()} disabled={creating}>
-                {creating ? "Starting..." : "Start hosted runtime"}
-              </button>
-            </div>
-          </section>
-
-          <section className="card runtime-action-card">
-            <h2 className="section-title" style={{ marginTop: 0 }}>New self-hosted runtime</h2>
-            <p className="muted">
-              Issue a runtime credential, then start the Docker runtime on your own host with that credential.
-            </p>
-            <Link className="runtime-action-link" to="/runtimes/credentials">Open runtime credentials</Link>
-          </section>
-
-          <section className="card runtime-action-card">
-            <div className="runtime-side-title">
-              <h2 className="section-title" style={{ marginTop: 0 }}>Recent startup failures</h2>
-              <button type="button" onClick={() => setActiveTab("failures")}>View</button>
-            </div>
-            {admissionFailures.length === 0 ? (
-              <p className="muted" style={{ margin: 0 }}>No recent failures.</p>
-            ) : (
-              <div className="runtime-failure-list">
-                {admissionFailures.map((f) => (
-                  <div className="runtime-failure-item" key={f.admission_failure_id || `${f.credential_key_id}-${f.requested_runtime_id}`}>
-                    <div className="runtime-failure-item__title">
-                      {f.requested_runtime_id ? (
-                        <Link to={`/runtimes/${encodeURIComponent(f.requested_runtime_id)}`}>
-                          {f.requested_name || f.requested_runtime_id}
-                        </Link>
-                      ) : (
-                        <span>{f.requested_name || f.failure_code || "startup failure"}</span>
-                      )}
-                      <span>{f.attempt_count || 1}x</span>
-                    </div>
-                    <p>{f.reason || f.failure_code || "-"}</p>
-                    <p className="muted">{fmtTime(f.last_seen_at)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </aside>
-      </div>
+          </>
+        ) : null}
+      </PageTabs>
     </div>
   );
 }

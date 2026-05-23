@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import PageHeader from "@/components/PageHeader";
+import PageTabs, { type PageTab } from "@/components/PageTabs";
 import {
   confirmNotificationBinding,
   createNotificationBindCode,
@@ -14,7 +16,7 @@ import { formatUTCWithLocal } from "@/utils/time";
 
 type NotificationTab = "overview" | "telegram" | "preferences" | "delivery";
 
-const tabs: Array<{ id: NotificationTab; label: string }> = [
+const tabs: Array<PageTab<NotificationTab>> = [
   { id: "overview", label: "Overview" },
   { id: "telegram", label: "Telegram Binding" },
   { id: "preferences", label: "Preferences" },
@@ -186,35 +188,19 @@ export default function NotificationManagement() {
 
   return (
     <div>
-      <div className="page-heading">
-        <div>
-          <h1>Notification Management</h1>
-          <p className="muted">Telegram delivery for runtime, strategy, order, and custom strategy messages.</p>
-        </div>
-        <button type="button" onClick={() => void load()} disabled={loading}>Refresh</button>
-      </div>
+      <PageHeader
+        title="Notification Management"
+        description="Telegram delivery for runtime, strategy, order, and custom strategy messages."
+        loading={loading}
+        onRefresh={load}
+      />
 
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p className="env-banner env-banner--backtest">{notice}</p> : null}
       {loading ? <p className="muted">Loading notification settings...</p> : null}
 
       {settings ? (
-        <>
-          <div className="notification-tabs" role="tablist" aria-label="Notification sections">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab.id}
-                className={`notification-tab ${activeTab === tab.id ? "notification-tab--active" : ""}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
+        <PageTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Notification sections">
           {activeTab === "overview" ? (
             <section className="card">
               <h2 className="section-title" style={{ marginTop: 0 }}>Overview</h2>
@@ -360,7 +346,7 @@ export default function NotificationManagement() {
               </div>
             </section>
           ) : null}
-        </>
+        </PageTabs>
       ) : null}
     </div>
   );

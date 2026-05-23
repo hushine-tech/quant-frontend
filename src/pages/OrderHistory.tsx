@@ -10,6 +10,7 @@ import {
   type Page,
   type Strategy,
 } from "@/api/client";
+import PageHeader from "@/components/PageHeader";
 import OrderTree from "@/components/OrderTree";
 
 // Order-history flat queries return ``{ items, total }``; OrderTree's fetchers
@@ -31,6 +32,7 @@ function toTreePage<T>(
 export default function OrderHistory() {
   const [accountId, setAccountId] = useState<string>("");
   const [strategyId, setStrategyId] = useState<string>("");
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsErr, setAccountsErr] = useState<string | null>(null);
@@ -50,7 +52,7 @@ export default function OrderHistory() {
 
   // resetKey collapses any expanded child rows and reloads the top-level
   // intents list whenever the user changes a top filter.
-  const resetKey = `${accountId}|${strategyId}`;
+  const resetKey = `${accountId}|${strategyId}|${refreshTick}`;
 
   // The strategy filter applies through the entire drill-down so child fetches
   // stay scoped to the same strategy as the parent intent.
@@ -88,10 +90,14 @@ export default function OrderHistory() {
 
   return (
     <div>
-      <h1 style={{ marginBottom: "1rem" }}>Order History</h1>
+      <PageHeader
+        title="Order History"
+        description="Inspect order intents, attempts, exchange orders, and fills."
+        onRefresh={() => setRefreshTick((value) => value + 1)}
+      />
 
       <div className="card">
-        <div className="order-history-filters">
+        <div className="filter-toolbar">
           <label className="order-history-filter order-history-filter--account" htmlFor="order-history-account">
             <span>Account</span>
             <select

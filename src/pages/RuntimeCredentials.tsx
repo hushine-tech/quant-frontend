@@ -103,7 +103,7 @@ function dockerCommandForCredential(issued: IssuedRuntimeCredential): string {
   return lines.join("\n");
 }
 
-export default function RuntimeCredentials() {
+export function RuntimeCredentialsPanel() {
   const [creds, setCreds] = useState<RuntimeCredential[]>([]);
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,12 +188,9 @@ export default function RuntimeCredentials() {
   };
 
   return (
-    <div style={{ maxWidth: "960px" }}>
-      <p className="muted" style={{ marginBottom: "0.75rem" }}>
-        <Link to="/runtimes">Back to Runtime Management</Link>
-      </p>
-      <h1>Runtime Credentials</h1>
-      <p style={{ color: "#555", fontSize: "0.95rem" }}>
+    <div>
+      <h2 className="section-title" style={{ marginTop: 0 }}>Runtime Credentials</h2>
+      <p className="muted">
         Each self-hosted strategy-runtime container needs a credential to
         connect to the platform. The credential is an Ed25519 keypair —
         the private half is downloaded once when you generate it and is
@@ -453,4 +450,8 @@ export default function RuntimeCredentials() {
       )}
     </div>
   );
+}
+
+export default function RuntimeCredentials() {
+  return <RuntimeCredentialsPanel />;
 }
