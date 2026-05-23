@@ -12,7 +12,12 @@ const modes = [
 type SpotRow = { symbol: string; qty: string; price: string; avg: string };
 type FutRow = { symbol: string; direction: string; initial_balance: string; leverage: string; fee_rate: string };
 
-export default function AccountNew() {
+type AccountNewProps = {
+  embedded?: boolean;
+  onCreated?: () => void;
+};
+
+export default function AccountNew({ embedded = false, onCreated }: AccountNewProps = {}) {
   const nav = useNavigate();
   const [name, setName] = useState("");
   const [mode, setMode] = useState(0);
@@ -146,7 +151,11 @@ export default function AccountNew() {
     setLoading(true);
     try {
       const acc = await createAccount(buildPayload());
-      nav(`/accounts/${acc.account_id}`, { replace: true });
+      if (onCreated) {
+        onCreated();
+      } else {
+        nav(`/accounts/${acc.account_id}`, { replace: true });
+      }
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Create failed");
     } finally {
@@ -160,8 +169,8 @@ export default function AccountNew() {
   if (step === "preview") {
     return (
       <div>
-        <h1>Confirm Account</h1>
-        <p className="muted"><Link to="/accounts">Back to list</Link></p>
+        {embedded ? null : <h1>Confirm Account</h1>}
+        {embedded ? null : <p className="muted"><Link to="/accounts">Back to list</Link></p>}
         {err ? <p className="error">{err}</p> : null}
 
         <div className="card">
@@ -255,8 +264,8 @@ export default function AccountNew() {
   // ── Edit step ──────────────────────────────────────────────────────────
   return (
     <div>
-      <h1>New account</h1>
-      <p className="muted"><Link to="/accounts">Back to list</Link></p>
+      {embedded ? null : <h1>New account</h1>}
+      {embedded ? null : <p className="muted"><Link to="/accounts">Back to list</Link></p>}
       <div className="card">
         {err ? <p className="error">{err}</p> : null}
         <form onSubmit={(e) => { e.preventDefault(); setStep("preview"); }}>

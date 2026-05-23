@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
+import PageHeader from "@/components/PageHeader";
+import PageTabs, { type PageTab } from "@/components/PageTabs";
 import {
   listStrategies,
   createStrategy,
@@ -8,11 +10,18 @@ import {
   type Strategy,
 } from "@/api/client";
 
+type StrategyTab = "strategies" | "create";
+
+const tabs: Array<PageTab<StrategyTab>> = [
+  { id: "strategies", label: "Strategies" },
+  { id: "create", label: "Create Strategy" },
+];
+
 export default function StrategyList() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [activeTab, setActiveTab] = useState<StrategyTab>("strategies");
 
   async function load() {
     setLoading(true);
@@ -40,66 +49,80 @@ export default function StrategyList() {
 
   return (
     <div>
-      <p className="muted" style={{ marginBottom: "0.75rem" }}>
-        <Link to="/accounts">← Back to accounts</Link>
-      </p>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <h1 style={{ margin: 0 }}>Strategies</h1>
-        <button className="primary" onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? "Cancel" : "+ New Strategy"}
-        </button>
-      </div>
-
-      {showCreate && (
-        <CreateStrategyForm
-          onCreated={() => { setShowCreate(false); load(); }}
-        />
-      )}
+      <PageHeader
+        title="Strategy Management"
+        description="Create, archive, and inspect strategy definitions."
+        loading={loading}
+        onRefresh={activeTab === "strategies" ? load : undefined}
+      />
 
       {err ? <p className="error">{err}</p> : null}
-      {loading ? <p className="muted">Loading…</p> : null}
-
-      {!loading && strategies.length === 0 ? (
-        <div className="card"><p className="muted">No strategies yet. Create one above.</p></div>
-      ) : null}
-
-      {strategies.map((s) => (
-        <div key={s.strategy_id} className="card" style={{ marginBottom: "0.75rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div>
-              <Link to={`/strategies/${s.strategy_id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <strong>{s.name}</strong>{" "}
-                <span className="muted">v{s.version}</span>
-              </Link>
-              {s.archived ? (
-                <span className="status-badge status-badge--stopped" style={{ marginLeft: "0.5rem" }}>archived</span>
-              ) : (
-                <span className="status-badge status-badge--completed" style={{ marginLeft: "0.5rem" }}>active</span>
-              )}
-              {s.description ? <p className="muted" style={{ margin: "0.25rem 0 0" }}>{s.description}</p> : null}
-              <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
-                ID: {s.strategy_id} · Created {formatUTCWithLocal(s.created_at)}
-              </p>
-            </div>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <Link
-                to={`/strategies/${s.strategy_id}`}
-                style={{ fontSize: "0.8rem" }}
-              >
-                View
-              </Link>
-              {!s.archived ? (
-                <button
-                  style={{ fontSize: "0.8rem" }}
-                  onClick={() => handleArchive(s.strategy_id)}
-                >
-                  Archive
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ))}
+      <PageTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Strategy sections">
+        {activeTab === "strategies" ? (
+          <>
+            {loading ? <p className="muted">Loading strategies...</p> : null}
+            {!loading && strategies.length === 0 ? (
+              <p className="muted">No strategies yet.</p>
+            ) : null}
+            {strategies.length > 0 ? (
+              <div className="table-scroll">
+                <table className="compact full-width-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>ID</th>
+                      <th>Version</th>
+                      <th>Status</th>
+                      <th>Description</th>
+                      <th>Created</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {strategies.map((strategy) => (
+                      <tr key={strategy.strategy_id}>
+                        <td>
+                          <Link to={`/strategies/${strategy.strategy_id}`}>
+                            {strategy.name}
+                          </Link>
+                        </td>
+                        <td><code>{strategy.strategy_id}</code></td>
+                        <td>{strategy.version}</td>
+                        <td>
+                          {strategy.archived ? (
+                            <span className="status-badge status-badge--stopped">archived</span>
+                          ) : (
+                            <span className="status-badge status-badge--completed">active</span>
+                          )}
+                        </td>
+                        <td>{strategy.description || "-"}</td>
+                        <td>{formatUTCWithLocal(strategy.created_at)}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                            <Link to={`/strategies/${strategy.strategy_id}`}>View</Link>
+                            {!strategy.archived ? (
+                              <button type="button" onClick={() => void handleArchive(strategy.strategy_id)}>
+                                Archive
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <CreateStrategyForm
+            onCreated={() => {
+              setActiveTab("strategies");
+              void load();
+            }}
+          />
+        )}
+      </PageTabs>
     </div>
   );
 }
@@ -131,8 +154,8 @@ function CreateStrategyForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <div className="card" style={{ marginBottom: "1rem" }}>
-      <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>New Strategy</p>
+    <div>
+      <p style={{ fontWeight: 600, marginTop: 0, marginBottom: "0.75rem" }}>Create Strategy</p>
       <form className="strategy-new-form" onSubmit={handleSubmit}>
         <div className="strategy-new-form__row-2">
           <label className="field">
