@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import { FilterField } from "@/components/FilterControls";
 import {
   cancelMarketDataRequest,
   createMarketDataRequest,
@@ -394,51 +395,47 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
   return (
     <div className="card" style={{ marginBottom: "1rem" }}>
       <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Historical Coverage</p>
-      <form className="market-data-form" onSubmit={handleQuery}>
-        <label className="field">
-          <span>Exchange</span>
+      <form className="filter-panel" onSubmit={handleQuery}>
+        <FilterField label="Exchange">
           <select value={exchange} onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}>
             {SUPPORTED_EXCHANGES.map((x) => (
               <option key={x} value={x}>{x}</option>
             ))}
           </select>
-        </label>
+        </FilterField>
 
-        <label className="field">
-          <span>Market</span>
+        <FilterField label="Market">
           <select value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
             <option value="futures">futures</option>
             <option value="spot">spot</option>
           </select>
-        </label>
+        </FilterField>
 
         <SymbolPicker
           market={market === "futures" ? "usdm_futures" : "spot"}
           label="Symbol"
           onAdd={setSymbol}
           selected={symbol}
+          className="filter-field filter-field--wide"
         />
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>Interval</span>
+        <FilterField label="Interval">
           <select value={interval} onChange={(e) => setInterval(e.target.value)}>
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}
           </select>
-        </label>
+        </FilterField>
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>Start</span>
+        <FilterField label="Start">
           <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
-        </label>
+        </FilterField>
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>End</span>
+        <FilterField label="End">
           <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
-        </label>
+        </FilterField>
 
-        <p style={{ marginTop: "0.75rem" }}>
+        <p className="filter-action">
           <button type="submit" className="primary" disabled={loading || !symbol}>
             {loading ? "Checking…" : "Check Coverage"}
           </button>
@@ -531,52 +528,47 @@ function KlineDataViewerPanel() {
   return (
     <div className="card" style={{ marginBottom: "1rem" }}>
       <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Data Viewer</p>
-      <form className="market-data-form" onSubmit={handleQuery}>
-        <label className="field">
-          <span>Exchange</span>
+      <form className="filter-panel" onSubmit={handleQuery}>
+        <FilterField label="Exchange">
           <select value={exchange} onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}>
             {SUPPORTED_EXCHANGES.map((x) => (
               <option key={x} value={x}>{x}</option>
             ))}
           </select>
-        </label>
+        </FilterField>
 
-        <label className="field">
-          <span>Market</span>
+        <FilterField label="Market">
           <select value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
             <option value="futures">futures</option>
             <option value="spot">spot</option>
           </select>
-        </label>
+        </FilterField>
 
         <SymbolPicker
           market={market === "futures" ? "usdm_futures" : "spot"}
           label="Symbol"
           onAdd={setSymbol}
           selected={symbol}
+          className="filter-field filter-field--wide"
         />
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>Interval</span>
+        <FilterField label="Interval">
           <select value={interval} onChange={(e) => setInterval(e.target.value)}>
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}
           </select>
-        </label>
+        </FilterField>
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>Start</span>
+        <FilterField label="Start">
           <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
-        </label>
+        </FilterField>
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>End</span>
+        <FilterField label="End">
           <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
-        </label>
+        </FilterField>
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>Limit</span>
+        <FilterField label="Limit">
           <input
             type="number"
             min={1}
@@ -584,9 +576,9 @@ function KlineDataViewerPanel() {
             value={limit}
             onChange={(e) => setLimit(Math.max(1, Math.min(500, Number(e.target.value) || 1)))}
           />
-        </label>
+        </FilterField>
 
-        <p style={{ marginTop: "0.75rem" }}>
+        <p className="filter-action">
           <button type="submit" className="primary" disabled={loading || !symbol}>
             {loading ? "Loading…" : "Load Raw Klines"}
           </button>
@@ -907,58 +899,53 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
   return (
     <div className="card" style={{ marginBottom: "1rem" }}>
       <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>New Market-Data Request</p>
-      <form className="market-data-form" onSubmit={handleSubmit}>
-        <label className="field">
-          <span>Scope</span>
+      <form className="filter-panel" onSubmit={handleSubmit}>
+        <FilterField label="Scope">
           <select value={scope} onChange={(e) => setScope(e.target.value as "live" | "historical")}>
             <option value="live">live</option>
             <option value="historical">historical</option>
           </select>
-        </label>
+        </FilterField>
 
-        <label className="field">
-          <span>Exchange</span>
+        <FilterField label="Exchange">
           <select value={exchange} onChange={(e) => setExchange(e.target.value as (typeof SUPPORTED_EXCHANGES)[number])}>
             {SUPPORTED_EXCHANGES.map((x) => (
               <option key={x} value={x}>{x}</option>
             ))}
           </select>
-        </label>
+        </FilterField>
 
-        <label className="field">
-          <span>Market</span>
+        <FilterField label="Market">
           <select value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
             <option value="futures">futures</option>
             <option value="spot">spot</option>
           </select>
-        </label>
+        </FilterField>
 
         <SymbolPicker
           market={market === "futures" ? "usdm_futures" : "spot"}
           label="Symbol"
           onAdd={setSymbol}
           selected={symbol}
+          className="filter-field filter-field--wide"
         />
 
-        <label className="field" style={{ marginTop: "0.75rem" }}>
-          <span>Interval</span>
+        <FilterField label="Interval">
           <select value={interval} onChange={(e) => setInterval(e.target.value)}>
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}
           </select>
-        </label>
+        </FilterField>
 
         {scope === "historical" ? (
           <>
-            <label className="field" style={{ marginTop: "0.75rem" }}>
-              <span>Start</span>
+            <FilterField label="Start">
               <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
-            </label>
-            <label className="field" style={{ marginTop: "0.75rem" }}>
-              <span>End</span>
+            </FilterField>
+            <FilterField label="End">
               <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
-            </label>
+            </FilterField>
           </>
         ) : (
           <label className="checkbox-row">
@@ -968,7 +955,7 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
         )}
 
         {err ? <p className="error" style={{ marginTop: "0.5rem" }}>{err}</p> : null}
-        <p style={{ marginTop: "0.75rem" }}>
+        <p className="filter-action">
           <button type="submit" className="primary" disabled={submitting || !symbol}>
             {submitting ? "Requesting…" : scope === "historical" ? "Request Historical Data" : "Request Live Data"}
           </button>

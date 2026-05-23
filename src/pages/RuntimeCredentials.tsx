@@ -26,6 +26,7 @@ import {
   type IssuedRuntimeCredential,
   type RuntimeAdmissionFailure,
 } from "../api/client";
+import { FilterField, FilterPanel } from "@/components/FilterControls";
 
 const CREDENTIAL_FILE_VERSION = 1;
 
@@ -103,7 +104,7 @@ function dockerCommandForCredential(issued: IssuedRuntimeCredential): string {
   return lines.join("\n");
 }
 
-export function RuntimeCredentialsPanel() {
+export function RuntimeCredentialsPanel({ showAdmissionFailures = true }: { showAdmissionFailures?: boolean }) {
   const [creds, setCreds] = useState<RuntimeCredential[]>([]);
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,7 +127,7 @@ export function RuntimeCredentialsPanel() {
     try {
       const [data, failureResult] = await Promise.all([
         listRuntimeCredentials(showInactive),
-        listRuntimeAdmissionFailures(10).catch(() => ({ failures: [] })),
+        showAdmissionFailures ? listRuntimeAdmissionFailures(10).catch(() => ({ failures: [] })) : Promise.resolve({ failures: [] }),
       ]);
       setCreds(data);
       setAdmissionFailures(failureResult.failures);
@@ -189,7 +190,7 @@ export function RuntimeCredentialsPanel() {
 
   return (
     <div>
-      <h2 className="section-title" style={{ marginTop: 0 }}>Runtime Credentials</h2>
+      <h2 className="section-title" style={{ marginTop: 0 }}>Self-hosted runtime</h2>
       <p className="muted">
         Each self-hosted strategy-runtime container needs a credential to
         connect to the platform. The credential is an Ed25519 keypair —
@@ -252,45 +253,39 @@ export function RuntimeCredentialsPanel() {
         </div>
       )}
 
-      <section
-        style={{
-          background: "#fafafa",
-          border: "1px solid #ddd",
-          padding: "1rem",
-          margin: "1rem 0",
-          borderRadius: "4px",
-        }}
-      >
-        <h2 style={{ marginTop: 0 }}>Generate new credential</h2>
-        <label style={{ display: "block", margin: "0.5rem 0" }}>
-          Label (optional, e.g. "home VPS"):{" "}
+      <section className="card">
+        <h2 className="section-title" style={{ marginTop: 0 }}>Generate credential</h2>
+        <p className="muted">Generate a one-time credential, then use the downloaded command to start the runtime container.</p>
+        <FilterPanel>
+          <FilterField label="Label">
           <input
             type="text"
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
             disabled={issuing}
             maxLength={64}
-            style={{ marginLeft: "0.5rem", minWidth: "20rem" }}
+            placeholder="home VPS"
           />
-        </label>
-        <label style={{ display: "block", margin: "0.5rem 0" }}>
-          Role:{" "}
+          </FilterField>
+          <FilterField label="Role">
           <select
             value={newRole}
             onChange={(e) => setNewRole(e.target.value as "executor" | "debugger")}
             disabled={issuing}
-            style={{ marginLeft: "0.5rem" }}
           >
             <option value="executor">Executor</option>
             <option value="debugger">Debugger</option>
           </select>
-        </label>
-        <button type="button" onClick={onIssue} disabled={issuing}>
-          {issuing ? "Generating..." : "Generate credential"}
-        </button>
+          </FilterField>
+          <div className="filter-action">
+            <button type="button" className="primary" onClick={onIssue} disabled={issuing}>
+              {issuing ? "Generating..." : "Generate credential"}
+            </button>
+          </div>
+        </FilterPanel>
       </section>
 
-      <div style={{ margin: "1rem 0" }}>
+      <div className="primary-toolbar">
         <label>
           <input
             type="checkbox"
@@ -302,7 +297,6 @@ export function RuntimeCredentialsPanel() {
         <button
           type="button"
           onClick={() => load(includeInactive)}
-          style={{ marginLeft: "1rem" }}
         >
           Refresh
         </button>
@@ -383,7 +377,7 @@ export function RuntimeCredentialsPanel() {
         </div>
       )}
 
-      {!loading && admissionFailures.length > 0 && (
+      {showAdmissionFailures && !loading && admissionFailures.length > 0 && (
         <section
           style={{
             background: "#fafafa",

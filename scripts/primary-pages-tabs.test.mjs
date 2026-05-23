@@ -49,7 +49,7 @@ for (const token of [
 
 for (const token of [
   "All Runtimes",
-  "Credentials",
+  "Create Runtime",
   "Failure Overview",
 ]) {
   assert.equal(files.runtime.includes(token), true, `Runtime Management should include ${token}`);

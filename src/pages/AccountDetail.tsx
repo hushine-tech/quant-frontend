@@ -38,6 +38,7 @@ import {
 import StopSessionDialog from "@/components/StopSessionDialog";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
 import RuntimeSelector from "@/components/RuntimeSelector";
+import { FilterField, FilterPanel } from "@/components/FilterControls";
 
 function envBannerClass(mode: number): string {
   switch (mode) {
@@ -1379,14 +1380,14 @@ function StrategyPanel({
             mode={0}
             label="Runtime"
           />
-          <div style={{ marginBottom: "0.75rem" }}>
-            <div style={{ fontSize: "0.85rem", color: "#475569", marginBottom: "0.35rem" }}>Start</div>
-            <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={{ width: "100%", maxWidth: "20rem" }} />
-          </div>
-          <div style={{ marginBottom: "0.75rem" }}>
-            <div style={{ fontSize: "0.85rem", color: "#475569", marginBottom: "0.35rem" }}>End</div>
-            <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={{ width: "100%", maxWidth: "20rem" }} />
-          </div>
+          <FilterPanel>
+            <FilterField label="Start">
+            <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            </FilterField>
+            <FilterField label="End">
+            <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            </FilterField>
+          </FilterPanel>
 
           {notice ? <p className="muted" style={{ marginTop: "0.5rem" }}>{notice}</p> : null}
           {debugDataset?.dataset_id ? (
@@ -1490,23 +1491,20 @@ function StrategyPanel({
       >
         {pendingStart?.kind === "backtest" && pendingDebuggerStart ? (
           <div style={{ marginTop: "0.75rem" }}>
-            <div style={{ display: "grid", gap: "0.65rem", gridTemplateColumns: "repeat(auto-fit, minmax(8rem, 1fr))" }}>
-              <label>
-                <span>Market</span>
+            <FilterPanel className="filter-panel--compact">
+              <FilterField label="Market">
                 <select value={debugMarket} onChange={(e) => setDebugMarket(e.target.value)}>
                   <option value="futures">futures</option>
                   <option value="spot">spot</option>
                 </select>
-              </label>
-              <label>
-                <span>Symbol</span>
+              </FilterField>
+              <FilterField label="Symbol">
                 <input value={debugSymbol} onChange={(e) => setDebugSymbol(e.target.value.toUpperCase())} />
-              </label>
-              <label>
-                <span>Interval</span>
+              </FilterField>
+              <FilterField label="Interval">
                 <input value={debugInterval} onChange={(e) => setDebugInterval(e.target.value)} />
-              </label>
-            </div>
+              </FilterField>
+            </FilterPanel>
             <p className="muted" style={{ marginBottom: 0 }}>
               After loading, enter the debugger container and run <code>hushine-debug replay</code>.
             </p>
@@ -1706,13 +1704,16 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
 
     <h2 className="section-title">Sessions</h2>
     <div className="card" style={{ marginBottom: "1rem" }}>
-      <input
-        type="text"
-        placeholder="Search session ID..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ width: "100%", fontSize: "0.85rem", padding: "0.35rem 0.5rem", marginBottom: "0.75rem", boxSizing: "border-box" }}
-      />
+      <FilterPanel>
+        <FilterField label="Session ID" wide>
+          <input
+            type="text"
+            placeholder="Search session ID..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </FilterField>
+      </FilterPanel>
 
       {loading ? <p className="muted">Loading...</p> : null}
       {stopError ? <p className="error" style={{ marginBottom: "0.75rem" }}>{stopError}</p> : null}

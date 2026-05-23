@@ -11,6 +11,7 @@ import {
   type Strategy,
 } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
+import { FilterField, FilterPanel } from "@/components/FilterControls";
 import { formatUTCWithLocal } from "@/utils/time";
 
 type SessionRow = Session & {
@@ -131,9 +132,8 @@ export default function SessionManagement() {
       />
       {error ? <p className="error">{error}</p> : null}
       <div className="card">
-        <div className="filter-toolbar">
-          <label>
-            <span>Account</span>
+        <FilterPanel>
+          <FilterField label="Account" wide>
             <select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
               <option value="">All accounts</option>
               {accounts.map((account) => (
@@ -142,9 +142,8 @@ export default function SessionManagement() {
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            <span>Runtime</span>
+          </FilterField>
+          <FilterField label="Runtime" wide>
             <select value={runtimeFilter} onChange={(e) => setRuntimeFilter(e.target.value)}>
               <option value="">All runtimes</option>
               {runtimes.map((runtime) => (
@@ -153,9 +152,8 @@ export default function SessionManagement() {
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            <span>Strategy</span>
+          </FilterField>
+          <FilterField label="Strategy" wide>
             <select value={strategyFilter} onChange={(e) => setStrategyFilter(e.target.value)}>
               <option value="">All strategies</option>
               {strategies.map((strategy) => (
@@ -164,38 +162,33 @@ export default function SessionManagement() {
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            <span>Mode</span>
+          </FilterField>
+          <FilterField label="Mode">
             <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)}>
               <option value="">All modes</option>
               <option value="0">Backtest (0)</option>
               <option value="1">Live (1)</option>
               <option value="2">Testnet (2)</option>
             </select>
-          </label>
-          <label>
-            <span>Status</span>
+          </FilterField>
+          <FilterField label="Status">
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
               {statuses.map((status) => (
                 <option key={status} value={status}>{status}</option>
               ))}
             </select>
-          </label>
-          <label>
-            <span>Started after</span>
+          </FilterField>
+          <FilterField label="Started after">
             <input type="datetime-local" value={startedAfterFilter} onChange={(e) => setStartedAfterFilter(e.target.value)} />
-          </label>
-          <label>
-            <span>Started before</span>
+          </FilterField>
+          <FilterField label="Started before">
             <input type="datetime-local" value={startedBeforeFilter} onChange={(e) => setStartedBeforeFilter(e.target.value)} />
-          </label>
-          <label>
-            <span>Session ID</span>
+          </FilterField>
+          <FilterField label="Session ID" wide>
             <input value={sessionIdFilter} onChange={(e) => setSessionIdFilter(e.target.value)} placeholder="Search session ID" />
-          </label>
-        </div>
+          </FilterField>
+        </FilterPanel>
 
         {loading ? <p className="muted">Loading sessions...</p> : null}
         {!loading && filteredSessions.length === 0 ? <p className="muted">No sessions found.</p> : null}

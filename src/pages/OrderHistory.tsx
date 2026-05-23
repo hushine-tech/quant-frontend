@@ -11,6 +11,7 @@ import {
   type Strategy,
 } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
+import { FilterField, FilterPanel } from "@/components/FilterControls";
 import OrderTree from "@/components/OrderTree";
 
 // Order-history flat queries return ``{ items, total }``; OrderTree's fetchers
@@ -97,9 +98,8 @@ export default function OrderHistory() {
       />
 
       <div className="card">
-        <div className="filter-toolbar">
-          <label className="order-history-filter order-history-filter--account" htmlFor="order-history-account">
-            <span>Account</span>
+        <FilterPanel>
+          <FilterField label="Account" wide>
             <select
               id="order-history-account"
               value={accountId}
@@ -115,10 +115,9 @@ export default function OrderHistory() {
             {accountsErr ? (
               <div className="error" style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}>{accountsErr}</div>
             ) : null}
-          </label>
+          </FilterField>
 
-          <label className="order-history-filter order-history-filter--strategy" htmlFor="order-history-strategy">
-            <span>Strategy</span>
+          <FilterField label="Strategy" wide>
             <select
               id="order-history-strategy"
               value={strategyId}
@@ -134,8 +133,8 @@ export default function OrderHistory() {
             {strategiesErr ? (
               <div className="error" style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}>{strategiesErr}</div>
             ) : null}
-          </label>
-        </div>
+          </FilterField>
+        </FilterPanel>
       </div>
 
       <div className="card">

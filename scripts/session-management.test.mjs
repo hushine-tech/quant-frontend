@@ -8,6 +8,8 @@ const source = readFileSync(join(here, "../src/pages/SessionManagement.tsx"), "u
 
 for (const token of [
   "PageHeader",
+  "FilterPanel",
+  "FilterField",
   "listAccounts",
   "listSessions",
   "listRuntimes",

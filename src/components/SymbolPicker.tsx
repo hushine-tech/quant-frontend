@@ -8,6 +8,7 @@ type Props = {
   disabled?: boolean;
   /** Extra symbols always shown at the top (e.g. TESTUSDT for testing). */
   extraSymbols?: string[];
+  className?: string;
   /**
    * Optional currently-selected symbol. When set, the picker renders a
    * single-select variant: the current value is shown above the search,
@@ -19,7 +20,7 @@ type Props = {
   selected?: string;
 };
 
-export default function SymbolPicker({ market, label, onAdd, disabled, extraSymbols, selected }: Props) {
+export default function SymbolPicker({ market, label, onAdd, disabled, extraSymbols, selected, className }: Props) {
   const singleSelect = selected !== undefined;
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<string[]>([]);
@@ -99,8 +100,10 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   const displayValue = singleSelect && !open ? (selected ?? "") : q;
 
   return (
-    <div ref={rootRef} style={{ marginTop: "0.75rem" }}>
-      <label>{label}</label>
+    <div ref={rootRef} className={className} style={className ? undefined : { marginTop: "0.75rem" }}>
+      <label>
+        <span>{label}</span>
+      </label>
       <input
         type="search"
         placeholder="Type to search symbols…"

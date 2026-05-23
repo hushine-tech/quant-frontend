@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import { FilterField, FilterPanel } from "@/components/FilterControls";
 import { RuntimeCredentialsPanel } from "@/pages/RuntimeCredentials";
 import {
   cancelRuntime,
@@ -72,16 +73,16 @@ function isActiveSessionStatus(status: string): boolean {
   return status === "running" || status === "stopping";
 }
 
-type RuntimeManagementTab = "runtimes" | "credentials" | "failures";
+type RuntimeManagementTab = "runtimes" | "create" | "failures";
 
 const runtimeTabs: Array<PageTab<RuntimeManagementTab>> = [
   { id: "runtimes", label: "All Runtimes" },
-  { id: "credentials", label: "Credentials" },
+  { id: "create", label: "Create Runtime" },
   { id: "failures", label: "Failure Overview" },
 ];
 
 function normalizeRuntimeTab(value: string | null): RuntimeManagementTab {
-  if (value === "credentials") return "credentials";
+  if (value === "create" || value === "credentials") return "create";
   if (value === "failures") return "failures";
   return "runtimes";
 }
@@ -205,33 +206,6 @@ export default function RuntimeManagement() {
       <PageTabs tabs={runtimeTabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Runtime management sections">
         {activeTab === "runtimes" ? (
           <>
-            <div className="primary-toolbar">
-              <div className="runtime-create-card">
-                <label>
-                  <span>Runtime name</span>
-                  <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    disabled={creating}
-                    placeholder="hosted-brave-river"
-                  />
-                </label>
-                <label>
-                  <span>Resource profile</span>
-                  <select value={resourceProfile} onChange={(e) => setResourceProfile(e.target.value)} disabled={creating}>
-                    <option value="small">small</option>
-                    <option value="medium">medium</option>
-                    <option value="large">large</option>
-                  </select>
-                </label>
-                <button type="button" className="primary" onClick={() => void createHosted()} disabled={creating}>
-                  {creating ? "Starting..." : "Start hosted runtime"}
-                </button>
-              </div>
-              <button type="button" onClick={() => changeTab("credentials")}>
-                New self-hosted runtime
-              </button>
-            </div>
               {!loading && runtimes.length === 0 ? (
                 <p className="muted" style={{ margin: 0 }}>No runtimes found.</p>
               ) : null}
@@ -311,8 +285,36 @@ export default function RuntimeManagement() {
           </>
         ) : null}
 
-        {activeTab === "credentials" ? (
-          <RuntimeCredentialsPanel />
+        {activeTab === "create" ? (
+          <div className="runtime-create-grid">
+            <section className="card">
+              <h2 className="section-title" style={{ marginTop: 0 }}>Hosted runtime</h2>
+              <p className="muted">Create a platform-owned executor runtime for backtest and testnet sessions.</p>
+              <FilterPanel>
+                <FilterField label="Runtime name">
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={creating}
+                    placeholder="hosted-brave-river"
+                  />
+                </FilterField>
+                <FilterField label="Resource profile">
+                  <select value={resourceProfile} onChange={(e) => setResourceProfile(e.target.value)} disabled={creating}>
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
+                    <option value="large">large</option>
+                  </select>
+                </FilterField>
+                <div className="filter-action">
+                  <button type="button" className="primary" onClick={() => void createHosted()} disabled={creating}>
+                    {creating ? "Starting..." : "Start hosted runtime"}
+                  </button>
+                </div>
+              </FilterPanel>
+            </section>
+            <RuntimeCredentialsPanel showAdmissionFailures={false} />
+          </div>
         ) : null}
 
         {activeTab === "failures" ? (
