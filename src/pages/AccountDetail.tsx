@@ -7,13 +7,13 @@ import {
   runStrategy,
   getStrategyStatus,
   getDownloadAndRunJob,
-  listStrategies,
+  listStrategiesPage,
   listAccountStrategies,
   mountStrategy,
   unmountStrategy,
   activateStrategy,
   deactivateStrategy,
-  listSessions,
+  listSessionsPage,
   previewBacktestCoverage,
   previewRunStrategy,
   finishSession,
@@ -39,6 +39,9 @@ import StopSessionDialog from "@/components/StopSessionDialog";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
 import RuntimeSelector from "@/components/RuntimeSelector";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
+import PageTabs, { type PageTab } from "@/components/PageTabs";
+import InfiniteTable from "@/components/InfiniteTable";
+import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 
 function envBannerClass(mode: number): string {
   switch (mode) {
@@ -65,6 +68,14 @@ function envLabel(mode: number): string {
       return `Other mode (${mode})`;
   }
 }
+
+type AccountDetailTab = "portfolio" | "run" | "sessions";
+
+const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
+  { id: "portfolio", label: "Portfolio" },
+  { id: "run", label: "Run Strategy" },
+  { id: "sessions", label: "Sessions" },
+];
 
 function sessionStartedAtMs(session: Session): number {
   return Date.parse(session.started_at || session.completed_at || "") || 0;
@@ -145,6 +156,7 @@ export default function AccountDetail() {
   const [wErr, setWErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [wLoading, setWLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<AccountDetailTab>("portfolio");
 
   useEffect(() => {
     if (!id) return;
@@ -199,16 +211,21 @@ export default function AccountDetail() {
         <div className={envBannerClass(mode)} role="status">
           {envLabel(mode)}
         </div>
-        <div className="detail-layout">
-          {/* ════════ Left column: Account + Wallet ════════ */}
-          <div className="detail-layout__left">
-            <h2 className="section-title">Meta</h2>
-            <div className="card">
-              <p><strong style={{ fontSize: "1.1rem" }}>{acc.name}</strong></p>
-              <p className="muted">ID: {acc.account_id} · Mode: {acc.mode} · Created: {formatUTCWithLocal(acc.created_at)}</p>
-            </div>
-
-            <h2 className="section-title">Portfolio</h2>
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <p><strong style={{ fontSize: "1.1rem" }}>{acc.name}</strong></p>
+          {acc.description?.trim() ? <p className="muted">{acc.description.trim()}</p> : null}
+          <p className="muted">
+            ID: {acc.account_id} · Mode: {envLabel(mode)} · Created: {formatUTCWithLocal(acc.created_at)}
+          </p>
+        </div>
+        <PageTabs
+          tabs={accountDetailTabs}
+          activeTab={activeTab}
+          onChange={setActiveTab}
+          ariaLabel="Account detail sections"
+        >
+          {activeTab === "portfolio" ? (
+            <>
             {wLoading ? <p className="muted">Loading wallet…</p> : null}
             {wErr ? <p className="error">{wErr}</p> : null}
             {!wLoading && wallet ? (
@@ -457,18 +474,17 @@ export default function AccountDetail() {
                 </details>
               </>
             ) : null}
-          </div>
+            </>
+          ) : null}
 
-          {/* ════════ Middle column: Strategy ════════ */}
-          <div className="detail-layout__mid">
+          {activeTab === "run" ? (
             <StrategyPanel accountId={acc.account_id} mode={mode} onSessionsChanged={bumpSessionRefreshTick} />
-          </div>
+          ) : null}
 
-          {/* ════════ Right column: Sessions ════════ */}
-          <div className="detail-layout__right">
+          {activeTab === "sessions" ? (
             <SessionPanel accountId={acc.account_id} refreshTick={sessionRefreshTick} />
-          </div>
-        </div>
+          ) : null}
+        </PageTabs>
         </>
       ) : null}
     </div>
@@ -875,7 +891,6 @@ function StrategyPanel({
 
   // Account strategies (mounting panel)
   const [accountStrats, setAccountStrats] = useState<AccountStrategy[]>([]);
-  const [allStrats, setAllStrats] = useState<Strategy[]>([]);
   const [mountErr, setMountErr] = useState<string | null>(null);
   const [selectedMountId, setSelectedMountId] = useState<number | "">("");
 
@@ -888,7 +903,6 @@ function StrategyPanel({
 
   useEffect(() => {
     loadAccountStrats();
-    listStrategies(undefined, true).then(setAllStrats).catch(() => {});
   }, [accountId]);
 
   useEffect(() => {
@@ -1223,7 +1237,6 @@ function StrategyPanel({
 
   const activeStrat = accountStrats.find((s) => s.active);
   const mountedIds = new Set(accountStrats.map((s) => s.strategy.strategy_id));
-  const unmountedStrats = allStrats.filter((s) => !mountedIds.has(s.strategy_id));
   const startRuntimeRole = (startRuntime?.role || "").toLowerCase();
   const selectedDebuggerRuntime = mode === 0 && startRuntimeRole === "debugger";
   const pendingDebuggerStart = pendingStart?.kind === "backtest" && startRuntimeRole === "debugger";
@@ -1280,24 +1293,29 @@ function StrategyPanel({
         )}
         {mountErr ? <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{mountErr}</p> : null}
 
-        {unmountedStrats.length > 0 ? (
-          <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <select
-              value={selectedMountId}
-              onChange={(e) => setSelectedMountId(e.target.value === "" ? "" : Number(e.target.value))}
-              style={{ flex: 1 }}
+        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <AsyncSelect<Strategy>
+              value={selectedMountId === "" ? "" : String(selectedMountId)}
+              placeholder="Mount a strategy"
               disabled={selectedDebuggerRuntime}
-            >
-              <option value="">-- Mount a strategy --</option>
-              {unmountedStrats.map((s) => (
-                <option key={s.strategy_id} value={s.strategy_id}>
-                  {s.name} v{s.version}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setSelectedMountId(value === "" ? "" : Number(value))}
+              loadPage={async (offset, limit, query) => {
+                const page = await listStrategiesPage({ offset, limit, namePrefix: query || undefined, activeOnly: true });
+                return {
+                  ...page,
+                  items: page.items
+                    .filter((s) => !mountedIds.has(s.strategy_id))
+                    .map<AsyncSelectOption<Strategy>>((s) => ({
+                      value: String(s.strategy_id),
+                      label: `${s.name} v${s.version}`,
+                      detail: `#${s.strategy_id}`,
+                      item: s,
+                    })),
+                };
+              }}
+            />
             <button onClick={handleMount} disabled={!selectedMountId || selectedDebuggerRuntime}>Mount</button>
           </div>
-        ) : null}
       </div>
 
       {/* ── Active poll session ── */}
@@ -1534,14 +1552,11 @@ function StrategyPanel({
 
 // ── Session Panel (pagination + search, click → session detail page) ───────
 
-const PAGE_SIZE = 20;
-
 function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTick: number }) {
   const navigate = useNavigate();
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [offset, setOffset] = useState(0);
+  const [loadedSessions, setLoadedSessions] = useState<Session[]>([]);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [tableRefresh, setTableRefresh] = useState(0);
   const [stopError, setStopError] = useState<string | null>(null);
   const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const [finishingSessionId, setFinishingSessionId] = useState<string | null>(null);
@@ -1551,28 +1566,19 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
   const [resuming, setResuming] = useState(false);
 
   useEffect(() => {
-    setOffset(0);
-  }, [accountId]);
+    setTableRefresh((v) => v + 1);
+  }, [accountId, refreshTick]);
 
   useEffect(() => {
-    void load(true);
-  }, [accountId, offset, refreshTick]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      void load(false);
-    }, 3000);
+    const id = window.setInterval(() => setTableRefresh((v) => v + 1), 3000);
     return () => window.clearInterval(id);
-  }, [accountId, offset, refreshTick]);
+  }, []);
 
-  async function load(showLoading: boolean) {
-    if (showLoading) setLoading(true);
-    try {
-      const list = await listSessions(accountId, offset, PAGE_SIZE);
-      setSessions(list);
-    } catch { /* ignore */ }
-    if (showLoading) setLoading(false);
-  }
+  const loadSessionsForTable = async (offset: number, limit: number) => {
+    const page = await listSessionsPage({ account_id: accountId, session_id: search || undefined, offset, limit });
+    setLoadedSessions((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
+    return page;
+  };
 
   async function handleStopListedSession(sessionId: string) {
     setStoppingSessionId(sessionId);
@@ -1585,7 +1591,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       }
       setStopDialogSessionId(null);
       setStopError(null);
-      await load(false);
+      setTableRefresh((v) => v + 1);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to stop session");
     } finally {
@@ -1603,7 +1609,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
         return;
       }
       setStopDialogSessionId(null);
-      await load(false);
+      setTableRefresh((v) => v + 1);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to stop and close session");
     } finally {
@@ -1621,7 +1627,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
         return;
       }
       setStopDialogSessionId(null);
-      await load(false);
+      setTableRefresh((v) => v + 1);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to finish session");
     } finally {
@@ -1638,7 +1644,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
     setResuming(true);
     try {
       const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId);
-      await load(false);
+      setTableRefresh((v) => v + 1);
       setResumeDialogSession(null);
       setResumeRuntimeId("");
       navigate(`/accounts/${accountId}/sessions/${resumed.session_id}`);
@@ -1655,53 +1661,8 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
     setResumeDialogSession(session);
   }
 
-  const filtered = search
-    ? sessions.filter((s) => s.session_id.startsWith(search))
-    : sessions;
-  const latestSession = sessions[0] ?? null;
-
   return (
     <>
-    <h2 className="section-title">Reconciliation</h2>
-    <div className="card" style={{ marginBottom: "1rem" }}>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Reconciliation 目前按 session 组织。打开某个 session 后，可以查看
-        `checkpoint / event / sampled` runs、diff 明细和本地 / 交易所双快照。
-      </p>
-      {latestSession ? (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontWeight: 600 }}>Latest session</div>
-            <div className="muted" style={{ fontSize: "0.85rem" }}>
-              {latestSession.session_id.slice(0, 12)}… · {latestSession.interval} · {latestSession.status}
-              {sessionKindBadge(latestSession)}
-              {latestSession.runtime_id ? (
-                <>
-                  {" · Runtime: "}
-                  <Link to={`/runtimes/${encodeURIComponent(latestSession.runtime_id)}`}>
-                    {latestSession.runtime_name || latestSession.runtime_id}
-                  </Link>
-                  {" · "}
-                  <Link to="/runtimes">Runtime Management</Link>
-                </>
-              ) : (
-                " · Runtime: unbound"
-              )}
-              {latestSession.status === "recoverable" && latestSession.error ? ` · ${latestSession.error}` : ""}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate(`/accounts/${accountId}/sessions/${latestSession.session_id}`)}
-          >
-            View reconciliation
-          </button>
-        </div>
-      ) : (
-        <p className="muted" style={{ marginBottom: 0 }}>No sessions yet.</p>
-      )}
-    </div>
-
     <h2 className="section-title">Sessions</h2>
     <div className="card" style={{ marginBottom: "1rem" }}>
       <FilterPanel>
@@ -1715,119 +1676,50 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
         </FilterField>
       </FilterPanel>
 
-      {loading ? <p className="muted">Loading...</p> : null}
       {stopError ? <p className="error" style={{ marginBottom: "0.75rem" }}>{stopError}</p> : null}
 
-      {!loading && filtered.length === 0 ? (
-        <p className="muted">No sessions found.</p>
-      ) : null}
-
-      {filtered.map((s) => (
-        <div
-          key={s.session_id}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "0.4rem 0.25rem",
-            borderBottom: "1px solid #f1f5f9",
-            cursor: "pointer",
-            borderRadius: "2px",
-          }}
-          onClick={() => navigate(`/accounts/${accountId}/sessions/${s.session_id}`)}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-        >
-          <div>
-            <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{s.session_id.slice(0, 10)}…</span>
-            <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.interval}</span>
-            {s.bars_processed > 0 ? (
-              <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.bars_processed} bars</span>
-            ) : null}
-            {sessionKindBadge(s)}
-            {s.runtime_id ? (
-              <span className="muted" style={{ marginLeft: "0.5rem" }}>
-                Runtime:{" "}
-                <Link
-                  to={`/runtimes/${encodeURIComponent(s.runtime_id)}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {s.runtime_name || s.runtime_id}
-                </Link>
-              </span>
-            ) : (
-              <span className="muted" style={{ marginLeft: "0.5rem" }}>Runtime: unbound</span>
-            )}
-            {s.status === "recoverable" && s.error ? (
-              <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.error}</span>
-            ) : null}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <span className={badgeClass(s.status)}>{s.status}</span>
-            {s.status === "running" ? (
-              <>
-                <button
-                  type="button"
-                  style={{ fontSize: "0.8rem" }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleFinishListedSession(s);
-                  }}
-                  disabled={finishingSessionId === s.session_id || stoppingSessionId === s.session_id}
-                >
-                  {finishingSessionId === s.session_id ? "Finishing…" : "Finish"}
-                </button>
-                <button
-                  type="button"
-                  style={{ fontSize: "0.8rem" }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setStopDialogSessionId(s.session_id);
-                  }}
-                  disabled={stoppingSessionId === s.session_id || finishingSessionId === s.session_id}
-                >
-                  {stoppingSessionId === s.session_id ? "Stopping…" : "Stop"}
-                </button>
-              </>
-            ) : null}
-            {s.status === "stopping" ? (
-              <button type="button" style={{ fontSize: "0.8rem" }} disabled>
-                Stopping…
-              </button>
-            ) : null}
-            {canResumeSession(s, sessions) ? (
-              <button
-                type="button"
-                style={{ fontSize: "0.8rem" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openResumeDialog(s);
-                }}
-              >
-                Resume With New Session
-              </button>
-            ) : null}
-            <span className="muted" style={{ fontSize: "0.8rem" }}>Open</span>
-          </div>
-        </div>
-      ))}
-
-      {/* Pagination */}
-      {!search ? (
-        <div style={{ display: "flex", justifyContent: "center", gap: "1rem", marginTop: "0.75rem" }}>
-          <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-            Previous
-          </button>
-          {filtered.length > 0 ? (
-            <span className="muted" style={{ lineHeight: "2" }}>
-              {offset + 1}–{offset + filtered.length}
-            </span>
-          ) : null}
-          <button disabled={sessions.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>
-            Next
-          </button>
-        </div>
-      ) : null}
+      <InfiniteTable<Session>
+        columns={["Session", "Runtime", "Status", "Bars", "Action"]}
+        loadPage={loadSessionsForTable}
+        refreshKey={`${accountId}-${search}-${tableRefresh}`}
+        emptyText="No sessions found."
+        rowKey={(s) => s.session_id}
+        renderRow={(s) => (
+          <>
+            <td>
+              <Link to={`/accounts/${accountId}/sessions/${s.session_id}`}>{s.session_id.slice(0, 10)}…</Link>
+              <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.interval}</span>
+              {sessionKindBadge(s)}
+            </td>
+            <td>
+              {s.runtime_id ? (
+                <Link to={`/runtimes/${encodeURIComponent(s.runtime_id)}`}>{s.runtime_name || s.runtime_id}</Link>
+              ) : "unbound"}
+            </td>
+            <td><span className={badgeClass(s.status)}>{s.status}</span></td>
+            <td>{s.bars_processed || 0}</td>
+            <td>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <button type="button" onClick={() => navigate(`/accounts/${accountId}/sessions/${s.session_id}`)}>Open</button>
+                {s.status === "running" ? (
+                  <>
+                    <button type="button" onClick={() => void handleFinishListedSession(s)} disabled={finishingSessionId === s.session_id || stoppingSessionId === s.session_id}>
+                      {finishingSessionId === s.session_id ? "Finishing…" : "Finish"}
+                    </button>
+                    <button type="button" onClick={() => setStopDialogSessionId(s.session_id)} disabled={stoppingSessionId === s.session_id || finishingSessionId === s.session_id}>
+                      {stoppingSessionId === s.session_id ? "Stopping…" : "Stop"}
+                    </button>
+                  </>
+                ) : null}
+                {s.status === "stopping" ? <button type="button" disabled>Stopping…</button> : null}
+                {canResumeSession(s, loadedSessions) ? (
+                  <button type="button" onClick={() => openResumeDialog(s)}>Resume With New Session</button>
+                ) : null}
+              </div>
+            </td>
+          </>
+        )}
+      />
     </div>
     <StopSessionDialog
       open={stopDialogSessionId !== null}

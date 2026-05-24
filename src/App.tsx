@@ -9,7 +9,6 @@ import {
 } from "react-router-dom";
 import {
   Bell,
-  BriefcaseBusiness,
   ChartCandlestick,
   ClipboardList,
   Database,
@@ -19,6 +18,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   ScrollText,
+  UsersRound,
 } from "lucide-react";
 import { getToken, setToken } from "@/api/client";
 import AccountManagement from "@/pages/AccountManagement";
@@ -40,7 +40,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 const PRIMARY_NAV_ITEMS = [
-  { to: "/accounts", label: "Account Management", icon: BriefcaseBusiness },
+  { to: "/accounts", label: "Account Management", icon: UsersRound },
   { to: "/strategies", label: "Strategy Management", icon: ScrollText },
   { to: "/market-data", label: "Market Data", icon: ChartCandlestick },
   { to: "/runtimes", label: "Runtime Management", icon: Database },

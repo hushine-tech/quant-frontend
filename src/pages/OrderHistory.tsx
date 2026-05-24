@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  listAccounts,
-  listStrategies,
+  listAccountsPage,
+  listStrategiesPage,
   queryOrderAttempts,
   queryOrderFills,
   queryOrderIntents,
@@ -13,6 +13,7 @@ import {
 import PageHeader from "@/components/PageHeader";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
 import OrderTree from "@/components/OrderTree";
+import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 
 // Order-history flat queries return ``{ items, total }``; OrderTree's fetchers
 // expect the canonical Page<T> shape ``{ items, has_more, next_offset, total }``.
@@ -34,22 +35,6 @@ export default function OrderHistory() {
   const [accountId, setAccountId] = useState<string>("");
   const [strategyId, setStrategyId] = useState<string>("");
   const [refreshTick, setRefreshTick] = useState(0);
-
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [accountsErr, setAccountsErr] = useState<string | null>(null);
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [strategiesErr, setStrategiesErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    listAccounts()
-      .then((list) => { if (!cancelled) setAccounts(list); })
-      .catch((e) => { if (!cancelled) setAccountsErr(e instanceof Error ? e.message : "Load accounts failed"); });
-    listStrategies()
-      .then((list) => { if (!cancelled) setStrategies(list); })
-      .catch((e) => { if (!cancelled) setStrategiesErr(e instanceof Error ? e.message : "Load strategies failed"); });
-    return () => { cancelled = true; };
-  }, []);
 
   // resetKey collapses any expanded child rows and reloads the top-level
   // intents list whenever the user changes a top filter.
@@ -100,39 +85,43 @@ export default function OrderHistory() {
       <div className="card">
         <FilterPanel>
           <FilterField label="Account" wide>
-            <select
-              id="order-history-account"
+            <AsyncSelect<Account>
               value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-            >
-              <option value="">All accounts</option>
-              {accounts.map((a) => (
-                <option key={a.account_id} value={String(a.account_id)}>
-                  {a.account_id} ({a.name})
-                </option>
-              ))}
-            </select>
-            {accountsErr ? (
-              <div className="error" style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}>{accountsErr}</div>
-            ) : null}
+              placeholder="All accounts"
+              onChange={setAccountId}
+              loadPage={async (offset, limit, query) => {
+                const page = await listAccountsPage({ offset, limit });
+                return {
+                  ...page,
+                  items: page.items
+                    .filter((a) => !query || a.name.toLowerCase().includes(query.toLowerCase()) || String(a.account_id).includes(query))
+                    .map<AsyncSelectOption<Account>>((a) => ({
+                      value: String(a.account_id),
+                      label: `${a.account_id} (${a.name})`,
+                      item: a,
+                    })),
+                };
+              }}
+            />
           </FilterField>
 
           <FilterField label="Strategy" wide>
-            <select
-              id="order-history-strategy"
+            <AsyncSelect<Strategy>
               value={strategyId}
-              onChange={(e) => setStrategyId(e.target.value)}
-            >
-              <option value="">All strategies</option>
-              {strategies.map((s) => (
-                <option key={s.strategy_id} value={String(s.strategy_id)}>
-                  {s.strategy_id} - {s.name} v{s.version}{s.archived ? " (archived)" : ""}
-                </option>
-              ))}
-            </select>
-            {strategiesErr ? (
-              <div className="error" style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}>{strategiesErr}</div>
-            ) : null}
+              placeholder="All strategies"
+              onChange={setStrategyId}
+              loadPage={async (offset, limit, query) => {
+                const page = await listStrategiesPage({ offset, limit, namePrefix: query || undefined });
+                return {
+                  ...page,
+                  items: page.items.map<AsyncSelectOption<Strategy>>((s) => ({
+                    value: String(s.strategy_id),
+                    label: `${s.strategy_id} - ${s.name} v${s.version}${s.archived ? " (archived)" : ""}`,
+                    item: s,
+                  })),
+                };
+              }}
+            />
           </FilterField>
         </FilterPanel>
       </div>

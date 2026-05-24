@@ -33,6 +33,7 @@ import StopSessionDialog from "@/components/StopSessionDialog";
 import OrderTree from "@/components/OrderTree";
 import Pager from "@/components/Pager";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
+import PageTabs, { type PageTab } from "@/components/PageTabs";
 
 async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string): Promise<{ session_id: string }> {
   const entries = await listAccountStrategies(accountId);
@@ -100,6 +101,14 @@ const REASON_NAMES: Record<number, string> = {
 // uses offset-based paging with 20 items per page, ordered newest-first.
 // Shared constant so all three lists stay in lockstep.
 const PAGE_SIZE = 20;
+
+type SessionDetailTab = "snapshots" | "reconciliation" | "orders";
+
+const sessionDetailTabs: Array<PageTab<SessionDetailTab>> = [
+  { id: "snapshots", label: "Snapshots" },
+  { id: "reconciliation", label: "Reconciliation" },
+  { id: "orders", label: "Orders" },
+];
 
 function sessionStartedAtMs(session: Session): number {
   return Date.parse(session.started_at || session.completed_at || "") || 0;
@@ -201,38 +210,6 @@ function usePagedList<T>(
   return { items, offset, total, hasMore, loading, error, jump, reload };
 }
 
-// SectionHeader is the click-target for the three collapsible audit sections
-// on this page (Snapshots / Reconciliation / Orders). Keyboard-accessible:
-// Enter / Space activate the toggle when focused.
-function SectionHeader({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
-  return (
-    <h2
-      className="section-title"
-      role="button"
-      tabIndex={0}
-      onClick={onToggle}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      style={{
-        cursor: "pointer",
-        userSelect: "none",
-        display: "flex",
-        alignItems: "center",
-        gap: "0.5rem",
-      }}
-    >
-      <span aria-hidden="true" style={{ width: "1rem", display: "inline-block", textAlign: "center" }}>
-        {open ? "▼" : "▶"}
-      </span>
-      <span>{label}</span>
-    </h2>
-  );
-}
-
 function badgeClass(status: string): string {
   switch (status) {
     case "running": return "status-badge status-badge--running";
@@ -273,17 +250,12 @@ export default function SessionDetailPage() {
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
   const [resuming, setResuming] = useState(false);
 
-  // Section open / loaded state. ``open`` is the current visibility,
-  // ``loaded`` is sticky once the section has been expanded once — it gates
-  // the underlying fetch (see ``usePagedList``'s ``enabled`` flag) so a
-  // never-opened section never fires its list request, and so re-opening
-  // doesn't refetch. Defaults: Orders open (it's the headline section
-  // everyone wants), Snapshots / Reconciliation closed and unloaded.
-  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  // Tab loaded state is sticky once a tab has been opened. Snapshots and
+  // reconciliation stay lazy so a session page does not fan out every audit
+  // query before the user asks for it. Orders are the default tab.
+  const [activeTab, setActiveTab] = useState<SessionDetailTab>("orders");
   const [snapshotsLoaded, setSnapshotsLoaded] = useState(false);
-  const [reconciliationOpen, setReconciliationOpen] = useState(false);
   const [reconciliationLoaded, setReconciliationLoaded] = useState(false);
-  const [ordersOpen, setOrdersOpen] = useState(true);
 
   // Snapshots and Reconciliation are independent paged lists. The Orders
   // section is delegated to the shared <OrderTree> component below — it owns
@@ -317,17 +289,18 @@ export default function SessionDetailPage() {
     return () => { cancelled = true; };
   }, [stableSessionId]);
 
-  // Re-apply default section state on navigation between sessions: Orders
-  // open, Snapshots / Reconciliation closed and unloaded. Without this,
-  // navigating from a session where the user opened Snapshots to a fresh
-  // session would carry the open + loaded flags forward.
+  // Re-apply default tab state on navigation between sessions.
   useEffect(() => {
-    setSnapshotsOpen(false);
+    setActiveTab("orders");
     setSnapshotsLoaded(false);
-    setReconciliationOpen(false);
     setReconciliationLoaded(false);
-    setOrdersOpen(true);
   }, [stableSessionId]);
+
+  function changeAuditTab(tab: SessionDetailTab) {
+    setActiveTab(tab);
+    if (tab === "snapshots") setSnapshotsLoaded(true);
+    if (tab === "reconciliation") setReconciliationLoaded(true);
+  }
 
   useEffect(() => {
     if (!stableSessionId) return;
@@ -695,196 +668,187 @@ export default function SessionDetailPage() {
             ) : null}
           </div>
 
-          {/* ── Snapshots (collapsible, lazy: never fetches until first expand) ── */}
-          <SectionHeader
-            label="Snapshots"
-            open={snapshotsOpen}
-            onToggle={() => {
-              setSnapshotsOpen((o) => !o);
-              setSnapshotsLoaded(true);
-            }}
-          />
-          {snapshotsLoaded ? (
-          <div className="card" style={{ display: snapshotsOpen ? "block" : "none" }}>
-            {snapshotsState.error ? (
-              <p className="error">{snapshotsState.error}</p>
-            ) : snapshots.length === 0 ? (
-              <p className="muted">No snapshots.</p>
-            ) : (
-              snapshots.map((snap, idx) => (
-                <div
-                  key={`${snapshotsState.offset}-${idx}`}
-                  style={{ borderBottom: "1px solid #f1f5f9", padding: "0.4rem 0" }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      cursor: "pointer",
-                      fontSize: "0.9rem",
-                      flexWrap: "wrap",
-                      gap: "0.5rem",
-                    }}
-                    onClick={() => setExpandedSnap(expandedSnap === idx ? null : idx)}
-                  >
-                    <span>
-                      <span className="muted">
-                        {REASON_NAMES[snap.snapshot_reason] ?? `reason=${snap.snapshot_reason}`}
-                      </span>
-                      <span style={{ marginLeft: "0.75rem" }}>TV: {snap.total_value.toFixed(2)}</span>
-                      <span style={{ marginLeft: "0.5rem" }}>WB: {snap.wallet_balance.toFixed(2)}</span>
-                    </span>
-                    <span className="muted" style={{ fontSize: "0.85rem" }}>
-                      {formatUTCWithLocal(snap.time)}
-                    </span>
-                  </div>
-                  {expandedSnap === idx ? (
-                    <div
-                      style={{
-                        fontSize: "0.8rem",
-                        padding: "0.5rem",
-                        background: "#f8fafc",
-                        borderRadius: "4px",
-                        marginTop: "0.4rem",
-                        overflowX: "auto",
-                      }}
-                    >
-                      <p style={{ fontWeight: 600, margin: "0 0 0.25rem" }}>Futures:</p>
-                      <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                        {snap.futures_json}
-                      </pre>
-                      <p style={{ fontWeight: 600, margin: "0.5rem 0 0.25rem" }}>Spot:</p>
-                      <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                        {snap.spot_json}
-                      </pre>
-                    </div>
-                  ) : null}
+          <PageTabs
+            tabs={sessionDetailTabs}
+            activeTab={activeTab}
+            onChange={changeAuditTab}
+            ariaLabel="Session audit sections"
+          >
+            {activeTab === "snapshots" ? (
+              snapshotsLoaded ? (
+                <div>
+                  {snapshotsState.error ? (
+                    <p className="error">{snapshotsState.error}</p>
+                  ) : snapshots.length === 0 ? (
+                    <p className="muted">No snapshots.</p>
+                  ) : (
+                    snapshots.map((snap, idx) => (
+                      <div
+                        key={`${snapshotsState.offset}-${idx}`}
+                        style={{ borderBottom: "1px solid #f1f5f9", padding: "0.4rem 0" }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            cursor: "pointer",
+                            fontSize: "0.9rem",
+                            flexWrap: "wrap",
+                            gap: "0.5rem",
+                          }}
+                          onClick={() => setExpandedSnap(expandedSnap === idx ? null : idx)}
+                        >
+                          <span>
+                            <span className="muted">
+                              {REASON_NAMES[snap.snapshot_reason] ?? `reason=${snap.snapshot_reason}`}
+                            </span>
+                            <span style={{ marginLeft: "0.75rem" }}>TV: {snap.total_value.toFixed(2)}</span>
+                            <span style={{ marginLeft: "0.5rem" }}>WB: {snap.wallet_balance.toFixed(2)}</span>
+                          </span>
+                          <span className="muted" style={{ fontSize: "0.85rem" }}>
+                            {formatUTCWithLocal(snap.time)}
+                          </span>
+                        </div>
+                        {expandedSnap === idx ? (
+                          <div
+                            style={{
+                              fontSize: "0.8rem",
+                              padding: "0.5rem",
+                              background: "#f8fafc",
+                              borderRadius: "4px",
+                              marginTop: "0.4rem",
+                              overflowX: "auto",
+                            }}
+                          >
+                            <p style={{ fontWeight: 600, margin: "0 0 0.25rem" }}>Futures:</p>
+                            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
+                              {snap.futures_json}
+                            </pre>
+                            <p style={{ fontWeight: 600, margin: "0.5rem 0 0.25rem" }}>Spot:</p>
+                            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
+                              {snap.spot_json}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                  <Pager
+                    offset={snapshotsState.offset}
+                    count={snapshots.length}
+                    total={snapshotsState.total}
+                    pageSize={PAGE_SIZE}
+                    loading={snapshotsState.loading}
+                    onJump={snapshotsState.jump}
+                  />
                 </div>
-              ))
-            )}
-            <Pager
-              offset={snapshotsState.offset}
-              count={snapshots.length}
-              total={snapshotsState.total}
-              pageSize={PAGE_SIZE}
-              loading={snapshotsState.loading}
-              onJump={snapshotsState.jump}
-            />
-          </div>
-          ) : null}
+              ) : (
+                <p className="muted">Loading snapshots…</p>
+              )
+            ) : null}
 
-          {/* ── Reconciliation (collapsible, lazy) ── */}
-          <SectionHeader
-            label="Reconciliation"
-            open={reconciliationOpen}
-            onToggle={() => {
-              setReconciliationOpen((o) => !o);
-              setReconciliationLoaded(true);
-            }}
-          />
-          {reconciliationLoaded ? (
-          <div className="card" style={{ display: reconciliationOpen ? "block" : "none" }}>
-            {runsState.error ? (
-              <p className="error">{runsState.error}</p>
-            ) : runs.length === 0 ? (
-              <p className="muted">No reconciliation runs.</p>
-            ) : (
-              runs.map((run, idx) => (
-                <div
-                  key={run.run_id || `${runsState.offset}-${idx}`}
-                  style={{ borderBottom: "1px solid #f1f5f9", padding: "0.5rem 0" }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      cursor: "pointer",
-                      fontSize: "0.9rem",
-                      flexWrap: "wrap",
-                      gap: "0.5rem",
-                    }}
-                    onClick={() => setExpandedRun(expandedRun === idx ? null : idx)}
-                  >
-                    <span style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-                      <span className="status-badge status-badge--idle">{run.run_type || "unknown"}</span>
-                      <span className="muted">
-                        {REASON_NAMES[run.snapshot_reason] ?? `reason=${run.snapshot_reason}`}
-                      </span>
-                      <span style={{ color: run.hard_pass ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                        hard {run.hard_pass ? "pass" : "fail"}
-                      </span>
-                      <span style={{ color: run.soft_pass ? "#16a34a" : "#d97706", fontWeight: 600 }}>
-                        soft {run.soft_pass ? "pass" : "fail"}
-                      </span>
-                      <span className="muted">
-                        H {run.hard_fail_count} · S {run.soft_fail_count} · A {run.advisory_count}
-                      </span>
-                    </span>
-                    <span className="muted" style={{ fontSize: "0.85rem" }}>
-                      {formatUTCWithLocal(run.time)}
-                    </span>
-                  </div>
-                  {expandedRun === idx ? (
-                    <div
-                      style={{
-                        fontSize: "0.8rem",
-                        padding: "0.75rem",
-                        background: "#f8fafc",
-                        borderRadius: "4px",
-                        marginTop: "0.4rem",
-                        overflowX: "auto",
-                      }}
-                    >
-                      <p style={{ margin: "0 0 0.5rem" }}>
-                        <strong>Run ID:</strong> <span style={{ fontFamily: "monospace" }}>{run.run_id}</span>
-                      </p>
-                      <DiffTable title="Hard + Soft Diffs" diffs={run.field_diffs} />
-                      <DiffTable title="Advisory Diffs" diffs={run.advisory_diffs} />
-                      <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Local snapshot:</p>
-                      <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                        {prettyJSON(run.local_snapshot_json)}
-                      </pre>
-                      <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Exchange snapshot:</p>
-                      <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                        {prettyJSON(run.exchange_snapshot_json)}
-                      </pre>
-                    </div>
-                  ) : null}
+            {activeTab === "reconciliation" ? (
+              reconciliationLoaded ? (
+                <div>
+                  {runsState.error ? (
+                    <p className="error">{runsState.error}</p>
+                  ) : runs.length === 0 ? (
+                    <p className="muted">No reconciliation runs.</p>
+                  ) : (
+                    runs.map((run, idx) => (
+                      <div
+                        key={run.run_id || `${runsState.offset}-${idx}`}
+                        style={{ borderBottom: "1px solid #f1f5f9", padding: "0.5rem 0" }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            cursor: "pointer",
+                            fontSize: "0.9rem",
+                            flexWrap: "wrap",
+                            gap: "0.5rem",
+                          }}
+                          onClick={() => setExpandedRun(expandedRun === idx ? null : idx)}
+                        >
+                          <span style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                            <span className="status-badge status-badge--idle">{run.run_type || "unknown"}</span>
+                            <span className="muted">
+                              {REASON_NAMES[run.snapshot_reason] ?? `reason=${run.snapshot_reason}`}
+                            </span>
+                            <span style={{ color: run.hard_pass ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                              hard {run.hard_pass ? "pass" : "fail"}
+                            </span>
+                            <span style={{ color: run.soft_pass ? "#16a34a" : "#d97706", fontWeight: 600 }}>
+                              soft {run.soft_pass ? "pass" : "fail"}
+                            </span>
+                            <span className="muted">
+                              H {run.hard_fail_count} · S {run.soft_fail_count} · A {run.advisory_count}
+                            </span>
+                          </span>
+                          <span className="muted" style={{ fontSize: "0.85rem" }}>
+                            {formatUTCWithLocal(run.time)}
+                          </span>
+                        </div>
+                        {expandedRun === idx ? (
+                          <div
+                            style={{
+                              fontSize: "0.8rem",
+                              padding: "0.75rem",
+                              background: "#f8fafc",
+                              borderRadius: "4px",
+                              marginTop: "0.4rem",
+                              overflowX: "auto",
+                            }}
+                          >
+                            <p style={{ margin: "0 0 0.5rem" }}>
+                              <strong>Run ID:</strong> <span style={{ fontFamily: "monospace" }}>{run.run_id}</span>
+                            </p>
+                            <DiffTable title="Hard + Soft Diffs" diffs={run.field_diffs} />
+                            <DiffTable title="Advisory Diffs" diffs={run.advisory_diffs} />
+                            <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Local snapshot:</p>
+                            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
+                              {prettyJSON(run.local_snapshot_json)}
+                            </pre>
+                            <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Exchange snapshot:</p>
+                            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
+                              {prettyJSON(run.exchange_snapshot_json)}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                  <Pager
+                    offset={runsState.offset}
+                    count={runs.length}
+                    total={runsState.total}
+                    pageSize={PAGE_SIZE}
+                    loading={runsState.loading}
+                    onJump={runsState.jump}
+                  />
                 </div>
-              ))
-            )}
-            <Pager
-              offset={runsState.offset}
-              count={runs.length}
-              total={runsState.total}
-              pageSize={PAGE_SIZE}
-              loading={runsState.loading}
-              onJump={runsState.jump}
-            />
-          </div>
-          ) : null}
+              ) : (
+                <p className="muted">Loading reconciliation runs…</p>
+              )
+            ) : null}
 
-          {/* ── Orders (collapsible; OrderTree owns its own internal lazy children) ── */}
-          <SectionHeader
-            label="Orders"
-            open={ordersOpen}
-            onToggle={() => setOrdersOpen((o) => !o)}
-          />
-          <div className="card" style={{ display: ordersOpen ? "block" : "none" }}>
-            <OrderTree
-              fetchIntents={(offset, limit) => getSessionIntents(stableSessionId, { limit, offset })}
-              fetchAttempts={(intentId, offset, limit) =>
-                getSessionAttempts(stableSessionId, { limit, offset, intent_id: intentId })
-              }
-              fetchOrder={(attemptId, offset, limit) =>
-                getSessionOrders(stableSessionId, { limit, offset, attempt_id: attemptId })
-              }
-              fetchFills={(orderId, offset, limit) =>
-                getSessionFills(stableSessionId, { limit, offset, order_id: orderId })
-              }
-              resetKey={stableSessionId}
-            />
-          </div>
+            {activeTab === "orders" ? (
+              <OrderTree
+                fetchIntents={(offset, limit) => getSessionIntents(stableSessionId, { limit, offset })}
+                fetchAttempts={(intentId, offset, limit) =>
+                  getSessionAttempts(stableSessionId, { limit, offset, intent_id: intentId })
+                }
+                fetchOrder={(attemptId, offset, limit) =>
+                  getSessionOrders(stableSessionId, { limit, offset, attempt_id: attemptId })
+                }
+                fetchFills={(orderId, offset, limit) =>
+                  getSessionFills(stableSessionId, { limit, offset, order_id: orderId })
+                }
+                resetKey={stableSessionId}
+              />
+            ) : null}
+          </PageTabs>
         </>
       ) : null}
       <StopSessionDialog

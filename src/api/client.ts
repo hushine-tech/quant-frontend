@@ -1,6 +1,7 @@
 export type Account = {
   account_id: number;
   name: string;
+  description?: string;
   mode: number;
   created_at: string;
 };
@@ -117,6 +118,7 @@ export type WalletSnapshot = {
 
 export type CreateAccountPayload = {
   name: string;
+  description?: string;
   mode: number;
   api_key?: string;
   api_secret?: string;
@@ -248,6 +250,18 @@ export async function listAccounts(): Promise<Account[]> {
   });
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as Account[];
+}
+
+function applyCollectionPageParams(u: URL, params?: PageParams): void {
+  u.searchParams.set("page", "true");
+  if (params?.limit != null) u.searchParams.set("limit", String(params.limit));
+  if (params?.offset != null) u.searchParams.set("offset", String(params.offset));
+}
+
+export async function listAccountsPage(params?: PageParams): Promise<Page<Account>> {
+  const u = new URL(`${apiBase()}/api/accounts`);
+  applyCollectionPageParams(u, params);
+  return fetchPage<Account>(u);
 }
 
 export async function createAccount(body: CreateAccountPayload): Promise<Account> {
@@ -510,6 +524,14 @@ export async function listStrategies(namePrefix?: string, activeOnly?: boolean):
   return (await res.json()) as Strategy[];
 }
 
+export async function listStrategiesPage(params?: PageParams & { namePrefix?: string; activeOnly?: boolean }): Promise<Page<Strategy>> {
+  const u = new URL(`${apiBase()}/api/strategies`);
+  if (params?.namePrefix) u.searchParams.set("name_prefix", params.namePrefix);
+  if (params?.activeOnly) u.searchParams.set("active_only", "true");
+  applyCollectionPageParams(u, params);
+  return fetchPage<Strategy>(u);
+}
+
 export async function getStrategy(id: number | string): Promise<Strategy> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -621,6 +643,31 @@ export async function listSessions(accountId: number | string, offset?: number, 
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as Session[];
+}
+
+export type SessionPageParams = PageParams & {
+  account_id?: number | string;
+  runtime_id?: string;
+  strategy_id?: number | string;
+  mode?: number | string;
+  status?: string;
+  session_id?: string;
+  started_after_ms?: number;
+  started_before_ms?: number;
+};
+
+export async function listSessionsPage(params?: SessionPageParams): Promise<Page<Session>> {
+  const u = new URL(`${apiBase()}/api/sessions`);
+  if (params?.account_id != null && params.account_id !== "") u.searchParams.set("account_id", String(params.account_id));
+  if (params?.runtime_id) u.searchParams.set("runtime_id", params.runtime_id);
+  if (params?.strategy_id != null && params.strategy_id !== "") u.searchParams.set("strategy_id", String(params.strategy_id));
+  if (params?.mode != null && params.mode !== "") u.searchParams.set("mode", String(params.mode));
+  if (params?.status) u.searchParams.set("status", params.status);
+  if (params?.session_id) u.searchParams.set("session_id", params.session_id);
+  if (params?.started_after_ms) u.searchParams.set("started_after_ms", String(params.started_after_ms));
+  if (params?.started_before_ms) u.searchParams.set("started_before_ms", String(params.started_before_ms));
+  applyCollectionPageParams(u, params);
+  return fetchPage<Session>(u);
 }
 
 export async function getSession(sessionId: string): Promise<Session> {
@@ -1228,6 +1275,12 @@ export async function listMarketDataRequests(): Promise<MarketDataEntry[]> {
   return (await res.json()) as MarketDataEntry[];
 }
 
+export async function listMarketDataRequestsPage(params?: PageParams): Promise<Page<MarketDataEntry>> {
+  const u = new URL(`${apiBase()}/api/market-data/requests`);
+  applyCollectionPageParams(u, params);
+  return fetchPage<MarketDataEntry>(u);
+}
+
 export async function queryMarketDataCoverage(params: {
   exchange: string;
   market: string;
@@ -1568,9 +1621,10 @@ export function runtimeSelectionOptions(runtimes: Runtime[]): RuntimeSelectionOp
   return runtimes.map((rt) => {
     const disabled = runtimeUnavailableReason(rt);
     const source = rt.source === "self_hosted" ? "self-hosted" : rt.source || "runtime";
+    const role = rt.role || "role n/a";
     return {
       runtime_id: rt.runtime_id,
-      label: `${rt.name || rt.runtime_id} · ${source} · ${rt.status || "unknown"}`,
+      label: `${rt.name || rt.runtime_id} · ${source} · ${role} · ${rt.status || "unknown"}`,
       detail: `${rt.resource_profile || "profile n/a"} · ${rt.runtime_id}`,
       routeable: disabled === undefined,
       disabled_reason: disabled,
@@ -1751,6 +1805,16 @@ export async function listRuntimeCredentials(includeInactive = false): Promise<R
   });
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as RuntimeCredential[];
+}
+
+export async function listRuntimeCredentialsPage(
+  includeInactive = false,
+  params?: PageParams,
+): Promise<Page<RuntimeCredential>> {
+  const u = new URL(`${apiBase()}/api/runtime-credentials`);
+  if (includeInactive) u.searchParams.set("include_inactive", "true");
+  applyCollectionPageParams(u, params);
+  return fetchPage<RuntimeCredential>(u);
 }
 
 export async function issueRuntimeCredential(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
@@ -6,7 +6,7 @@ import { FilterField } from "@/components/FilterControls";
 import {
   cancelMarketDataRequest,
   createMarketDataRequest,
-  listMarketDataRequests,
+  listMarketDataRequestsPage,
   queryMarketDataCoverage,
   queryMarketDataKlines,
   type CreateMarketDataRequestPayload,
@@ -17,6 +17,7 @@ import {
   type MarketDataStream,
 } from "@/api/client";
 import SymbolPicker from "@/components/SymbolPicker";
+import InfiniteTable from "@/components/InfiniteTable";
 
 const SUPPORTED_EXCHANGES = ["binance"] as const;
 const SUPPORTED_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
@@ -82,41 +83,36 @@ function parseLocalInputMs(raw: string): number | null {
 }
 
 export default function MarketDataPage() {
-  const [entries, setEntries] = useState<MarketDataEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MarketDataTab>("live");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  async function load() {
+  const loadRequestPage = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
     setErr(null);
     try {
-      const list = await listMarketDataRequests();
-      list.sort((a, b) => b.request.request_id - a.request.request_id);
-      setEntries(list);
+      const page = await listMarketDataRequestsPage({ offset, limit });
+      return {
+        ...page,
+        items: page.items.filter((entry) => entry.request.scope === "live"),
+      };
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Load failed");
+      throw e;
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    load();
-    const id = window.setInterval(load, 15_000);
-    return () => window.clearInterval(id);
   }, []);
 
   async function handleCancel(id: number) {
     try {
       await cancelMarketDataRequest(id);
-      await load();
+      setRefreshKey((v) => v + 1);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Cancel failed");
     }
   }
-
-  const liveEntries = entries.filter((entry) => entry.request.scope === "live");
 
   return (
     <div>
@@ -124,28 +120,27 @@ export default function MarketDataPage() {
         title="Market Data"
         description="Manage live streams, historical coverage, raw kline inspection, and download requests."
         loading={loading}
-        onRefresh={load}
+        onRefresh={() => setRefreshKey((v) => v + 1)}
       />
 
       <PageTabs tabs={MARKET_DATA_TABS} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Market data sections">
         {activeTab === "requests" ? (
           <CreateRequestForm
             onCreated={() => {
-              load();
+              setRefreshKey((v) => v + 1);
             }}
           />
         ) : null}
 
         {err ? <p className="error">{err}</p> : null}
-        {loading && entries.length === 0 ? <p className="muted">Loading…</p> : null}
 
-        {activeTab === "coverage" ? <HistoricalCoveragePanel onRequestCreated={load} /> : null}
+        {activeTab === "coverage" ? <HistoricalCoveragePanel onRequestCreated={() => setRefreshKey((v) => v + 1)} /> : null}
         {activeTab === "data" ? <KlineDataViewerPanel /> : null}
 
         {activeTab === "live" ? (
           <RequestList
-            entries={liveEntries}
-            loading={loading}
+            loadPage={loadRequestPage}
+            refreshKey={`live-${refreshKey}`}
             emptyText="No live streams yet."
             onCancel={handleCancel}
           />
@@ -153,8 +148,8 @@ export default function MarketDataPage() {
 
         {activeTab === "requests" ? (
           <RequestList
-            entries={liveEntries}
-            loading={loading}
+            loadPage={loadRequestPage}
+            refreshKey={`requests-${refreshKey}`}
             emptyText="No live stream requests yet."
             onCancel={handleCancel}
           />
@@ -165,136 +160,39 @@ export default function MarketDataPage() {
 }
 
 function RequestList({
-  entries,
-  loading,
+  loadPage,
+  refreshKey,
   emptyText,
   onCancel,
 }: {
-  entries: MarketDataEntry[];
-  loading: boolean;
+  loadPage: (offset: number, limit: number) => Promise<{ items: MarketDataEntry[]; next_offset: number; has_more: boolean; total: number }>;
+  refreshKey: string;
   emptyText: string;
   onCancel: (id: number) => void;
 }) {
-  if (!loading && entries.length === 0) {
-    return (
-      <div className="card">
-        <p className="muted">{emptyText}</p>
-      </div>
-    );
-  }
   return (
-    <>
-      {entries.map((entry) => (
-        <div key={entry.request.request_id} className="card" style={{ marginBottom: "0.75rem" }}>
-          {entry.request.scope === "historical" ? (
-            <HistoricalRequestCard entry={entry} onCancel={onCancel} />
-          ) : (
-            <LiveRequestCard entry={entry} onCancel={onCancel} />
-          )}
-        </div>
-      ))}
-    </>
-  );
-}
-
-function HistoricalRequestCard({
-  entry,
-  onCancel,
-}: {
-  entry: MarketDataEntry;
-  onCancel: (id: number) => void;
-}) {
-  const { request } = entry;
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <strong>{request.key.symbol}</strong>
-          <span className="muted">
-            {request.key.exchange} · {request.key.market} · {request.key.kind} · {request.key.interval}
-          </span>
-          {statusBadge("historical", "idle")}
-          {requestStatusBadge(request)}
-          {request.ready ? statusBadge("ready", "good") : statusBadge("not ready", "warn")}
-        </div>
-        <p className="muted" style={{ fontSize: "0.82rem", margin: "0.5rem 0 0" }}>
-          requested window:{" "}
-          {request.requested_start_at ? formatUTCWithLocal(request.requested_start_at) : "—"}
-          {" → "}
-          {request.requested_end_at ? formatUTCWithLocal(request.requested_end_at) : "—"}
-        </p>
-        <p className="muted" style={{ fontSize: "0.82rem", margin: "0.25rem 0 0" }}>
-          covered window:{" "}
-          {request.covered_start_at ? formatUTCWithLocal(request.covered_start_at) : "—"}
-          {" → "}
-          {request.covered_end_at ? formatUTCWithLocal(request.covered_end_at) : "—"}
-        </p>
-        <p className="muted" style={{ fontSize: "0.82rem", margin: "0.25rem 0 0" }}>
-          created: {formatUTCWithLocal(request.created_at)}
-        </p>
-        {request.last_error ? (
-          <p className="error" style={{ fontSize: "0.82rem", margin: "0.5rem 0 0" }}>
-            last error: {request.last_error}
-          </p>
-        ) : null}
-      </div>
-      {request.status !== "cancelled" && request.status !== "ready" ? (
-        <button style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }} onClick={() => onCancel(request.request_id)}>
-          Cancel
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function LiveRequestCard({
-  entry,
-  onCancel,
-}: {
-  entry: MarketDataEntry;
-  onCancel: (id: number) => void;
-}) {
-  const { request, stream } = entry;
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <strong>{request.key.symbol}</strong>
-          <span className="muted">
-            {request.key.exchange} · {request.key.market} · {request.key.kind} · {request.key.interval}
-          </span>
-          {statusBadge("live", "idle")}
-          {requestStatusBadge(request)}
-        </div>
-        {stream ? (
-          <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-            <span className="muted">collector</span>
-            {streamStateBadge(stream)}
-            {stream.effective_live_delivery ? statusBadge("live delivery", "good") : statusBadge("storage only", "idle")}
-            <span className="muted">· freshness {freshnessHint(stream)}</span>
-            <span className="muted">· {stream.active_lease_count} active lease(s)</span>
-          </div>
-        ) : (
-          <p className="muted" style={{ fontSize: "0.82rem", margin: "0.5rem 0 0" }}>
-            stream not materialised yet
-          </p>
-        )}
-        <p className="muted" style={{ fontSize: "0.82rem", margin: "0.25rem 0 0" }}>
-          requested: {formatUTCWithLocal(request.created_at)}
-          {request.needs_live_delivery ? " · kafka enabled" : " · kafka disabled"}
-        </p>
-        {stream?.last_error ? (
-          <p className="error" style={{ fontSize: "0.82rem", margin: "0.5rem 0 0" }}>
-            last error: {stream.last_error}
-          </p>
-        ) : null}
-      </div>
-      {request.status !== "cancelled" ? (
-        <button style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }} onClick={() => onCancel(request.request_id)}>
-          Cancel
-        </button>
-      ) : null}
-    </div>
+    <InfiniteTable<MarketDataEntry>
+      columns={["Symbol", "Market", "Status", "Collector", "Freshness", "Created", "Action"]}
+      loadPage={loadPage}
+      refreshKey={refreshKey}
+      emptyText={emptyText}
+      rowKey={(entry) => String(entry.request.request_id)}
+      renderRow={(entry) => (
+        <>
+          <td>{entry.request.key.symbol}</td>
+          <td>{entry.request.key.exchange} · {entry.request.key.market} · {entry.request.key.interval}</td>
+          <td>{requestStatusBadge(entry.request)}</td>
+          <td>{entry.stream ? streamStateBadge(entry.stream) : "—"}</td>
+          <td>{entry.stream ? freshnessHint(entry.stream) : "no data yet"}</td>
+          <td>{formatUTCWithLocal(entry.request.created_at)}</td>
+          <td>
+            {entry.request.status !== "cancelled" ? (
+              <button type="button" onClick={() => onCancel(entry.request.request_id)}>Cancel</button>
+            ) : null}
+          </td>
+        </>
+      )}
+    />
   );
 }
 

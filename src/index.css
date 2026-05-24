@@ -1288,8 +1288,127 @@ form.filter-panel {
   align-items: start;
 }
 
+.runtime-create-section {
+  width: 100%;
+}
+
+.runtime-credential-create-card {
+  margin-top: 1rem;
+}
+
 .full-width-table {
   width: 100%;
+}
+
+.infinite-table {
+  position: relative;
+  max-height: min(68vh, 760px);
+  overflow: auto;
+}
+
+.infinite-table table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+}
+
+.infinite-table__empty,
+.infinite-table__loading,
+.infinite-table__error {
+  padding: 0.75rem 1rem;
+  margin: 0;
+}
+
+.async-select {
+  position: relative;
+  width: 100%;
+}
+
+.async-select__button {
+  width: 100%;
+  height: 2.625rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  text-align: left;
+}
+
+.async-select__button > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.async-select__menu {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  padding: 0.4rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+}
+
+.async-select__search {
+  width: 100%;
+  box-sizing: border-box;
+  height: 2.25rem;
+  margin-bottom: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+}
+
+.async-select__options {
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.async-select__option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  border: 0;
+  background: transparent;
+  padding: 0.5rem 0.55rem;
+  text-align: left;
+  color: #0f172a;
+}
+
+.async-select__option:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.async-select__option:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.async-select__option small,
+.async-select__state {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.async-select__state {
+  padding: 0.5rem 0.55rem;
+}
+
+.async-select__state--error {
+  color: #b91c1c;
 }
 
 @media (max-width: 640px) {

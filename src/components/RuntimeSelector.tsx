@@ -5,6 +5,7 @@ import {
   runtimeSelectionOptions,
   type Runtime,
 } from "@/api/client";
+import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 
 type RuntimeSelectorProps = {
   value: string;
@@ -75,24 +76,25 @@ export default function RuntimeSelector({
     <div className={compact ? "runtime-selector runtime-selector--compact" : "runtime-selector"}>
       <label>
         <span>{label}</span>
-        <select
+        <AsyncSelect<Runtime>
           value={value}
           disabled={disabled || loading || noRouteable}
-          onChange={(e) => {
-            const next = e.target.value;
-            const opt = routeable.find((o) => o.runtime_id === next);
-            onChange(next, opt?.runtime);
+          placeholder={loading ? "Loading runtimes..." : noRouteable ? "No routeable runtime" : "Select runtime"}
+          onChange={(next, opt) => onChange(next, opt?.item)}
+          loadPage={async (offset, limit, query) => {
+            const result = await listRuntimes({ limit, offset, eligible, role, mode });
+            const items = runtimeSelectionOptions(result.runtimes)
+              .filter((opt) => !query || opt.label.toLowerCase().includes(query.toLowerCase()) || opt.runtime_id.includes(query))
+              .filter((opt) => opt.routeable)
+              .map<AsyncSelectOption<Runtime>>((opt) => ({
+                value: opt.runtime_id,
+                label: opt.label,
+                detail: opt.detail,
+                item: opt.runtime,
+              }));
+            return { items, next_offset: offset + result.runtimes.length, has_more: result.has_more, total: result.total };
           }}
-        >
-          <option value="">
-            {loading ? "Loading runtimes..." : noRouteable ? "No routeable runtime" : "Select runtime"}
-          </option>
-          {routeable.map((opt) => (
-            <option key={opt.runtime_id} value={opt.runtime_id}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        />
       </label>
       {error ? <p className="error">{error}</p> : null}
       {!error && !loading && routeable.length > 0 && !selectedRuntime ? (

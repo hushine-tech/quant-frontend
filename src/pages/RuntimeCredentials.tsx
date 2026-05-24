@@ -18,7 +18,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  listRuntimeCredentials,
+  listRuntimeCredentialsPage,
   issueRuntimeCredential,
   listRuntimeAdmissionFailures,
   revokeRuntimeCredential,
@@ -27,6 +27,8 @@ import {
   type RuntimeAdmissionFailure,
 } from "../api/client";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
+import InfiniteTable from "@/components/InfiniteTable";
+import RuntimeInstallInstructions from "@/components/RuntimeInstallInstructions";
 
 const CREDENTIAL_FILE_VERSION = 1;
 
@@ -69,58 +71,25 @@ function downloadCredentialFile(issued: IssuedRuntimeCredential, label: string):
   URL.revokeObjectURL(url);
 }
 
-function dockerCommandForCredential(issued: IssuedRuntimeCredential): string {
-  const role = issued.role === "debugger" ? "debugger" : "executor";
-  const image = `hushine/strategy-runtime:${role}-dev`;
-  const lines = [
-    "mkdir -p $HOME/.hushine",
-    "# Put the downloaded .cred file at $HOME/.hushine/runtime.cred",
-  ];
-  if (role === "debugger") {
-    lines.push("mkdir -p $HOME/hushine-debug-workspace");
-  }
-  lines.push(
-    "docker run --rm -it \\",
-  );
-  if (role === "debugger") {
-    lines.push(
-      "  -p 127.0.0.1:5678:5678 \\",
-    );
-  }
-  lines.push(
-    "  -v $HOME/.hushine/runtime.cred:/etc/hushine/runtime.cred:ro \\",
-  );
-  if (role === "debugger") {
-    lines.push(
-      "  -v $HOME/hushine-debug-workspace:/workspace \\",
-    );
-  }
-  lines.push(
-    "  -e RUNTIME_INGRESS_MODE=outbound \\",
-    "  -e RUNTIME_CREDENTIAL_PATH=/etc/hushine/runtime.cred \\",
-    "  -e CONTROL_PANEL_SERVICE_GRPC_ADDR=<control-panel-host>:50054 \\",
-    `  ${image}`,
-  );
-  return lines.join("\n");
-}
-
 type RuntimeCredentialsPanelVariant = "full" | "create" | "list";
 
 type RuntimeCredentialsPanelProps = {
+  createTitle?: string;
   showAdmissionFailures?: boolean;
   variant?: RuntimeCredentialsPanelVariant;
 };
 
 export function RuntimeCredentialsPanel({
+  createTitle = "Self-hosted runtime",
   showAdmissionFailures = true,
   variant = "full",
 }: RuntimeCredentialsPanelProps) {
   const showCreate = variant === "full" || variant === "create";
   const showList = variant === "full" || variant === "list";
-  const [creds, setCreds] = useState<RuntimeCredential[]>([]);
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [loading, setLoading] = useState(true);
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // newLabel is the input for the next "issue" request.
@@ -137,11 +106,10 @@ export function RuntimeCredentialsPanel({
     setLoading(true);
     setError(null);
     try {
-      const [data, failureResult] = await Promise.all([
-        listRuntimeCredentials(showInactive),
-        showAdmissionFailures ? listRuntimeAdmissionFailures(10).catch(() => ({ failures: [] })) : Promise.resolve({ failures: [] }),
-      ]);
-      setCreds(data);
+      void showInactive;
+      const failureResult = showAdmissionFailures
+        ? await listRuntimeAdmissionFailures(10).catch(() => ({ failures: [] }))
+        : { failures: [] };
       setAdmissionFailures(failureResult.failures);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -180,6 +148,7 @@ export function RuntimeCredentialsPanel({
       setJustIssuedLabel(newLabel.trim());
       setNewLabel("");
       if (showList) {
+        setRefreshKey((v) => v + 1);
         await load(includeInactive);
       }
     } catch (e) {
@@ -199,6 +168,7 @@ export function RuntimeCredentialsPanel({
     setError(null);
     try {
       await revokeRuntimeCredential(c.key_id);
+      setRefreshKey((v) => v + 1);
       await load(includeInactive);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -206,9 +176,9 @@ export function RuntimeCredentialsPanel({
   };
 
   return (
-    <div>
+    <div className={showCreate && !showList ? "card runtime-create-section" : undefined}>
       <h2 className="section-title" style={{ marginTop: 0 }}>
-        {showCreate && !showList ? "Self-hosted runtime" : "Credentials"}
+        {showCreate && !showList ? createTitle : "Credentials"}
       </h2>
       {showCreate ? (
         <p className="muted">
@@ -253,9 +223,7 @@ export function RuntimeCredentialsPanel({
           <div style={{ fontFamily: "monospace", marginTop: "0.5rem", fontSize: "0.85rem" }}>
             key_id: {justIssued.key_id}
           </div>
-          <pre style={{ whiteSpace: "pre-wrap", marginTop: "0.75rem" }}>
-            {dockerCommandForCredential(justIssued)}
-          </pre>
+          <RuntimeInstallInstructions credential={justIssued} />
           <button
             type="button"
             onClick={() => downloadCredentialFile(justIssued, justIssuedLabel)}
@@ -277,7 +245,7 @@ export function RuntimeCredentialsPanel({
       )}
 
       {showCreate ? (
-        <section className="card">
+        <section className={showCreate && !showList ? "runtime-credential-create-card" : "card"}>
           <h2 className="section-title" style={{ marginTop: 0 }}>Generate credential</h2>
           <p className="muted">Generate a one-time credential, then use the downloaded command to start the runtime container.</p>
           <FilterPanel>
@@ -323,86 +291,47 @@ export function RuntimeCredentialsPanel({
             </label>
             <button
               type="button"
-              onClick={() => load(includeInactive)}
+              onClick={() => {
+                setRefreshKey((v) => v + 1);
+                void load(includeInactive);
+              }}
             >
               Refresh
             </button>
           </div>
 
-          {loading && <p>Loading...</p>}
-          {!loading && creds.length === 0 && (
-            <p style={{ color: "#666" }}>
-              No {includeInactive ? "" : "active or consumed "}credentials yet. Generate one from Create Runtime to get started.
-            </p>
-          )}
-          {!loading && creds.length > 0 && (
-            <div className="table-scroll">
-              <table className="compact" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: "2px solid #ccc", textAlign: "left" }}>
-                    <th style={{ padding: "0.5rem" }}>Label</th>
-                    <th style={{ padding: "0.5rem" }}>Key ID</th>
-                    <th style={{ padding: "0.5rem" }}>Role</th>
-                    <th style={{ padding: "0.5rem" }}>Status</th>
-                    <th style={{ padding: "0.5rem" }}>Created</th>
-                    <th style={{ padding: "0.5rem" }}>Downloaded</th>
-                    <th style={{ padding: "0.5rem" }}>Consumed</th>
-                    <th style={{ padding: "0.5rem" }}>Expires</th>
-                    <th style={{ padding: "0.5rem" }}>Runtime</th>
-                    <th style={{ padding: "0.5rem" }}>Last used</th>
-                    <th style={{ padding: "0.5rem" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {creds.map((c) => (
-                    <tr
-                      key={c.key_id}
-                      style={{
-                        borderBottom: "1px solid #eee",
-                        opacity: ["revoked", "expired"].includes(c.status) ? 0.55 : 1,
-                        textDecoration: ["revoked", "expired"].includes(c.status) ? "line-through" : "none",
-                      }}
-                    >
-                      <td style={{ padding: "0.5rem" }}>{c.label || <em style={{ color: "#888" }}>(no label)</em>}</td>
-                      <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.85rem" }}>
-                        {c.key_id}
-                      </td>
-                      <td style={{ padding: "0.5rem" }}>
-                        {c.role}
-                        {c.hosted_internal ? <span className="muted"> · internal</span> : null}
-                      </td>
-                      <td style={{ padding: "0.5rem" }}>{c.status}</td>
-                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.created_at)}</td>
-                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.downloaded_at)}</td>
-                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.consumed_at)}</td>
-                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.expires_at)}</td>
-                      <td style={{ padding: "0.5rem" }}>
-                        {c.consumed_runtime_id ? (
-                          <Link to={`/runtimes/${encodeURIComponent(c.consumed_runtime_id)}`}>
-                            {c.consumed_runtime_id}
-                          </Link>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={{ padding: "0.5rem" }}>{formatTimestamp(c.last_used_at)}</td>
-                      <td style={{ padding: "0.5rem" }}>
-                        {c.status === "active" || c.status === "downloaded" || c.status === "consumed" ? (
-                          <button type="button" onClick={() => onRevoke(c)}>
-                            Revoke
-                          </button>
-                        ) : (
-                          <span style={{ color: "#888" }}>
-                            Revoked {formatTimestamp(c.revoked_at)}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <InfiniteTable<RuntimeCredential>
+            columns={["Label", "Key ID", "Role", "Status", "Created", "Downloaded", "Consumed", "Expires", "Runtime", "Last used", "Actions"]}
+            refreshKey={`${includeInactive}-${refreshKey}`}
+            emptyText={`No ${includeInactive ? "" : "active or consumed "}credentials yet. Generate one from Create Runtime to get started.`}
+            loadPage={(offset, limit) => listRuntimeCredentialsPage(includeInactive, { offset, limit })}
+            rowKey={(c) => c.key_id}
+            renderRow={(c) => (
+              <>
+                <td>{c.label || <em style={{ color: "#888" }}>(no label)</em>}</td>
+                <td><code>{c.key_id}</code></td>
+                <td>{c.role}{c.hosted_internal ? <span className="muted"> · internal</span> : null}</td>
+                <td>{c.status}</td>
+                <td>{formatTimestamp(c.created_at)}</td>
+                <td>{formatTimestamp(c.downloaded_at)}</td>
+                <td>{formatTimestamp(c.consumed_at)}</td>
+                <td>{formatTimestamp(c.expires_at)}</td>
+                <td>
+                  {c.consumed_runtime_id ? (
+                    <Link to={`/runtimes/${encodeURIComponent(c.consumed_runtime_id)}`}>{c.consumed_runtime_id}</Link>
+                  ) : "—"}
+                </td>
+                <td>{formatTimestamp(c.last_used_at)}</td>
+                <td>
+                  {c.status === "active" || c.status === "downloaded" || c.status === "consumed" ? (
+                    <button type="button" onClick={() => onRevoke(c)}>Revoke</button>
+                  ) : (
+                    <span style={{ color: "#888" }}>Revoked {formatTimestamp(c.revoked_at)}</span>
+                  )}
+                </td>
+              </>
+            )}
+          />
         </>
       ) : null}
 

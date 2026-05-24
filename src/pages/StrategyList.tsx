@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import InfiniteTable from "@/components/InfiniteTable";
 import {
-  listStrategies,
+  listStrategiesPage,
   createStrategy,
   archiveStrategy,
   type Strategy,
@@ -18,30 +19,28 @@ const tabs: Array<PageTab<StrategyTab>> = [
 ];
 
 export default function StrategyList() {
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StrategyTab>("strategies");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  async function load() {
+  const load = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
     setErr(null);
     try {
-      const list = await listStrategies();
-      setStrategies(list);
+      return await listStrategiesPage({ offset, limit });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Load failed");
+      throw e;
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => { load(); }, []);
+  }, []);
 
   async function handleArchive(id: number) {
     try {
       await archiveStrategy(id);
-      await load();
+      setRefreshKey((v) => v + 1);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Archive failed");
     }
@@ -53,72 +52,45 @@ export default function StrategyList() {
         title="Strategy Management"
         description="Create, archive, and inspect strategy definitions."
         loading={loading}
-        onRefresh={activeTab === "strategies" ? load : undefined}
+        onRefresh={activeTab === "strategies" ? () => setRefreshKey((v) => v + 1) : undefined}
       />
 
       {err ? <p className="error">{err}</p> : null}
       <PageTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Strategy sections">
         {activeTab === "strategies" ? (
-          <>
-            {loading ? <p className="muted">Loading strategies...</p> : null}
-            {!loading && strategies.length === 0 ? (
-              <p className="muted">No strategies yet.</p>
-            ) : null}
-            {strategies.length > 0 ? (
-              <div className="table-scroll">
-                <table className="compact full-width-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>ID</th>
-                      <th>Version</th>
-                      <th>Status</th>
-                      <th>Description</th>
-                      <th>Created</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {strategies.map((strategy) => (
-                      <tr key={strategy.strategy_id}>
-                        <td>
-                          <Link to={`/strategies/${strategy.strategy_id}`}>
-                            {strategy.name}
-                          </Link>
-                        </td>
-                        <td><code>{strategy.strategy_id}</code></td>
-                        <td>{strategy.version}</td>
-                        <td>
-                          {strategy.archived ? (
-                            <span className="status-badge status-badge--stopped">archived</span>
-                          ) : (
-                            <span className="status-badge status-badge--completed">active</span>
-                          )}
-                        </td>
-                        <td>{strategy.description || "-"}</td>
-                        <td>{formatUTCWithLocal(strategy.created_at)}</td>
-                        <td>
-                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                            <Link to={`/strategies/${strategy.strategy_id}`}>View</Link>
-                            {!strategy.archived ? (
-                              <button type="button" onClick={() => void handleArchive(strategy.strategy_id)}>
-                                Archive
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </>
+          <InfiniteTable<Strategy>
+            columns={["Name", "ID", "Version", "Status", "Description", "Created", "Action"]}
+            loadPage={load}
+            refreshKey={refreshKey}
+            emptyText="No strategies yet."
+            rowKey={(strategy) => String(strategy.strategy_id)}
+            renderRow={(strategy) => (
+              <>
+                <td><Link to={`/strategies/${strategy.strategy_id}`}>{strategy.name}</Link></td>
+                <td><code>{strategy.strategy_id}</code></td>
+                <td>{strategy.version}</td>
+                <td>
+                  {strategy.archived ? (
+                    <span className="status-badge status-badge--stopped">archived</span>
+                  ) : (
+                    <span className="status-badge status-badge--completed">active</span>
+                  )}
+                </td>
+                <td>{strategy.description || "-"}</td>
+                <td>{formatUTCWithLocal(strategy.created_at)}</td>
+                <td>
+                  {!strategy.archived ? (
+                    <button type="button" onClick={() => void handleArchive(strategy.strategy_id)}>Archive</button>
+                  ) : null}
+                </td>
+              </>
+            )}
+          />
         ) : (
           <CreateStrategyForm
             onCreated={() => {
               setActiveTab("strategies");
-              void load();
+              setRefreshKey((v) => v + 1);
             }}
           />
         )}

@@ -2,6 +2,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listAccounts, type Account } from "@/api/client";
 
+function modeLabel(mode: number): string {
+  switch (mode) {
+    case 0: return "Backtest";
+    case 1: return "Binance Live";
+    case 2: return "Binance Testnet";
+    default: return `Mode ${mode}`;
+  }
+}
+
 export default function AccountList() {
   const [rows, setRows] = useState<Account[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -45,20 +54,20 @@ export default function AccountList() {
                 <th>Name</th>
                 <th>ID</th>
                 <th>Mode</th>
-                <th></th>
+                <th>Description</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.account_id}>
-                  <td>{a.name}</td>
+                  <td>
+                    <Link to={`/accounts/${a.account_id}`}>{a.name}</Link>
+                  </td>
                   <td className="muted" style={{ fontSize: "0.85rem" }}>
                     {a.account_id}
                   </td>
-                  <td>{a.mode}</td>
-                  <td>
-                    <Link to={`/accounts/${a.account_id}`}>View</Link>
-                  </td>
+                  <td>{modeLabel(a.mode)}</td>
+                  <td>{a.description?.trim() || "-"}</td>
                 </tr>
               ))}
             </tbody>

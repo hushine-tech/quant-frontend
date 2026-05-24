@@ -15,6 +15,7 @@
     "test:primary-pages-tabs": "node scripts/primary-pages-tabs.test.mjs",
     "test:session-management": "node scripts/session-management.test.mjs",
     "test:filter-controls": "node scripts/filter-controls.test.mjs",
+    "test:frontend-information-architecture": "node scripts/frontend-information-architecture.test.mjs",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview"
   },

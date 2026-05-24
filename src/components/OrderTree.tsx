@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import Pager from "@/components/Pager";
 import type { Page } from "@/api/client";
@@ -11,6 +12,9 @@ import type { Page } from "@/api/client";
 export type TreeIntent = {
   time: string;
   intent_id: string;
+  account_id?: number;
+  session_id?: string;
+  strategy_id?: number;
   symbol: string;
   side: string;
   requested_qty: number;
@@ -264,6 +268,21 @@ function IntentRow<
         <span className="muted">
           req px {intent.requested_price > 0 ? intent.requested_price.toFixed(2) : "—"}
         </span>
+        {typeof intent.account_id === "number" && intent.account_id > 0 ? (
+          <span className="muted">Account {intent.account_id}</span>
+        ) : null}
+        {intent.session_id ? (
+          typeof intent.account_id === "number" && intent.account_id > 0 ? (
+            <Link
+              to={`/accounts/${intent.account_id}/sessions/${intent.session_id}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              Session {intent.session_id.slice(0, 10)}…
+            </Link>
+          ) : (
+            <span className="muted">Session {intent.session_id.slice(0, 10)}…</span>
+          )
+        ) : null}
         <span className="muted" style={{ marginLeft: "auto", fontSize: "0.85rem" }}>
           {formatUTCWithLocal(intent.time)}
         </span>

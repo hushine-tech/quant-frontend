@@ -20,6 +20,7 @@ type AccountNewProps = {
 export default function AccountNew({ embedded = false, onCreated }: AccountNewProps = {}) {
   const nav = useNavigate();
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [mode, setMode] = useState(0);
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -99,6 +100,7 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
   function buildPayload(): CreateAccountPayload {
     const body: CreateAccountPayload = {
       name,
+      description: description.trim() || undefined,
       mode,
       api_key: apiKey || undefined,
       api_secret: apiSecret || undefined,
@@ -176,6 +178,7 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
         <div className="card">
           <h2 className="section-title">Meta</h2>
           <p><strong>{name}</strong></p>
+          {description.trim() ? <p className="muted">{description.trim()}</p> : null}
           <p className="muted">Mode: {modes.find((m) => m.v === mode)?.label}</p>
           {wizard ? (
             <p><strong>Estimated Total Value: {totalValue.toFixed(2)} USDT</strong></p>
@@ -273,6 +276,14 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
           <h2 className="section-title">Meta</h2>
           <label htmlFor="name">Name</label>
           <input id="name" required value={name} onChange={(e) => setName(e.target.value)} />
+
+          <label htmlFor="description">Description</label>
+          <input
+            id="description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional note for remembering this account"
+          />
 
           <label htmlFor="mode">Mode</label>
           <select id="mode" value={mode} onChange={(e) => setMode(Number(e.target.value))}>

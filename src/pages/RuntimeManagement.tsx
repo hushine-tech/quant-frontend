@@ -1,21 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import InfiniteTable from "@/components/InfiniteTable";
+import RuntimeInstallInstructions from "@/components/RuntimeInstallInstructions";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
 import { RuntimeCredentialsPanel } from "@/pages/RuntimeCredentials";
 import {
   cancelRuntime,
   ensureHostedRuntime,
   getRuntime,
+  listAccountsPage,
   prepareDebugWorkspace,
   isRuntimeTerminal,
-  listAccounts,
   listSessionDeliveryHealth,
   listRuntimeAdmissionFailures,
   listRuntimes,
-  listSessions,
+  listSessionsPage,
   runtimeUnavailableReason,
   type Account,
   type Runtime,
@@ -82,6 +84,16 @@ const runtimeTabs: Array<PageTab<RuntimeManagementTab>> = [
   { id: "failures", label: "Failure Overview" },
 ];
 
+type RuntimeDetailTab = "overview" | "connection" | "debugging" | "sessions" | "live_delivery";
+
+const runtimeDetailTabs: Array<PageTab<RuntimeDetailTab>> = [
+  { id: "overview", label: "Overview" },
+  { id: "connection", label: "Connection" },
+  { id: "debugging", label: "Debugging" },
+  { id: "sessions", label: "Sessions" },
+  { id: "live_delivery", label: "Live Delivery" },
+];
+
 function normalizeRuntimeTab(value: string | null): RuntimeManagementTab {
   if (value === "create") return "create";
   if (value === "credentials") return "credentials";
@@ -91,7 +103,6 @@ function normalizeRuntimeTab(value: string | null): RuntimeManagementTab {
 
 export default function RuntimeManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [runtimes, setRuntimes] = useState<Runtime[]>([]);
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [activeSessionCounts, setActiveSessionCounts] = useState<Map<string, number>>(new Map());
   const [activeSessionLinks, setActiveSessionLinks] = useState<Map<string, Session>>(new Map());
@@ -103,23 +114,18 @@ export default function RuntimeManagement() {
   const [name, setName] = useState("");
   const [resourceProfile, setResourceProfile] = useState("small");
   const [notice, setNotice] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const [result, failureResult] = await Promise.all([
-        listRuntimes({ limit: 100 }),
-        listRuntimeAdmissionFailures(5).catch(() => ({ failures: [] })),
-      ]);
-      setRuntimes(result.runtimes);
+      const failureResult = await listRuntimeAdmissionFailures(5).catch(() => ({ failures: [] }));
       setAdmissionFailures(failureResult.failures);
       try {
-        const accounts = await listAccounts();
-        const sessionLists = await Promise.all(
-          accounts.map((a) => listSessions(a.account_id, 0, 100).catch(() => [])),
-        );
-        const allSessions = sessionLists.flat();
+        const sessionPage = await listSessionsPage({ status: "running", limit: 200, offset: 0 }).catch(() => ({ items: [], next_offset: 0, has_more: false, total: 0 }));
+        const stoppingPage = await listSessionsPage({ status: "stopping", limit: 200, offset: 0 }).catch(() => ({ items: [], next_offset: 0, has_more: false, total: 0 }));
+        const allSessions = [...sessionPage.items, ...stoppingPage.items];
         const counts = new Map<string, number>();
         const activeLinks = new Map<string, Session>();
         for (const session of allSessions) {
@@ -166,6 +172,7 @@ export default function RuntimeManagement() {
         resource_profile: resourceProfile,
       });
       setNotice(result.provisioned ? "Hosted runtime created." : "Hosted runtime is already available.");
+      setRefreshKey((v) => v + 1);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Create hosted runtime failed");
@@ -184,7 +191,8 @@ export default function RuntimeManagement() {
     try {
       const stopped = await cancelRuntime(rt.runtime_id);
       setNotice("Runtime ended.");
-      setRuntimes((items) => items.map((item) => (item.runtime_id === stopped.runtime_id ? stopped : item)));
+      void stopped;
+      setRefreshKey((v) => v + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "End runtime failed");
     } finally {
@@ -192,13 +200,31 @@ export default function RuntimeManagement() {
     }
   }
 
+  const loadRuntimePage = useCallback(async (offset: number, limit: number) => {
+    setLoading(true);
+    try {
+      const result = await listRuntimes({ limit, offset });
+      return {
+        items: result.runtimes,
+        next_offset: offset + result.runtimes.length,
+        has_more: result.has_more,
+        total: result.total,
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   return (
     <div>
       <PageHeader
         title="Runtime Management"
         description="Manage hosted and self-hosted runtimes for strategy execution and debugging."
         loading={loading}
-        onRefresh={load}
+        onRefresh={() => {
+          setRefreshKey((v) => v + 1);
+          void load();
+        }}
       />
 
       {notice ? <p className="muted">{notice}</p> : null}
@@ -207,89 +233,57 @@ export default function RuntimeManagement() {
 
       <PageTabs tabs={runtimeTabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Runtime management sections">
         {activeTab === "runtimes" ? (
-          <>
-              {!loading && runtimes.length === 0 ? (
-                <p className="muted" style={{ margin: 0 }}>No runtimes found.</p>
-              ) : null}
-              {!loading && runtimes.length > 0 ? (
-                <div className="table-scroll">
-                  <table className="compact runtime-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Source</th>
-                        <th>Role</th>
-                        <th>Status</th>
-                        <th>Health</th>
-                        <th>Active sessions</th>
-                        <th>Started</th>
-                        <th>Ended</th>
-                        <th>End reason</th>
-                        <th>Cleanup</th>
-                        <th>Heartbeat</th>
-                        <th>Runtime ID</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {runtimes.map((rt) => {
-                        const activeCount = activeSessionCounts.get(rt.runtime_id) || 0;
-                        const activeSession = activeSessionLinks.get(rt.runtime_id);
-                        return (
-                          <tr key={rt.runtime_id}>
-                            <td>
-                              <Link to={`/runtimes/${encodeURIComponent(rt.runtime_id)}`}>
-                                {rt.name || rt.runtime_id}
-                              </Link>
-                            </td>
-                            <td>{sourceLabel(rt.source)}</td>
-                            <td>{roleLabel(rt.role)}</td>
-                            <td><span className={runtimeBadgeClass(rt)}>{rt.status || "unknown"}</span></td>
-                            <td>{healthLabel(rt)}</td>
-                            <td>
-                              {activeCount > 0 ? (
-                                activeSession ? (
-                                  <Link to={`/accounts/${activeSession.account_id}/sessions/${activeSession.session_id}`}>
-                                    {activeCount}
-                                  </Link>
-                                ) : (
-                                  <Link to={`/runtimes/${encodeURIComponent(rt.runtime_id)}`}>
-                                    {activeCount}
-                                  </Link>
-                                )
-                              ) : (
-                                0
-                              )}
-                            </td>
-                            <td>{fmtTime(rt.started_at)}</td>
-                            <td>{fmtTime(rt.ended_at)}</td>
-                            <td>{rt.ended_reason || "-"}</td>
-                            <td>{cleanupLabel(rt)}</td>
-                            <td>{fmtTime(rt.heartbeat_at)}</td>
-                            <td><code>{rt.runtime_id}</code></td>
-                            <td>
-                              <button
-                                type="button"
-                                className="danger"
-                                onClick={() => void stopRuntime(rt)}
-                                disabled={isRuntimeTerminal(rt) || stoppingRuntimeId === rt.runtime_id}
-                              >
-                                {stoppingRuntimeId === rt.runtime_id ? "Ending..." : "End"}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-          </>
+          <InfiniteTable<Runtime>
+            columns={["Name", "Source", "Role", "Status", "Health", "Active sessions", "Started", "Ended", "End reason", "Cleanup", "Heartbeat", "Runtime ID", "Action"]}
+            loadPage={loadRuntimePage}
+            refreshKey={refreshKey}
+            emptyText="No runtimes found."
+            className="runtime-table"
+            rowKey={(rt) => rt.runtime_id}
+            renderRow={(rt) => {
+              const activeCount = activeSessionCounts.get(rt.runtime_id) || 0;
+              const activeSession = activeSessionLinks.get(rt.runtime_id);
+              return (
+                <>
+                  <td><Link to={`/runtimes/${encodeURIComponent(rt.runtime_id)}`}>{rt.name || rt.runtime_id}</Link></td>
+                  <td>{sourceLabel(rt.source)}</td>
+                  <td>{roleLabel(rt.role)}</td>
+                  <td><span className={runtimeBadgeClass(rt)}>{rt.status || "unknown"}</span></td>
+                  <td>{healthLabel(rt)}</td>
+                  <td>
+                    {activeCount > 0 ? (
+                      activeSession ? (
+                        <Link to={`/accounts/${activeSession.account_id}/sessions/${activeSession.session_id}`}>{activeCount}</Link>
+                      ) : (
+                        <Link to={`/runtimes/${encodeURIComponent(rt.runtime_id)}`}>{activeCount}</Link>
+                      )
+                    ) : 0}
+                  </td>
+                  <td>{fmtTime(rt.started_at)}</td>
+                  <td>{fmtTime(rt.ended_at)}</td>
+                  <td>{rt.ended_reason || "-"}</td>
+                  <td>{cleanupLabel(rt)}</td>
+                  <td>{fmtTime(rt.heartbeat_at)}</td>
+                  <td><code>{rt.runtime_id}</code></td>
+                  <td>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => void stopRuntime(rt)}
+                      disabled={isRuntimeTerminal(rt) || stoppingRuntimeId === rt.runtime_id}
+                    >
+                      {stoppingRuntimeId === rt.runtime_id ? "Ending..." : "End"}
+                    </button>
+                  </td>
+                </>
+              );
+            }}
+          />
         ) : null}
 
         {activeTab === "create" ? (
           <div className="runtime-create-stack">
-            <section className="card">
+            <section className="card runtime-create-section">
               <h2 className="section-title" style={{ marginTop: 0 }}>Hosted runtime</h2>
               <p className="muted">Create a platform-owned executor runtime for backtest and testnet sessions.</p>
               <FilterPanel>
@@ -315,7 +309,11 @@ export default function RuntimeManagement() {
                 </div>
               </FilterPanel>
             </section>
-            <RuntimeCredentialsPanel variant="create" showAdmissionFailures={false} />
+            <RuntimeCredentialsPanel
+              variant="create"
+              createTitle="Self-hosted runtime"
+              showAdmissionFailures={false}
+            />
           </div>
         ) : null}
 
@@ -392,6 +390,8 @@ export function RuntimeDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [preparingDebug, setPreparingDebug] = useState(false);
+  const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState<RuntimeDetailTab>("overview");
 
   useEffect(() => {
     if (!runtimeId) return;
@@ -403,18 +403,16 @@ export function RuntimeDetailPage() {
       try {
         const [rt, accountList] = await Promise.all([
           getRuntime(rid),
-          listAccounts(),
+          listAccountsPage({ limit: 200 }).then((page) => page.items),
         ]);
         const [sessionLists, deliveryResult] = await Promise.all([
-          Promise.all(
-          accountList.map((a) => listSessions(a.account_id, 0, 20).catch(() => [])),
-          ),
+          listSessionsPage({ runtime_id: rid, limit: 200 }).then((page) => page.items).catch(() => []),
           listSessionDeliveryHealth({ runtime_id: rid }).catch(() => ({ items: [] })),
         ]);
         if (cancelled) return;
         setRuntime(rt);
         setAccounts(accountList);
-        setSessions(sessionLists.flat().filter((s) => s.runtime_id === rt.runtime_id));
+        setSessions(sessionLists.filter((s) => s.runtime_id === rt.runtime_id));
         setDeliveryHealth(deliveryResult.items);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Load runtime failed");
@@ -431,6 +429,17 @@ export function RuntimeDetailPage() {
     () => sessions.filter((s) => isActiveSessionStatus(s.status)).length,
     [sessions],
   );
+  const isDebuggerRuntime = runtime?.source === "self_hosted" && runtime.role === "debugger";
+  const visibleRuntimeDetailTabs = useMemo(
+    () => runtimeDetailTabs.filter((tab) => tab.id !== "debugging" || isDebuggerRuntime),
+    [isDebuggerRuntime],
+  );
+
+  useEffect(() => {
+    if (activeDetailTab === "debugging" && !isDebuggerRuntime) {
+      setActiveDetailTab("overview");
+    }
+  }, [activeDetailTab, isDebuggerRuntime]);
 
   async function stopRuntime() {
     if (!runtime || isRuntimeTerminal(runtime)) return;
@@ -477,62 +486,91 @@ export function RuntimeDetailPage() {
       {!loading && runtime ? (
         <>
           <h1>Runtime {runtime.name || runtime.runtime_id}</h1>
-          <div className="runtime-detail-grid">
-            <div className="card">
-              <h2 className="section-title" style={{ marginTop: 0 }}>Status</h2>
-              <p><span className={runtimeBadgeClass(runtime)}>{runtime.status || "unknown"}</span></p>
-              <p className="muted">Name</p>
-              <p>{runtime.name || "-"}</p>
-              <p className="muted">Runtime ID</p>
-              <p><code>{runtime.runtime_id}</code></p>
-              <p className="muted">Source</p>
-              <p>{sourceLabel(runtime.source)}</p>
-              <p className="muted">Role</p>
-              <p>{roleLabel(runtime.role)}</p>
-              <p className="muted">Health</p>
-              <p>{healthLabel(runtime)}</p>
-              <p className="muted">Active sessions</p>
-              <p>{activeSessionCount}</p>
-              <p className="muted">Resource profile</p>
-              <p>{runtime.resource_profile || "-"}</p>
-              <p className="muted">Cleanup</p>
-              <p>{cleanupLabel(runtime)}</p>
-              {runtime.cleanup_status ? (
-                <>
-                  <p className="muted">Cleanup status</p>
-                  <p>{runtime.cleanup_status}</p>
-                </>
-              ) : null}
-              <p className="muted">Started</p>
-              <p>{fmtTime(runtime.started_at)}</p>
-              <p className="muted">Ended</p>
-              <p>{fmtTime(runtime.ended_at)}</p>
-              <p className="muted">End reason</p>
-              <p>{runtime.ended_reason || "-"}</p>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => void stopRuntime()}
-                disabled={isRuntimeTerminal(runtime) || stopping}
-              >
-                {stopping ? "Ending..." : "End runtime"}
-              </button>
-            </div>
-            <div className="card">
-              <h2 className="section-title" style={{ marginTop: 0 }}>Connection</h2>
-              <p className="muted">Heartbeat</p>
-              <p>{fmtTime(runtime.heartbeat_at)}</p>
-              <p className="muted">Endpoint</p>
-              <p>{runtime.endpoint_host ? `${runtime.endpoint_host}:${runtime.grpc_port || 0}` : "-"}</p>
-              <p className="muted">Credential</p>
-              <p>{runtime.credential_key_id ? <code>{runtime.credential_key_id}</code> : "-"}</p>
-            </div>
-          </div>
-
-          {runtime.source === "self_hosted" && runtime.role === "debugger" ? (
-            <>
-              <h2 className="section-title">Debugger Workspace</h2>
+          <PageTabs
+            tabs={visibleRuntimeDetailTabs}
+            activeTab={activeDetailTab}
+            onChange={setActiveDetailTab}
+            ariaLabel="Runtime detail sections"
+          >
+            {activeDetailTab === "overview" ? (
               <div className="card">
+                <h2 className="section-title" style={{ marginTop: 0 }}>Overview</h2>
+                <div className="runtime-detail-grid">
+                  <div>
+                    <p><span className={runtimeBadgeClass(runtime)}>{runtime.status || "unknown"}</span></p>
+                    <p className="muted">Name</p>
+                    <p>{runtime.name || "-"}</p>
+                    <p className="muted">Runtime ID</p>
+                    <p><code>{runtime.runtime_id}</code></p>
+                    <p className="muted">Source</p>
+                    <p>{sourceLabel(runtime.source)}</p>
+                    <p className="muted">Role</p>
+                    <p>{roleLabel(runtime.role)}</p>
+                    <p className="muted">Health</p>
+                    <p>{healthLabel(runtime)}</p>
+                  </div>
+                  <div>
+                    <p className="muted">Active sessions</p>
+                    <p>{activeSessionCount}</p>
+                    <p className="muted">Resource profile</p>
+                    <p>{runtime.resource_profile || "-"}</p>
+                    <p className="muted">Cleanup</p>
+                    <p>{cleanupLabel(runtime)}</p>
+                    {runtime.cleanup_status ? (
+                      <>
+                        <p className="muted">Cleanup status</p>
+                        <p>{runtime.cleanup_status}</p>
+                      </>
+                    ) : null}
+                    <p className="muted">Started</p>
+                    <p>{fmtTime(runtime.started_at)}</p>
+                    <p className="muted">Ended</p>
+                    <p>{fmtTime(runtime.ended_at)}</p>
+                    <p className="muted">End reason</p>
+                    <p>{runtime.ended_reason || "-"}</p>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => void stopRuntime()}
+                      disabled={isRuntimeTerminal(runtime) || stopping}
+                    >
+                      {stopping ? "Ending..." : "End runtime"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeDetailTab === "connection" ? (
+              <div className="card">
+                <h2 className="section-title" style={{ marginTop: 0 }}>Connection</h2>
+                <p className="muted">Heartbeat</p>
+                <p>{fmtTime(runtime.heartbeat_at)}</p>
+                <p className="muted">Endpoint</p>
+                <p>{runtime.endpoint_host ? `${runtime.endpoint_host}:${runtime.grpc_port || 0}` : "-"}</p>
+                <p className="muted">Credential</p>
+                <p>{runtime.credential_key_id ? <code>{runtime.credential_key_id}</code> : "-"}</p>
+                {runtime.source === "self_hosted" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowInstallInstructions((v) => !v)}
+                    >
+                      Install instructions
+                    </button>
+                    {showInstallInstructions ? (
+                      <RuntimeInstallInstructions runtime={runtime} />
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="muted">Hosted runtimes are provisioned by the platform.</p>
+                )}
+              </div>
+            ) : null}
+
+            {activeDetailTab === "debugging" && isDebuggerRuntime ? (
+              <div className="card">
+                <h2 className="section-title" style={{ marginTop: 0 }}>Debugging</h2>
                 <p className="muted">Template</p>
                 <p>{runtime.debug_workspace?.template_path ? <code>{runtime.debug_workspace.template_path}</code> : "-"}</p>
                 <p className="muted">Prepared</p>
@@ -546,6 +584,7 @@ export function RuntimeDetailPage() {
                 {runtime.debug_workspace?.last_error ? (
                   <p className="error">{runtime.debug_workspace.last_error}</p>
                 ) : null}
+                <p className="muted">Replay command is available in Connection → Install instructions.</p>
                 <button
                   type="button"
                   onClick={() => void prepareDebug()}
@@ -554,95 +593,99 @@ export function RuntimeDetailPage() {
                   {preparingDebug ? "Preparing..." : "Prepare Debugging"}
                 </button>
               </div>
-            </>
-          ) : null}
+            ) : null}
 
-          <h2 className="section-title">Live Delivery</h2>
-          <div className="card">
-            {deliveryHealth.length === 0 ? (
-              <p className="muted" style={{ margin: 0 }}>No active mode=2 delivery subscriptions for this runtime.</p>
-            ) : (
-              <table className="compact">
-                <thead>
-                  <tr>
-                    <th>Session</th>
-                    <th>Stream</th>
-                    <th>Health</th>
-                    <th>Last delivery</th>
-                    <th>Kafka</th>
-                    <th>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deliveryHealth.map((item) => {
-                    const linkedSession = sessions.find((s) => s.session_id === item.subscription.session_id);
-                    return (
-                      <tr key={item.subscription.subscription_id}>
-                        <td>
-                          {linkedSession ? (
-                            <Link to={`/accounts/${linkedSession.account_id}/sessions/${linkedSession.session_id}`}>
-                              {item.subscription.session_id.slice(0, 12)}...
-                            </Link>
-                          ) : (
-                            <code>{item.subscription.session_id.slice(0, 12)}...</code>
-                          )}
-                        </td>
-                        <td>
-                          {item.subscription.key.exchange}/{item.subscription.key.market}/{item.subscription.key.symbol}/{item.subscription.key.interval}
-                        </td>
-                        <td>{item.health_status}</td>
-                        <td>{fmtTime(item.lease?.last_delivery_at)}</td>
-                        <td>
-                          {item.lease?.last_topic ? `${item.lease.last_topic}#${item.lease.last_partition ?? 0}@${item.lease.last_offset ?? 0}` : "-"}
-                        </td>
-                        <td>{item.blocked_reason || item.latest_failure?.reason || "-"}</td>
+            {activeDetailTab === "sessions" ? (
+              <div className="card">
+                <h2 className="section-title" style={{ marginTop: 0 }}>Sessions</h2>
+                {sessions.length === 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>No recent sessions bound to this runtime.</p>
+                ) : (
+                  <table className="compact">
+                    <thead>
+                      <tr>
+                        <th>Session</th>
+                        <th>Type</th>
+                        <th>Account</th>
+                        <th>Status</th>
+                        <th>Strategy</th>
+                        <th>Started</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
+                    </thead>
+                    <tbody>
+                      {sessions.map((s) => (
+                        <tr key={s.session_id}>
+                          <td>
+                            <Link to={`/accounts/${s.account_id}/sessions/${s.session_id}`}>
+                              {s.session_id.slice(0, 12)}...
+                            </Link>
+                          </td>
+                          <td>{s.session_type || "-"}</td>
+                          <td>
+                            <Link to={`/accounts/${s.account_id}`}>
+                              {accountById.get(s.account_id)?.name || s.account_id}
+                            </Link>
+                          </td>
+                          <td><span className="status-badge status-badge--idle">{s.status}</span></td>
+                          <td>{s.strategy_id}</td>
+                          <td>{fmtTime(s.started_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            ) : null}
 
-          <h2 className="section-title">Related Sessions</h2>
-          <div className="card">
-            {sessions.length === 0 ? (
-              <p className="muted" style={{ margin: 0 }}>No recent sessions bound to this runtime.</p>
-            ) : (
-              <table className="compact">
-                <thead>
-                  <tr>
-                    <th>Session</th>
-                    <th>Type</th>
-                    <th>Account</th>
-                    <th>Status</th>
-                    <th>Strategy</th>
-                    <th>Started</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessions.map((s) => (
-                    <tr key={s.session_id}>
-                      <td>
-                        <Link to={`/accounts/${s.account_id}/sessions/${s.session_id}`}>
-                          {s.session_id.slice(0, 12)}...
-                        </Link>
-                      </td>
-                      <td>{s.session_type || "-"}</td>
-                      <td>
-                        <Link to={`/accounts/${s.account_id}`}>
-                          {accountById.get(s.account_id)?.name || s.account_id}
-                        </Link>
-                      </td>
-                      <td><span className="status-badge status-badge--idle">{s.status}</span></td>
-                      <td>{s.strategy_id}</td>
-                      <td>{fmtTime(s.started_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+            {activeDetailTab === "live_delivery" ? (
+              <div className="card">
+                <h2 className="section-title" style={{ marginTop: 0 }}>Live Delivery</h2>
+                {deliveryHealth.length === 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>No active mode=2 delivery subscriptions for this runtime.</p>
+                ) : (
+                  <table className="compact">
+                    <thead>
+                      <tr>
+                        <th>Session</th>
+                        <th>Stream</th>
+                        <th>Health</th>
+                        <th>Last delivery</th>
+                        <th>Kafka</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deliveryHealth.map((item) => {
+                        const linkedSession = sessions.find((s) => s.session_id === item.subscription.session_id);
+                        return (
+                          <tr key={item.subscription.subscription_id}>
+                            <td>
+                              {linkedSession ? (
+                                <Link to={`/accounts/${linkedSession.account_id}/sessions/${linkedSession.session_id}`}>
+                                  {item.subscription.session_id.slice(0, 12)}...
+                                </Link>
+                              ) : (
+                                <code>{item.subscription.session_id.slice(0, 12)}...</code>
+                              )}
+                            </td>
+                            <td>
+                              {item.subscription.key.exchange}/{item.subscription.key.market}/{item.subscription.key.symbol}/{item.subscription.key.interval}
+                            </td>
+                            <td>{item.health_status}</td>
+                            <td>{fmtTime(item.lease?.last_delivery_at)}</td>
+                            <td>
+                              {item.lease?.last_topic ? `${item.lease.last_topic}#${item.lease.last_partition ?? 0}@${item.lease.last_offset ?? 0}` : "-"}
+                            </td>
+                            <td>{item.blocked_reason || item.latest_failure?.reason || "-"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            ) : null}
+          </PageTabs>
         </>
       ) : null}
     </div>
