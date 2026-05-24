@@ -23,7 +23,7 @@ VITE_API_BASE_URL=http://localhost:8090 npm run build
 
 ## Local stack
 
-1. TimescaleDB + backend services, including **account-service** and **control-panel-service**.
+1. TimescaleDB + backend services, including **core-service** and **control-panel-service**.
 2. **quant-handler** with `QUANT_HANDLER_JWT_SECRET`, `ACCOUNT_SERVICE_GRPC_ADDR`, `CONTROL_PANEL_SERVICE_GRPC_ADDR`, and CORS allowing the Vite origin (`http://localhost:5173` by default on handler).
 3. This app: `npm run dev`, open the printed URL, sign up or log in with a user account, manage accounts/runtime/market-data flows.
 
