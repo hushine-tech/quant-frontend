@@ -5,6 +5,7 @@ import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AccountNew from "@/pages/AccountNew";
+import { accountModeLabel } from "@/utils/accountMode";
 import { formatUTCWithLocal } from "@/utils/time";
 
 type AccountTab = "accounts" | "create";
@@ -16,19 +17,6 @@ const tabs: Array<PageTab<AccountTab>> = [
 
 function normalizeTab(value: string | null): AccountTab {
   return value === "create" ? "create" : "accounts";
-}
-
-function modeLabel(mode: number): string {
-  switch (mode) {
-    case 0:
-      return "Backtest";
-    case 1:
-      return "Binance Live";
-    case 2:
-      return "Binance Testnet";
-    default:
-      return `Mode ${mode}`;
-  }
 }
 
 export default function AccountManagement() {
@@ -81,7 +69,7 @@ export default function AccountManagement() {
               <>
                 <td><Link to={`/accounts/${account.account_id}`}>{account.name}</Link></td>
                 <td><code>{account.account_id}</code></td>
-                <td>{modeLabel(account.mode)}</td>
+                <td>{accountModeLabel(account.mode)}</td>
                 <td>{account.created_at ? formatUTCWithLocal(account.created_at) : "-"}</td>
                 <td>{account.description?.trim() || "-"}</td>
               </>

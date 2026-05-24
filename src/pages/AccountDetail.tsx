@@ -22,6 +22,7 @@ import {
   loadDebugDataset,
   queryMarketDataKlines,
   runtimeRoleForSessionMode,
+  isSessionTerminal,
   type Account,
   type WalletSnapshot,
   type Strategy,
@@ -1569,10 +1570,13 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
     setTableRefresh((v) => v + 1);
   }, [accountId, refreshTick]);
 
+  const shouldPollSessions = loadedSessions.some((session) => !isSessionTerminal(session));
+
   useEffect(() => {
+    if (!shouldPollSessions) return;
     const id = window.setInterval(() => setTableRefresh((v) => v + 1), 3000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [shouldPollSessions]);
 
   const loadSessionsForTable = async (offset: number, limit: number) => {
     const page = await listSessionsPage({ account_id: accountId, session_id: search || undefined, offset, limit });

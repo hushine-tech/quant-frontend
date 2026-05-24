@@ -451,6 +451,13 @@ export function RuntimeDetailPage() {
     try {
       const stopped = await cancelRuntime(runtime.runtime_id);
       setRuntime(stopped);
+      try {
+        const fresh = await getRuntime(runtime.runtime_id);
+        setRuntime(fresh);
+      } catch {
+        // The DELETE response is authoritative enough for the UI; a follow-up
+        // fetch only prevents stale detail pages when cleanup finishes quickly.
+      }
       setNotice("Runtime ended.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "End runtime failed");

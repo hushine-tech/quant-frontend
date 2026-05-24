@@ -14,6 +14,7 @@ import PageHeader from "@/components/PageHeader";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
+import { accountModeLabel } from "@/utils/accountMode";
 import { formatUTCWithLocal } from "@/utils/time";
 
 function fmtTime(value?: string): string {
@@ -184,7 +185,7 @@ export default function SessionManagement() {
                   <Link to={`/runtimes/${encodeURIComponent(session.runtime_id)}`}>{session.runtime_name || session.runtime_id}</Link>
                 ) : "-"}
               </td>
-              <td>{session.mode}</td>
+              <td>{accountModeLabel(session.mode)}</td>
               <td>{session.session_type || "-"}</td>
               <td><span className="status-badge status-badge--idle">{session.status}</span></td>
               <td>{fmtTime(session.started_at)}</td>

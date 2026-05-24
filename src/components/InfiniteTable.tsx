@@ -29,6 +29,11 @@ export default function InfiniteTable<T>({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadingRef = useRef(false);
+  const loadPageRef = useRef(loadPage);
+
+  useEffect(() => {
+    loadPageRef.current = loadPage;
+  }, [loadPage]);
 
   const loadNext = useCallback(async (nextOffset: number, replace = false) => {
     if (loadingRef.current) return;
@@ -36,7 +41,7 @@ export default function InfiniteTable<T>({
     setLoading(true);
     setError(null);
     try {
-      const page = await loadPage(nextOffset, pageSize);
+      const page = await loadPageRef.current(nextOffset, pageSize);
       setItems((prev) => (replace ? page.items : [...prev, ...page.items]));
       setOffset(page.next_offset);
       setHasMore(page.has_more);
@@ -46,7 +51,7 @@ export default function InfiniteTable<T>({
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [loadPage, pageSize]);
+  }, [pageSize]);
 
   useEffect(() => {
     setItems([]);

@@ -14,7 +14,10 @@
     "test:layout-shell": "node scripts/layout-shell.test.mjs",
     "test:primary-pages-tabs": "node scripts/primary-pages-tabs.test.mjs",
     "test:session-management": "node scripts/session-management.test.mjs",
+    "test:session-detail-copy": "node scripts/session-detail-copy.test.mjs",
+    "test:account-detail-session-polling": "node scripts/account-detail-session-polling.test.mjs",
     "test:filter-controls": "node scripts/filter-controls.test.mjs",
+    "test:async-loader-stability": "node scripts/async-loader-stability.test.mjs",
     "test:frontend-information-architecture": "node scripts/frontend-information-architecture.test.mjs",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview"

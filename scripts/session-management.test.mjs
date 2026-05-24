@@ -21,6 +21,7 @@ for (const token of [
   "statusFilter",
   "sessionIdFilter",
   "/accounts/${session.account_id}/sessions/${session.session_id}",
+  "accountModeLabel(session.mode)",
 ]) {
   assert.equal(source.includes(token), true, `Session Management should include ${token}`);
 }
@@ -33,6 +34,7 @@ for (const forbidden of [
   "Stop Session",
   "Finish",
   "Resume",
+  "<td>{session.mode}</td>",
 ]) {
   assert.equal(source.includes(forbidden), false, `Session Management must remain read-only: ${forbidden}`);
 }

@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listAccounts, type Account } from "@/api/client";
-
-function modeLabel(mode: number): string {
-  switch (mode) {
-    case 0: return "Backtest";
-    case 1: return "Binance Live";
-    case 2: return "Binance Testnet";
-    default: return `Mode ${mode}`;
-  }
-}
+import { accountModeLabel } from "@/utils/accountMode";
 
 export default function AccountList() {
   const [rows, setRows] = useState<Account[] | null>(null);
@@ -66,7 +58,7 @@ export default function AccountList() {
                   <td className="muted" style={{ fontSize: "0.85rem" }}>
                     {a.account_id}
                   </td>
-                  <td>{modeLabel(a.mode)}</td>
+                  <td>{accountModeLabel(a.mode)}</td>
                   <td>{a.description?.trim() || "-"}</td>
                 </tr>
               ))}

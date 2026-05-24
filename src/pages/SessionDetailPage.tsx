@@ -491,7 +491,7 @@ export default function SessionDetailPage() {
             <div className="muted" style={{ fontSize: "0.85rem" }}>
               {session ? (
                 <>
-                  当前状态：<span className={badgeClass(session.status)}>{session.status}</span>
+                  Current status: <span className={badgeClass(session.status)}>{session.status}</span>
                   {sessionKindBadge(session)}
                   {session.runtime_id ? (
                     <>

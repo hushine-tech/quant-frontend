@@ -40,8 +40,13 @@ export default function AsyncSelect<T = unknown>({
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const loadingRef = useRef(false);
+  const loadPageRef = useRef(loadPage);
 
   const selected = useMemo(() => options.find((opt) => opt.value === value), [options, value]);
+
+  useEffect(() => {
+    loadPageRef.current = loadPage;
+  }, [loadPage]);
 
   const fetchOptions = useCallback(async (nextOffset: number, replace = false, q = query) => {
     if (loadingRef.current) return;
@@ -49,7 +54,7 @@ export default function AsyncSelect<T = unknown>({
     setLoading(true);
     setError(null);
     try {
-      const page = await loadPage(nextOffset, pageSize, q);
+      const page = await loadPageRef.current(nextOffset, pageSize, q);
       setOptions((prev) => (replace ? page.items : [...prev, ...page.items]));
       setOffset(page.next_offset);
       setHasMore(page.has_more);
@@ -59,7 +64,7 @@ export default function AsyncSelect<T = unknown>({
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [loadPage, pageSize, query]);
+  }, [pageSize, query]);
 
   useEffect(() => {
     if (!open) return;
