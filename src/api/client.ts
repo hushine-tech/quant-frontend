@@ -471,6 +471,34 @@ export async function getDownloadAndRunJob(jobId: string): Promise<DownloadRunJo
   return (await res.json()) as DownloadRunJob;
 }
 
+export type DebugPackageRequest = {
+  market: "futures";
+  symbol: string;
+  interval: string;
+  start_time_ms: number;
+  end_time_ms: number;
+  wallet_source: "manual" | "account_snapshot";
+  initial_balance?: number;
+};
+
+export async function downloadDebugPackage(
+  accountId: number | string,
+  body: DebugPackageRequest,
+): Promise<Blob> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const res = await fetch(`${apiBase()}/api/accounts/${accountId}/debug-package`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${t}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return await res.blob();
+}
+
 // ── Strategy management ──────────────────────────────────────────────────────
 
 export type Strategy = {
@@ -1612,8 +1640,7 @@ export function isRuntimeRouteable(rt: Runtime): boolean {
   return runtimeUnavailableReason(rt) === undefined;
 }
 
-export function runtimeRoleForSessionMode(mode?: number): "executor" | "debugger" | undefined {
-  if (mode === 0) return undefined;
+export function runtimeRoleForSessionMode(_mode?: number): "executor" {
   return "executor";
 }
 

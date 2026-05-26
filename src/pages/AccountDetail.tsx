@@ -19,7 +19,7 @@ import {
   finishSession,
   stopSession,
   startDownloadAndRunBacktest,
-  loadDebugDataset,
+  downloadDebugPackage,
   queryMarketDataKlines,
   runtimeRoleForSessionMode,
   isSessionTerminal,
@@ -34,7 +34,6 @@ import {
   type StreamKey,
   type PreviewRunStrategy,
   type Runtime,
-  type DebugDatasetState,
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
@@ -70,11 +69,12 @@ function envLabel(mode: number): string {
   }
 }
 
-type AccountDetailTab = "portfolio" | "run" | "sessions";
+type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions";
 
 const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
   { id: "portfolio", label: "Portfolio" },
   { id: "run", label: "Run Strategy" },
+  { id: "debug", label: "Local Debug" },
   { id: "sessions", label: "Sessions" },
 ];
 
@@ -482,6 +482,10 @@ export default function AccountDetail() {
             <StrategyPanel accountId={acc.account_id} mode={mode} onSessionsChanged={bumpSessionRefreshTick} />
           ) : null}
 
+          {activeTab === "debug" ? (
+            <LocalDebugPackagePanel account={acc} wallet={wallet} />
+          ) : null}
+
           {activeTab === "sessions" ? (
             <SessionPanel accountId={acc.account_id} refreshTick={sessionRefreshTick} />
           ) : null}
@@ -845,6 +849,168 @@ function BacktestSampleKlines({ result }: { result: MarketDataKlines }) {
   );
 }
 
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadSafeName(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "account";
+}
+
+function LocalDebugPackagePanel({
+  account,
+  wallet,
+}: {
+  account: Account;
+  wallet: WalletSnapshot | null;
+}) {
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [interval, setInterval] = useState("1m");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [initialBalance, setInitialBalance] = useState(() => {
+    const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
+    return Number.isFinite(balance) && balance > 0 ? String(balance) : "1000";
+  });
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialBalance.trim()) return;
+    const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
+    setInitialBalance(Number.isFinite(balance) && balance > 0 ? String(balance) : "1000");
+  }, [initialBalance, wallet]);
+
+  async function handleGenerateDebugPackage() {
+    const startTimeMs = parseDateTimeLocalMs(startTime);
+    const endTimeMs = parseDateTimeLocalMs(endTime);
+    const balance = Number(initialBalance);
+    if (!startTimeMs || !endTimeMs || startTimeMs >= endTimeMs) {
+      setError("Select a valid start and end time.");
+      return;
+    }
+    if (!symbol.trim()) {
+      setError("Symbol is required.");
+      return;
+    }
+    if (!Number.isFinite(balance) || balance <= 0) {
+      setError("Initial balance must be greater than zero.");
+      return;
+    }
+
+    setDownloading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const blob = await downloadDebugPackage(account.account_id, {
+        market: "futures",
+        symbol: symbol.trim().toUpperCase(),
+        interval: interval.trim() || "1m",
+        start_time_ms: startTimeMs,
+        end_time_ms: endTimeMs,
+        wallet_source: "manual",
+        initial_balance: balance,
+      });
+      const filename = `debug-package-${downloadSafeName(account.name)}-${symbol.trim().toUpperCase()}-${interval.trim() || "1m"}.zip`;
+      downloadBlob(blob, filename);
+      setNotice("Debug package generated. Import it in the local strategy debugger workspace.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Debug package generation failed");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <>
+      <h2 className="section-title">Local Debug</h2>
+      <div className="card">
+        <p className="muted" style={{ marginTop: 0 }}>
+          Generate an offline package for the local strategy debugger CLI. The package contains
+          historical futures bars, a wallet snapshot, and a strategy template; it does not require a
+          platform-connected debugger runtime.
+        </p>
+        <FilterPanel>
+          <FilterField label="Symbol">
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              placeholder="BTCUSDT"
+            />
+          </FilterField>
+          <FilterField label="Interval">
+            <input
+              value={interval}
+              onChange={(e) => setInterval(e.target.value)}
+              placeholder="1m"
+            />
+          </FilterField>
+          <FilterField label="Initial balance">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={initialBalance}
+              onChange={(e) => setInitialBalance(e.target.value)}
+            />
+          </FilterField>
+          <FilterField label="Start">
+            <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          </FilterField>
+          <FilterField label="End">
+            <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </FilterField>
+          <div className="filter-action">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => { void handleGenerateDebugPackage(); }}
+              disabled={downloading || !startTime || !endTime || !symbol.trim()}
+            >
+              {downloading ? "Generating..." : "Generate Debug Package"}
+            </button>
+          </div>
+        </FilterPanel>
+
+        {error ? <p className="error" style={{ marginTop: "0.75rem" }}>{error}</p> : null}
+        {notice ? <p className="muted" style={{ marginTop: "0.75rem" }}>{notice}</p> : null}
+
+        <div
+          style={{
+            marginTop: "1rem",
+            border: "1px solid #dbe4f0",
+            borderRadius: "6px",
+            padding: "0.9rem 1rem",
+            background: "#f8fafc",
+          }}
+        >
+          <p style={{ fontWeight: 600, marginTop: 0 }}>Local CLI flow</p>
+          <pre style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
+{`hushine-debug init --dir hushine-debug-workspace
+hushine-debug import debug-package.zip --dir hushine-debug-workspace
+cd hushine-debug-workspace
+cp strategy.py.template strategy.py
+hushine-debug replay`}
+          </pre>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function StrategyPanel({
   accountId,
   mode,
@@ -864,7 +1030,6 @@ function StrategyPanel({
   const [endTime, setEndTime] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [stopError, setStopError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [finishing, setFinishing] = useState(false);
@@ -881,10 +1046,6 @@ function StrategyPanel({
     startTimeMs?: number;
     endTimeMs?: number;
   } | null>(null);
-  const [debugMarket, setDebugMarket] = useState("futures");
-  const [debugSymbol, setDebugSymbol] = useState("ETHUSDT");
-  const [debugInterval, setDebugInterval] = useState("1m");
-  const [debugDataset, setDebugDataset] = useState<DebugDatasetState | null>(null);
   const [coveragePreview, setCoveragePreview] = useState<BacktestCoveragePreview | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
@@ -911,7 +1072,6 @@ function StrategyPanel({
     setCoverageError(null);
     setDownloadJob(null);
     if (!pendingStart || pendingStart.kind !== "backtest" || !startRuntimeId) return;
-    if ((startRuntime?.role || "").toLowerCase() === "debugger") return;
     void loadBacktestCoverage(pendingStart, startRuntimeId);
   }, [pendingStart, startRuntimeId, startRuntime]);
 
@@ -1123,37 +1283,12 @@ function StrategyPanel({
 
   async function handleConfirmStart() {
     if (!pendingStart) return;
-    const selectedRole = (startRuntime?.role || "").toLowerCase();
-    if (pendingStart.kind === "backtest" && selectedRole === "debugger") {
-      if (!pendingStart.startTimeMs || !pendingStart.endTimeMs) return;
-      setRunning(true);
-      setError(null);
-      try {
-        const ds = await loadDebugDataset(accountId, {
-          runtime_id: startRuntimeId,
-          market: debugMarket,
-          symbol: debugSymbol,
-          interval: debugInterval,
-          start_time_ms: pendingStart.startTimeMs,
-          end_time_ms: pendingStart.endTimeMs,
-        });
-        setDebugDataset(ds);
-        setStartDialogOpen(false);
-        setPendingStart(null);
-        setNotice("Debug dataset loaded. Run `hushine-debug replay` inside the debugger container.");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Load debug dataset failed");
-      } finally {
-        setRunning(false);
-      }
-      return;
-    }
     if (pendingStart.kind === "backtest" && !coveragePreview?.complete) {
       setError("Historical data coverage is incomplete. Download missing data before running this backtest.");
       return;
     }
     if (pendingStart.kind === "backtest" && !activeStrat) {
-      setError("Activate a strategy before running on an executor runtime.");
+      setError("Activate a strategy before running a backtest.");
       return;
     }
     await startStrategyRun(pendingStart, startRuntimeId);
@@ -1238,20 +1373,14 @@ function StrategyPanel({
 
   const activeStrat = accountStrats.find((s) => s.active);
   const mountedIds = new Set(accountStrats.map((s) => s.strategy.strategy_id));
-  const startRuntimeRole = (startRuntime?.role || "").toLowerCase();
-  const selectedDebuggerRuntime = mode === 0 && startRuntimeRole === "debugger";
-  const pendingDebuggerStart = pendingStart?.kind === "backtest" && startRuntimeRole === "debugger";
 
   return (
     <>
       <h2 className="section-title">Strategy</h2>
 
       {/* ── Mounted strategies ── */}
-      <div className="card" style={{ marginBottom: "1rem", opacity: selectedDebuggerRuntime ? 0.55 : 1 }}>
+      <div className="card" style={{ marginBottom: "1rem" }}>
         <p style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Mounted strategies</p>
-        {selectedDebuggerRuntime ? (
-          <p className="muted">Debugger runtime uses <code>/workspace/self_hosted_strategy.py</code>; mounted strategy selection is ignored.</p>
-        ) : null}
         {accountStrats.length === 0 ? (
           <p className="muted">No strategies mounted.</p>
         ) : (
@@ -1276,15 +1405,15 @@ function StrategyPanel({
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 {!as.active ? (
                   <>
-                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleActivate(as.strategy.strategy_id)} disabled={selectedDebuggerRuntime}>
+                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleActivate(as.strategy.strategy_id)}>
                       Activate
                     </button>
-                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleUnmount(as.strategy.strategy_id)} disabled={selectedDebuggerRuntime}>
+                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleUnmount(as.strategy.strategy_id)}>
                       Unmount
                     </button>
                   </>
                 ) : (
-                  <button style={{ fontSize: "0.8rem" }} onClick={() => handleDeactivate(as.strategy.strategy_id)} disabled={selectedDebuggerRuntime}>
+                  <button style={{ fontSize: "0.8rem" }} onClick={() => handleDeactivate(as.strategy.strategy_id)}>
                     Deactivate
                   </button>
                 )}
@@ -1298,7 +1427,6 @@ function StrategyPanel({
             <AsyncSelect<Strategy>
               value={selectedMountId === "" ? "" : String(selectedMountId)}
               placeholder="Mount a strategy"
-              disabled={selectedDebuggerRuntime}
               onChange={(value) => setSelectedMountId(value === "" ? "" : Number(value))}
               loadPage={async (offset, limit, query) => {
                 const page = await listStrategiesPage({ offset, limit, namePrefix: query || undefined, activeOnly: true });
@@ -1315,7 +1443,7 @@ function StrategyPanel({
                 };
               }}
             />
-            <button onClick={handleMount} disabled={!selectedMountId || selectedDebuggerRuntime}>Mount</button>
+            <button onClick={handleMount} disabled={!selectedMountId}>Mount</button>
           </div>
       </div>
 
@@ -1372,10 +1500,8 @@ function StrategyPanel({
       {/* ── Run backtest (mode=0 only) ── */}
       {mode === 0 ? (
       <div className="card">
-        {selectedDebuggerRuntime ? (
-          <p className="muted">Debugger runtime will use the self-hosted workspace strategy template.</p>
-        ) : !activeStrat ? (
-          <p className="muted">Activate a strategy above to run on an executor runtime. Debugger runtime can run without a mounted strategy.</p>
+        {!activeStrat ? (
+          <p className="muted">Activate a strategy above to run a backtest.</p>
         ) : (
           <p className="muted" style={{ marginBottom: "0.5rem" }}>
             Active: <strong>{activeStrat.strategy.name} v{activeStrat.strategy.version}</strong>
@@ -1393,10 +1519,9 @@ function StrategyPanel({
               setStartRuntime(runtime ?? null);
               setCoveragePreview(null);
               setCoverageError(null);
-              setDebugDataset(null);
-              setNotice(null);
             }}
             mode={0}
+            role="executor"
             label="Runtime"
           />
           <FilterPanel>
@@ -1408,17 +1533,11 @@ function StrategyPanel({
             </FilterField>
           </FilterPanel>
 
-          {notice ? <p className="muted" style={{ marginTop: "0.5rem" }}>{notice}</p> : null}
-          {debugDataset?.dataset_id ? (
-            <p className="muted" style={{ marginTop: "0.5rem" }}>
-              Debug dataset: <code>{debugDataset.dataset_id}</code> · {debugDataset.symbol} {debugDataset.market} {debugDataset.interval} · {debugDataset.bar_count || 0} bars
-            </p>
-          ) : null}
           {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}
 
           <p style={{ marginTop: "0.75rem" }}>
-            <button type="submit" className="primary" disabled={running || !startTime || !endTime || !startRuntimeId || (!selectedDebuggerRuntime && !activeStrat)}>
-              {running ? "Running…" : selectedDebuggerRuntime ? "Run debugger" : "Run backtest"}
+            <button type="submit" className="primary" disabled={running || !startTime || !endTime || !startRuntimeId || !activeStrat}>
+              {running ? "Running…" : "Run backtest"}
             </button>
           </p>
         </form>
@@ -1482,20 +1601,18 @@ function StrategyPanel({
       />
       <RuntimeSelectionDialog
         open={startDialogOpen}
-        title={pendingStart?.kind === "testnet" ? "Start Testnet Session" : pendingDebuggerStart ? "Run Debugger" : "Run Backtest"}
+        title={pendingStart?.kind === "testnet" ? "Start Testnet Session" : "Run Backtest"}
         description={pendingStart?.kind === "testnet"
           ? <>Choose where the active strategy will run.</>
-          : pendingDebuggerStart
-            ? <>Load the selected historical dataset into the debugger runtime.</>
-            : <>Choose where the backtest session will run.</>}
+          : <>Choose where the backtest session will run.</>}
         runtimeId={startRuntimeId}
         runtimeLabel={pendingStart?.kind === "testnet" ? "Executor runtime" : "Runtime"}
         mode={pendingStart?.kind === "testnet" ? 2 : 0}
         role={runtimeRoleForSessionMode(pendingStart?.kind === "testnet" ? 2 : 0)}
         busy={running}
         error={error}
-        confirmLabel={pendingStart?.kind === "testnet" ? "Start Session" : pendingDebuggerStart ? "Load Dataset" : "Run Backtest"}
-        confirmDisabled={pendingStart?.kind === "backtest" && !pendingDebuggerStart && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error"))}
+        confirmLabel={pendingStart?.kind === "testnet" ? "Start Session" : "Run Backtest"}
+        confirmDisabled={pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error"))}
         onRuntimeChange={(runtimeId, runtime) => {
           setStartRuntimeId(runtimeId);
           setStartRuntime(runtime ?? null);
@@ -1508,27 +1625,7 @@ function StrategyPanel({
         }}
         onConfirm={() => { void handleConfirmStart(); }}
       >
-        {pendingStart?.kind === "backtest" && pendingDebuggerStart ? (
-          <div style={{ marginTop: "0.75rem" }}>
-            <FilterPanel className="filter-panel--compact">
-              <FilterField label="Market">
-                <select value={debugMarket} onChange={(e) => setDebugMarket(e.target.value)}>
-                  <option value="futures">futures</option>
-                  <option value="spot">spot</option>
-                </select>
-              </FilterField>
-              <FilterField label="Symbol">
-                <input value={debugSymbol} onChange={(e) => setDebugSymbol(e.target.value.toUpperCase())} />
-              </FilterField>
-              <FilterField label="Interval">
-                <input value={debugInterval} onChange={(e) => setDebugInterval(e.target.value)} />
-              </FilterField>
-            </FilterPanel>
-            <p className="muted" style={{ marginBottom: 0 }}>
-              After loading, enter the debugger container and run <code>hushine-debug replay</code>.
-            </p>
-          </div>
-        ) : pendingStart?.kind === "backtest" ? (
+        {pendingStart?.kind === "backtest" ? (
           <BacktestCoverageGate
             preview={coveragePreview}
             loading={coverageLoading}

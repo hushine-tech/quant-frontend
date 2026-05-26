@@ -94,7 +94,7 @@ export function RuntimeCredentialsPanel({
 
   // newLabel is the input for the next "issue" request.
   const [newLabel, setNewLabel] = useState("");
-  const [newRole, setNewRole] = useState<"executor" | "debugger">("executor");
+  const [newRole, setNewRole] = useState<"executor">("executor");
   const [issuing, setIssuing] = useState(false);
 
   // Just-issued bundle, shown as a one-time banner. Cleared when the
@@ -262,11 +262,10 @@ export function RuntimeCredentialsPanel({
             <FilterField label="Role">
               <select
                 value={newRole}
-                onChange={(e) => setNewRole(e.target.value as "executor" | "debugger")}
+                onChange={(e) => setNewRole(e.target.value as "executor")}
                 disabled={issuing}
               >
                 <option value="executor">Executor</option>
-                <option value="debugger">Debugger</option>
               </select>
             </FilterField>
             <div className="filter-action">
