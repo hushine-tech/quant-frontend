@@ -10,15 +10,23 @@ FRONTEND_API_BASE_URL?=auto
 install node_modules:
 	$(NPM) install --cache $(NPM_CACHE)
 
-build: node_modules
-	VITE_API_BASE_URL=$(FRONTEND_API_BASE_URL) $(NPM) run build
+build:
+	@if command -v $(NPM) >/dev/null 2>&1; then \
+		$(MAKE) node_modules; \
+		VITE_API_BASE_URL=$(FRONTEND_API_BASE_URL) $(NPM) run build; \
+	elif [ -f dist/index.html ]; then \
+		echo "npm not found; using existing dist"; \
+	else \
+		echo "npm not found and dist/index.html is missing"; \
+		exit 127; \
+	fi
 
 dev: node_modules
 	$(VITE) --port $(PORT) --host
 
 start: build
 	mkdir -p logs
-	python3 -c 'import subprocess; out=open("logs/quant-frontend.out","ab",buffering=0); p=subprocess.Popen(["$(VITE)","preview","--port","$(PORT)","--host","--strictPort"], stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True); open("$(PID_FILE)","w").write(str(p.pid)+"\n")'
+	python3 -c 'import shutil, subprocess; out=open("logs/quant-frontend.out","ab",buffering=0); cmd=["$(VITE)","preview","--port","$(PORT)","--host","--strictPort"] if shutil.which("node") and shutil.which("$(VITE)") else ["python3","-m","http.server","$(PORT)","--bind","0.0.0.0","--directory","dist"]; p=subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True); open("$(PID_FILE)","w").write(str(p.pid)+"\n")'
 	@echo "✓ quant-frontend started (pid=$$(cat $(PID_FILE))), logs at gateway/quant-frontend/logs/quant-frontend.out"
 
 stop:
