@@ -3,6 +3,7 @@ VITE=./node_modules/.bin/vite
 PORT?=5173
 NPM?=npm
 NPM_CACHE?=.npm-cache
+FRONTEND_API_BASE_URL?=auto
 
 .PHONY: build dev start stop clean test install
 
@@ -10,7 +11,7 @@ install node_modules:
 	$(NPM) install --cache $(NPM_CACHE)
 
 build: node_modules
-	$(NPM) run build
+	VITE_API_BASE_URL=$(FRONTEND_API_BASE_URL) $(NPM) run build
 
 dev: node_modules
 	$(VITE) --port $(PORT) --host

@@ -6,7 +6,8 @@ React (Vite + TypeScript) portal UI: sign in against **quant-handler**, then lis
 
 Set at build time:
 
-- `VITE_API_BASE_URL` — quant-handler origin (e.g. `http://localhost:8090`). If unset, the app defaults to `http://localhost:8090` for local dev.
+- `VITE_API_BASE_URL` — quant-handler origin. Use `auto` or leave unset to call `http(s)://<current frontend host>:8090`.
+- `FRONTEND_API_BASE_URL` — Makefile wrapper for production builds. Defaults to `auto`, so a deployment served from `http://192.168.88.12:5173` calls `http://192.168.88.12:8090`.
 
 ## Scripts
 
@@ -18,7 +19,9 @@ npm run dev
 Build:
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8090 npm run build
+make build
+# or force a separate API origin:
+FRONTEND_API_BASE_URL=http://api.example.com:8090 make build
 ```
 
 ## Local stack

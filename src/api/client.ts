@@ -148,13 +148,17 @@ export type CreateAccountPayload = {
   };
 };
 
-function apiBase(): string {
-  const v = import.meta.env.VITE_API_BASE_URL;
-  if (v) return v.replace(/\/$/, "");
+function sameHostApiBase(): string {
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:8090`;
   }
   return "http://localhost:8090";
+}
+
+function apiBase(): string {
+  const v = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (v && v !== "auto" && v !== "same-host") return v.replace(/\/$/, "");
+  return sameHostApiBase();
 }
 
 let tokenMem: string | null = null;
