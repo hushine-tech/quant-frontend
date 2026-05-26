@@ -26,7 +26,7 @@ dev: node_modules
 
 start: build
 	mkdir -p logs
-	python3 -c 'import shutil, subprocess; out=open("logs/quant-frontend.out","ab",buffering=0); cmd=["$(VITE)","preview","--port","$(PORT)","--host","--strictPort"] if shutil.which("node") and shutil.which("$(VITE)") else ["python3","-m","http.server","$(PORT)","--bind","0.0.0.0","--directory","dist"]; p=subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True); open("$(PID_FILE)","w").write(str(p.pid)+"\n")'
+	python3 -c 'import shutil, subprocess; out=open("logs/quant-frontend.out","ab",buffering=0); cmd=["$(VITE)","preview","--port","$(PORT)","--host","--strictPort"] if shutil.which("node") and shutil.which("$(VITE)") else ["python3","scripts/serve_spa.py","--port","$(PORT)","--bind","0.0.0.0","--directory","dist"]; p=subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True); open("$(PID_FILE)","w").write(str(p.pid)+"\n")'
 	@echo "✓ quant-frontend started (pid=$$(cat $(PID_FILE))), logs at gateway/quant-frontend/logs/quant-frontend.out"
 
 stop:
