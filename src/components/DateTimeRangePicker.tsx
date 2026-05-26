@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 type Props = {
   label?: string;
@@ -113,6 +113,7 @@ export default function DateTimeRangePicker({
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({ visibility: "hidden" });
   const startDate = parseLocalDateTime(startValue);
   const endDate = parseLocalDateTime(endValue);
   const initialMonth = startOfMonth(startDate ?? endDate ?? new Date());
@@ -131,6 +132,42 @@ export default function DateTimeRangePicker({
     return () => {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    function positionPopover() {
+      const root = rootRef.current;
+      if (!root) return;
+      const rect = root.getBoundingClientRect();
+      const padding = 16;
+      const minHeight = 360;
+      const width = Math.min(768, window.innerWidth - padding * 2);
+      const maxPanelHeight = Math.min(620, window.innerHeight - padding * 2);
+      let top = rect.bottom + 8;
+      if (top + minHeight > window.innerHeight - padding) {
+        top = Math.max(padding, window.innerHeight - maxPanelHeight - padding);
+      }
+      const left = Math.max(
+        padding,
+        Math.min(rect.left, window.innerWidth - width - padding),
+      );
+      setPopoverStyle({
+        left,
+        top,
+        width,
+        maxHeight: Math.max(280, window.innerHeight - top - padding),
+        visibility: "visible",
+      });
+    }
+
+    positionPopover();
+    window.addEventListener("resize", positionPopover);
+    window.addEventListener("scroll", positionPopover, true);
+    return () => {
+      window.removeEventListener("resize", positionPopover);
+      window.removeEventListener("scroll", positionPopover, true);
     };
   }, [open]);
 
@@ -191,7 +228,7 @@ export default function DateTimeRangePicker({
         </span>
       </button>
       {open ? (
-        <div className="date-time-range__popover">
+        <div className="date-time-range__popover" style={popoverStyle}>
           <div className="date-time-range__toolbar">
             <div className="date-time-range__presets">
               <button type="button" onClick={() => setPreset(7)}>7D</button>
