@@ -42,6 +42,7 @@ import { FilterField, FilterPanel } from "@/components/FilterControls";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
+import SymbolPicker from "@/components/SymbolPicker";
 
 function envBannerClass(mode: number): string {
   switch (mode) {
@@ -78,8 +79,21 @@ const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
   { id: "sessions", label: "Sessions" },
 ];
 
-const LOCAL_DEBUG_DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"];
 const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
+
+function localDebugInitialBalance(wallet: WalletSnapshot | null): number {
+  const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
+  return Number.isFinite(balance) && balance > 0 ? balance : 1000;
+}
+
+function formatLocalDebugBalance(value: number): string {
+  return value.toFixed(4).replace(/\.?0+$/, "");
+}
+
+function localDebugDefaultSymbol(wallet: WalletSnapshot | null): string {
+  const positionSymbol = wallet?.futures?.positions?.find((p) => p.symbol?.trim())?.symbol;
+  return (positionSymbol || "BTCUSDT").trim().toUpperCase();
+}
 
 function sessionStartedAtMs(session: Session): number {
   return Date.parse(session.started_at || session.completed_at || "") || 0;
@@ -879,28 +893,27 @@ function LocalDebugPackagePanel({
   account: Account;
   wallet: WalletSnapshot | null;
 }) {
-  const [symbol, setSymbol] = useState("BTCUSDT");
+  const defaultSymbol = localDebugDefaultSymbol(wallet);
+  const [symbol, setSymbol] = useState(defaultSymbol);
+  const [symbolTouched, setSymbolTouched] = useState(false);
   const [interval, setInterval] = useState("1m");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
-  const [initialBalance, setInitialBalance] = useState(() => {
-    const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
-    return Number.isFinite(balance) && balance > 0 ? String(balance) : "1000";
-  });
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const initialBalance = localDebugInitialBalance(wallet);
+  const initialBalanceDisplay = `${formatLocalDebugBalance(initialBalance)} USDT`;
 
   useEffect(() => {
-    if (initialBalance.trim()) return;
-    const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
-    setInitialBalance(Number.isFinite(balance) && balance > 0 ? String(balance) : "1000");
-  }, [initialBalance, wallet]);
+    if (!symbolTouched) {
+      setSymbol(defaultSymbol);
+    }
+  }, [defaultSymbol, symbolTouched]);
 
   async function handleGenerateDebugPackage() {
     const startTimeMs = parseDateTimeLocalMs(startTime);
     const endTimeMs = parseDateTimeLocalMs(endTime);
-    const balance = Number(initialBalance);
     if (!startTimeMs || !endTimeMs || startTimeMs >= endTimeMs) {
       setError("Select a valid start and end time.");
       return;
@@ -909,7 +922,7 @@ function LocalDebugPackagePanel({
       setError("Symbol is required.");
       return;
     }
-    if (!Number.isFinite(balance) || balance <= 0) {
+    if (!Number.isFinite(initialBalance) || initialBalance <= 0) {
       setError("Initial balance must be greater than zero.");
       return;
     }
@@ -924,8 +937,8 @@ function LocalDebugPackagePanel({
         interval: interval.trim() || "1m",
         start_time_ms: startTimeMs,
         end_time_ms: endTimeMs,
-        wallet_source: "manual",
-        initial_balance: balance,
+        wallet_source: "account_snapshot",
+        initial_balance: initialBalance,
       });
       const filename = `debug-package-${downloadSafeName(account.name)}-${symbol.trim().toUpperCase()}-${interval.trim() || "1m"}.zip`;
       downloadBlob(blob, filename);
@@ -947,13 +960,16 @@ function LocalDebugPackagePanel({
           platform-connected debugger runtime.
         </p>
         <FilterPanel>
-          <FilterField label="Symbol">
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>
-              {LOCAL_DEBUG_DEFAULT_SYMBOLS.map((value) => (
-                <option key={value} value={value}>{value}</option>
-              ))}
-            </select>
-          </FilterField>
+          <SymbolPicker
+            market="usdm_futures"
+            label="Symbol"
+            onAdd={(value) => {
+              setSymbol(value);
+              setSymbolTouched(true);
+            }}
+            selected={symbol}
+            className="filter-field filter-field--wide"
+          />
           <FilterField label="Interval">
             <select value={interval} onChange={(e) => setInterval(e.target.value)}>
               {LOCAL_DEBUG_INTERVALS.map((value) => (
@@ -963,11 +979,10 @@ function LocalDebugPackagePanel({
           </FilterField>
           <FilterField label="Initial balance">
             <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={initialBalance}
-              onChange={(e) => setInitialBalance(e.target.value)}
+              type="text"
+              value={initialBalanceDisplay}
+              disabled
+              title="Loaded from the current account wallet snapshot"
             />
           </FilterField>
           <FilterField label="Start">
