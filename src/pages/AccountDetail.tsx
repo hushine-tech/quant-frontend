@@ -78,6 +78,9 @@ const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
   { id: "sessions", label: "Sessions" },
 ];
 
+const LOCAL_DEBUG_DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"];
+const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
+
 function sessionStartedAtMs(session: Session): number {
   return Date.parse(session.started_at || session.completed_at || "") || 0;
 }
@@ -945,18 +948,18 @@ function LocalDebugPackagePanel({
         </p>
         <FilterPanel>
           <FilterField label="Symbol">
-            <input
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              placeholder="BTCUSDT"
-            />
+            <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>
+              {LOCAL_DEBUG_DEFAULT_SYMBOLS.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
           </FilterField>
           <FilterField label="Interval">
-            <input
-              value={interval}
-              onChange={(e) => setInterval(e.target.value)}
-              placeholder="1m"
-            />
+            <select value={interval} onChange={(e) => setInterval(e.target.value)}>
+              {LOCAL_DEBUG_INTERVALS.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
           </FilterField>
           <FilterField label="Initial balance">
             <input
@@ -999,11 +1002,13 @@ function LocalDebugPackagePanel({
         >
           <p style={{ fontWeight: 600, marginTop: 0 }}>Local CLI flow</p>
           <pre style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
-{`hushine-debug init --dir hushine-debug-workspace
-hushine-debug import debug-package.zip --dir hushine-debug-workspace
-cd hushine-debug-workspace
-cp strategy.py.template strategy.py
-hushine-debug replay`}
+{`# One-time setup in the strategy-debugger-cli repository
+python init.py
+
+# Import this package into the generated workspace
+cd ~/hushine-debug-workspace
+.venv/bin/hushine-debug import ~/Downloads/debug-package.zip
+.venv/bin/hushine-debug replay`}
           </pre>
         </div>
       </div>
