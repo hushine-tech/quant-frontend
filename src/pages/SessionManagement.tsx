@@ -14,6 +14,7 @@ import PageHeader from "@/components/PageHeader";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
+import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 import { accountModeLabel } from "@/utils/accountMode";
 import { formatUTCWithLocal } from "@/utils/time";
 
@@ -158,12 +159,14 @@ export default function SessionManagement() {
               <option value="recoverable">recoverable</option>
             </select>
           </FilterField>
-          <FilterField label="Started after">
-            <input type="datetime-local" value={startedAfterFilter} onChange={(e) => setStartedAfterFilter(e.target.value)} />
-          </FilterField>
-          <FilterField label="Started before">
-            <input type="datetime-local" value={startedBeforeFilter} onChange={(e) => setStartedBeforeFilter(e.target.value)} />
-          </FilterField>
+          <DateTimeRangePicker
+            label="Started range"
+            startValue={startedAfterFilter}
+            endValue={startedBeforeFilter}
+            onStartChange={setStartedAfterFilter}
+            onEndChange={setStartedBeforeFilter}
+            className="filter-field--wide"
+          />
           <FilterField label="Session ID" wide>
             <input value={sessionIdFilter} onChange={(e) => setSessionIdFilter(e.target.value)} placeholder="Search session ID" />
           </FilterField>

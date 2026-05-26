@@ -1086,6 +1086,240 @@ form select {
   background: #f8fafc;
 }
 
+.symbol-picker--single {
+  position: relative;
+}
+
+.symbol-picker--single .symbol-hits {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  max-height: 10.5rem;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+}
+
+.date-time-range {
+  position: relative;
+}
+
+.date-time-range__trigger {
+  width: 100%;
+  min-height: 2.625rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  text-align: left;
+}
+
+.date-time-range__trigger:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.date-time-range__trigger:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  border-color: #60a5fa;
+}
+
+.date-time-range__trigger span {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date-time-range__trigger strong {
+  display: block;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.date-time-range__popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 0.55rem);
+  left: 0;
+  width: min(48rem, calc(100vw - 3rem));
+  padding: 1rem;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+.date-time-range__toolbar {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.date-time-range__presets {
+  display: inline-flex;
+  padding: 0.2rem;
+  border: 1px solid #dbe4f0;
+  border-radius: 999px;
+  background: #f8fafc;
+}
+
+.date-time-range__presets button {
+  min-height: 2rem;
+  padding: 0 0.8rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.date-time-range__presets button.active,
+.date-time-range__presets button:hover {
+  background: #e2e8f0;
+}
+
+.date-time-range__calendar-head {
+  display: flex;
+  justify-content: space-between;
+  margin: -2.8rem 0 0.6rem;
+  pointer-events: none;
+}
+
+.date-time-range__calendar-head button {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #334155;
+  font-size: 2rem;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.date-time-range__months {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+
+.date-time-range__month h3 {
+  margin: 0 0 0.75rem;
+  color: #0f172a;
+  font-size: 1.05rem;
+  text-align: center;
+}
+
+.date-time-range__weekdays,
+.date-time-range__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.date-time-range__weekdays span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.date-time-range__grid {
+  margin-top: 0.35rem;
+}
+
+.dt-range-cell {
+  min-width: 0;
+  height: 2.3rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.dt-range-cell:hover {
+  background: #eff6ff;
+}
+
+.dt-range-cell--in-range {
+  background: #eaf1ff;
+  border-radius: 8px;
+}
+
+.dt-range-cell--selected {
+  background: #2563eb;
+  color: #fff;
+}
+
+.dt-range-cell--blank,
+.dt-range-cell--blank:hover {
+  background: transparent;
+}
+
+.date-time-range__times {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.date-time-range__times label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.date-time-range__times label span {
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.date-time-range__times input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 2.5rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.date-time-range__times button {
+  min-height: 2.5rem;
+}
+
+@media (max-width: 820px) {
+  .date-time-range__popover {
+    width: min(28rem, calc(100vw - 2rem));
+  }
+
+  .date-time-range__months {
+    grid-template-columns: 1fr;
+  }
+
+  .date-time-range__times {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 table.compact {
   margin-top: 0.5rem;
   font-size: 0.9rem;

@@ -43,6 +43,7 @@ import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import SymbolPicker from "@/components/SymbolPicker";
+import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 
 function envBannerClass(mode: number): string {
   switch (mode) {
@@ -968,7 +969,7 @@ function LocalDebugPackagePanel({
               setSymbolTouched(true);
             }}
             selected={symbol}
-            className="filter-field filter-field--wide"
+            className="filter-field"
           />
           <FilterField label="Interval">
             <select value={interval} onChange={(e) => setInterval(e.target.value)}>
@@ -985,12 +986,14 @@ function LocalDebugPackagePanel({
               title="Loaded from the current account wallet snapshot"
             />
           </FilterField>
-          <FilterField label="Start">
-            <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-          </FilterField>
-          <FilterField label="End">
-            <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-          </FilterField>
+          <DateTimeRangePicker
+            label="Time range"
+            startValue={startTime}
+            endValue={endTime}
+            onStartChange={setStartTime}
+            onEndChange={setEndTime}
+            className="filter-field--wide"
+          />
           <div className="filter-action">
             <button
               type="button"
@@ -1545,12 +1548,14 @@ function StrategyPanel({
             label="Runtime"
           />
           <FilterPanel>
-            <FilterField label="Start">
-            <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-            </FilterField>
-            <FilterField label="End">
-            <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-            </FilterField>
+            <DateTimeRangePicker
+              label="Time range"
+              startValue={startTime}
+              endValue={endTime}
+              onStartChange={setStartTime}
+              onEndChange={setEndTime}
+              className="filter-field--wide"
+            />
           </FilterPanel>
 
           {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}

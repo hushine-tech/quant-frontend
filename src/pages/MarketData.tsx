@@ -18,6 +18,7 @@ import {
 } from "@/api/client";
 import SymbolPicker from "@/components/SymbolPicker";
 import InfiniteTable from "@/components/InfiniteTable";
+import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 
 const SUPPORTED_EXCHANGES = ["binance"] as const;
 const SUPPORTED_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
@@ -321,13 +322,14 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
           </select>
         </FilterField>
 
-        <FilterField label="Start">
-          <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
-        </FilterField>
-
-        <FilterField label="End">
-          <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
-        </FilterField>
+        <DateTimeRangePicker
+          label="Time range"
+          startValue={startAt}
+          endValue={endAt}
+          onStartChange={setStartAt}
+          onEndChange={setEndAt}
+          className="filter-field--wide"
+        />
 
         <p className="filter-action">
           <button type="submit" className="primary" disabled={loading || !symbol}>
@@ -458,13 +460,14 @@ function KlineDataViewerPanel() {
           </select>
         </FilterField>
 
-        <FilterField label="Start">
-          <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
-        </FilterField>
-
-        <FilterField label="End">
-          <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
-        </FilterField>
+        <DateTimeRangePicker
+          label="Time range"
+          startValue={startAt}
+          endValue={endAt}
+          onStartChange={setStartAt}
+          onEndChange={setEndAt}
+          className="filter-field--wide"
+        />
 
         <FilterField label="Limit">
           <input

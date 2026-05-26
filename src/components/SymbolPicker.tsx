@@ -100,8 +100,14 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   //   - add-to-list mode       : always the live search query (legacy behavior)
   const displayValue = singleSelect && !open ? (selected ?? "") : q;
 
+  const rootClasses = [
+    "symbol-picker",
+    singleSelect ? "symbol-picker--single" : "",
+    className,
+  ].filter(Boolean).join(" ");
+
   return (
-    <div ref={rootRef} className={className} style={className ? undefined : { marginTop: "0.75rem" }}>
+    <div ref={rootRef} className={rootClasses} style={className ? undefined : { marginTop: "0.75rem" }}>
       <label htmlFor={inputId}>
         <span>{label}</span>
       </label>
