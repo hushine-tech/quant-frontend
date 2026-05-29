@@ -9,6 +9,7 @@ import {
   getDownloadAndRunJob,
   listStrategiesPage,
   listAccountStrategies,
+  listAccountVenues,
   mountStrategy,
   unmountStrategy,
   activateStrategy,
@@ -27,6 +28,7 @@ import {
   type WalletSnapshot,
   type Strategy,
   type AccountStrategy,
+  type Venue,
   type Session,
   type BacktestCoveragePreview,
   type DownloadRunJob,
@@ -44,40 +46,35 @@ import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import SymbolPicker from "@/components/SymbolPicker";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
+import { accountEnvironmentLabel } from "@/utils/accountMode";
 
-function envBannerClass(mode: number): string {
-  switch (mode) {
+function envBannerClass(environment: number): string {
+  switch (environment) {
     case 0:
       return "env-banner env-banner--backtest";
-    case 2:
-      return "env-banner env-banner--testnet";
     case 1:
+      return "env-banner env-banner--testnet";
+    case 2:
       return "env-banner env-banner--live";
     default:
       return "env-banner env-banner--other";
   }
 }
 
-function envLabel(mode: number): string {
-  switch (mode) {
-    case 0:
-      return "Backtest";
-    case 2:
-      return "Testnet";
-    case 1:
-      return "Live";
-    default:
-      return `Other mode (${mode})`;
-  }
+function accountEnvironmentFromLegacyMode(mode: number): number {
+  if (mode === 2) return 1;
+  if (mode === 1) return 2;
+  return 0;
 }
 
-type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions";
+type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues";
 
 const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
   { id: "portfolio", label: "Portfolio" },
   { id: "run", label: "Run Strategy" },
   { id: "debug", label: "Local Debug" },
   { id: "sessions", label: "Sessions" },
+  { id: "venues", label: "Venues" },
 ];
 
 const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
@@ -214,6 +211,7 @@ export default function AccountDetail() {
   }, [id]);
 
   const mode = acc?.mode ?? wallet?.mode ?? 0;
+  const environment = acc?.environment ?? accountEnvironmentFromLegacyMode(mode);
   function bumpSessionRefreshTick() {
     setSessionRefreshTick((v) => v + 1);
   }
@@ -227,14 +225,14 @@ export default function AccountDetail() {
       {err ? <p className="error">{err}</p> : null}
       {!loading && acc ? (
         <>
-        <div className={envBannerClass(mode)} role="status">
-          {envLabel(mode)}
+        <div className={envBannerClass(environment)} role="status">
+          {accountEnvironmentLabel(environment)}
         </div>
         <div className="card" style={{ marginBottom: "1rem" }}>
           <p><strong style={{ fontSize: "1.1rem" }}>{acc.name}</strong></p>
           {acc.description?.trim() ? <p className="muted">{acc.description.trim()}</p> : null}
           <p className="muted">
-            ID: {acc.account_id} · Mode: {envLabel(mode)} · Created: {formatUTCWithLocal(acc.created_at)}
+            ID: {acc.account_id} · Environment: {accountEnvironmentLabel(environment)} · Created: {formatUTCWithLocal(acc.created_at)}
           </p>
         </div>
         <PageTabs
@@ -507,10 +505,88 @@ export default function AccountDetail() {
           {activeTab === "sessions" ? (
             <SessionPanel accountId={acc.account_id} refreshTick={sessionRefreshTick} />
           ) : null}
+
+          {activeTab === "venues" ? (
+            <AccountVenuesPanel accountId={acc.account_id} />
+          ) : null}
         </PageTabs>
         </>
       ) : null}
     </div>
+  );
+}
+
+function venueRouteLabel(labelValue?: string, code?: number): string {
+  return labelValue || (code == null ? "-" : String(code));
+}
+
+function venueAPIKeyLabel(value?: string): string {
+  if (!value) return "-";
+  if (value.length <= 8) return value;
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function AccountVenuesPanel({ accountId }: { accountId: number }) {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadAccountVenues(offset: number, limit: number) {
+    setLoading(true);
+    setError(null);
+    try {
+      return await listAccountVenues(accountId, {
+        include_inactive: true,
+        offset,
+        limit,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Load account venues failed");
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.75rem" }}>
+        <div>
+          <h2 className="section-title" style={{ marginBottom: "0.25rem" }}>Venues</h2>
+          <p className="muted" style={{ margin: 0 }}>Exchange venues bound to this account.</p>
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <button type="button" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>Refresh</button>
+          <Link to={`/venues?account_id=${accountId}`}>Open Venue Management</Link>
+        </div>
+      </div>
+      {error ? <p className="error">{error}</p> : null}
+      <InfiniteTable<Venue>
+        columns={["Name", "Exchange", "Market", "Environment", "Status", "API Key", "Updated"]}
+        loadPage={loadAccountVenues}
+        refreshKey={`${accountId}-${refreshKey}`}
+        emptyText="No venues bound to this account."
+        rowKey={(venue) => String(venue.venue_id)}
+        renderRow={(venue) => (
+          <>
+            <td>
+              <strong>{venue.display_name || `venue-${venue.venue_id}`}</strong>
+              <div className="muted"><code>{venue.venue_id}</code></div>
+            </td>
+            <td>{venueRouteLabel(venue.exchange_label, venue.exchange)}</td>
+            <td>{venueRouteLabel(venue.market_label, venue.market)}</td>
+            <td>{venueRouteLabel(venue.environment_label, venue.environment)}</td>
+            <td>
+              <span className={venue.status_label === "active" ? "status-badge status-badge--completed" : "status-badge status-badge--stopped"}>
+                {venueRouteLabel(venue.status_label, venue.status)}
+              </span>
+            </td>
+            <td><code>{venueAPIKeyLabel(venue.api_key)}</code></td>
+            <td>{venue.updated_at ? formatUTCWithLocal(venue.updated_at) : "-"}</td>
+          </>
+        )}
+      />
+    </>
   );
 }
 

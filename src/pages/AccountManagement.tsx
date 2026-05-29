@@ -5,7 +5,7 @@ import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AccountNew from "@/pages/AccountNew";
-import { accountModeLabel } from "@/utils/accountMode";
+import { accountEnvironmentLabel } from "@/utils/accountMode";
 import { formatUTCWithLocal } from "@/utils/time";
 
 type AccountTab = "accounts" | "create";
@@ -60,7 +60,7 @@ export default function AccountManagement() {
       <PageTabs tabs={tabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Account sections">
         {activeTab === "accounts" ? (
           <InfiniteTable<Account>
-            columns={["Name", "ID", "Mode", "Created", "Description"]}
+            columns={["Name", "ID", "Environment", "Created", "Description"]}
             refreshKey={refreshKey}
             emptyText="No accounts yet."
             loadPage={loadAccounts}
@@ -69,7 +69,7 @@ export default function AccountManagement() {
               <>
                 <td><Link to={`/accounts/${account.account_id}`}>{account.name}</Link></td>
                 <td><code>{account.account_id}</code></td>
-                <td>{accountModeLabel(account.mode)}</td>
+                <td>{accountEnvironmentLabel(account.environment ?? (account.mode === 2 ? 1 : account.mode))}</td>
                 <td>{account.created_at ? formatUTCWithLocal(account.created_at) : "-"}</td>
                 <td>{account.description?.trim() || "-"}</td>
               </>

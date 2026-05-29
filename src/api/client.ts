@@ -3,6 +3,7 @@ export type Account = {
   name: string;
   description?: string;
   mode: number;
+  environment?: number;
   created_at: string;
 };
 
