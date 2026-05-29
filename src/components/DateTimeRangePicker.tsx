@@ -47,12 +47,10 @@ function dateOnly(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function mergeDateAndTime(date: Date, timeSource: Date | null, fallback: "start" | "end"): Date {
+function mergeDateAndTime(date: Date, timeSource: Date | null, _fallback: "start" | "end"): Date {
   const merged = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   if (timeSource) {
     merged.setHours(timeSource.getHours(), timeSource.getMinutes(), timeSource.getSeconds(), 0);
-  } else if (fallback === "end") {
-    merged.setHours(23, 59, 59, 0);
   } else {
     merged.setHours(0, 0, 0, 0);
   }
@@ -68,7 +66,7 @@ function formatDisplay(value: string): string {
 function timeValue(value: string, fallback: "start" | "end"): string {
   const date = parseLocalDateTime(value);
   if (date) return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
-  return fallback === "end" ? "23:59:59" : "00:00:00";
+  return fallback === "end" ? "00:00:00" : "00:00:00";
 }
 
 function applyTime(value: string, rawTime: string, fallback: "start" | "end"): string {
@@ -196,6 +194,10 @@ export default function DateTimeRangePicker({
     if (pickedEnd < pickedStart) {
       onStartChange(toLocalDateTimeValue(mergeDateAndTime(date, startDate, "start")));
       onEndChange(toLocalDateTimeValue(mergeDateAndTime(startDate, endDate, "end")));
+      return;
+    }
+    if (pickedEnd === pickedStart) {
+      onEndChange(toLocalDateTimeValue(mergeDateAndTime(addDays(dateOnly(date), 1), null, "end")));
       return;
     }
     onEndChange(toLocalDateTimeValue(mergeDateAndTime(date, endDate, "end")));

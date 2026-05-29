@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   listRuntimes,
@@ -58,6 +58,13 @@ export default function RuntimeSelector({
   const options = useMemo(() => runtimeSelectionOptions(runtimes), [runtimes]);
   const routeable = useMemo(() => options.filter((o) => o.routeable), [options]);
 
+  const rememberSelectedRuntime = useCallback((rt: Runtime) => {
+    setRuntimes((prev) => {
+      if (prev.some((item) => item.runtime_id === rt.runtime_id)) return prev;
+      return [rt, ...prev];
+    });
+  }, []);
+
   useEffect(() => {
     if (loading || error) return;
     if (!value) return;
@@ -80,7 +87,10 @@ export default function RuntimeSelector({
           value={value}
           disabled={disabled || loading || noRouteable}
           placeholder={loading ? "Loading runtimes..." : noRouteable ? "No routeable runtime" : "Select runtime"}
-          onChange={(next, opt) => onChange(next, opt?.item)}
+          onChange={(next, opt) => {
+            if (opt?.item) rememberSelectedRuntime(opt.item);
+            onChange(next, opt?.item);
+          }}
           loadPage={async (offset, limit, query) => {
             const result = await listRuntimes({ limit, offset, eligible, role, mode });
             const items = runtimeSelectionOptions(result.runtimes)
