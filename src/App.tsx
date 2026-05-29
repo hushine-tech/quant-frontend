@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import {
   Bell,
+  Building2,
   ChartCandlestick,
   ClipboardList,
   Database,
@@ -33,6 +34,7 @@ import OrderHistory from "@/pages/OrderHistory";
 import MarketDataPage from "@/pages/MarketData";
 import NotificationManagement from "@/pages/NotificationManagement";
 import RuntimeManagement, { RuntimeDetailPage } from "@/pages/RuntimeManagement";
+import VenueManagement from "@/pages/VenueManagement";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!getToken()) return <Navigate to="/login" replace />;
@@ -41,6 +43,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 const PRIMARY_NAV_ITEMS = [
   { to: "/accounts", label: "Account Management", icon: UsersRound },
+  { to: "/venues", label: "Venue Management", icon: Building2 },
   { to: "/strategies", label: "Strategy Management", icon: ScrollText },
   { to: "/market-data", label: "Market Data", icon: ChartCandlestick },
   { to: "/runtimes", label: "Runtime Management", icon: Database },
@@ -245,6 +248,10 @@ export default function App() {
         <Route
           path="/accounts/:id/sessions/:sessionId"
           element={<RequireAuth><SessionDetailPage /></RequireAuth>}
+        />
+        <Route
+          path="/venues"
+          element={<RequireAuth><VenueManagement /></RequireAuth>}
         />
         <Route
           path="/sessions"
