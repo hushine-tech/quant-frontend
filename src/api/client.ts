@@ -148,6 +148,48 @@ export type CreateAccountPayload = {
   };
 };
 
+export type Venue = {
+  venue_id: number;
+  user_id: number;
+  account_id?: number;
+  exchange: number;
+  exchange_label?: string;
+  market: number;
+  market_label?: string;
+  environment: number;
+  environment_label?: string;
+  status: number;
+  status_label?: string;
+  display_name: string;
+  description?: string;
+  api_key?: string;
+  credential_fingerprint?: string;
+  margin_mode: number;
+  margin_mode_label?: string;
+  position_mode: number;
+  position_mode_label?: string;
+  created_at?: string;
+  updated_at?: string;
+  last_used_at?: string;
+  archived_at?: string;
+  archived_reason?: string;
+};
+
+export type VenuePage = Page<Venue>;
+
+export type CreateVenuePayload = {
+  account_id?: number;
+  exchange: "binance" | "okx";
+  market: "spot" | "perpetual_futures" | "delivery_futures";
+  environment: "demo" | "live";
+  display_name: string;
+  description?: string;
+  api_key: string;
+  credential_info: Record<string, unknown>;
+  margin_mode?: "cross" | "isolated" | "none";
+  position_mode?: "one_way" | "hedge" | "none";
+};
+
 function sameHostApiBase(): string {
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:8090`;
@@ -291,6 +333,83 @@ export async function getAccount(id: number | string): Promise<Account> {
   });
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as Account;
+}
+
+function venuePageURL(path: string, params?: Record<string, string | number | boolean | undefined>): URL {
+  const u = new URL(`${apiBase()}${path}`);
+  u.searchParams.set("page", "true");
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      u.searchParams.set(key, String(value));
+    }
+  }
+  return u;
+}
+
+export async function listVenues(params: Record<string, string | number | boolean | undefined> = {}): Promise<VenuePage> {
+  return fetchPage<Venue>(venuePageURL("/api/venues", params));
+}
+
+export async function listAccountVenues(
+  accountId: number | string,
+  params: Record<string, string | number | boolean | undefined> = {},
+): Promise<VenuePage> {
+  return fetchPage<Venue>(venuePageURL(`/api/accounts/${accountId}/venues`, params));
+}
+
+export async function createVenue(payload: CreateVenuePayload): Promise<Venue> {
+  const t = authToken();
+  const res = await fetch(`${apiBase()}/api/venues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${t}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as Venue;
+}
+
+export async function bindVenue(venueId: number | string, accountId: number | string, reason = ""): Promise<Venue> {
+  const t = authToken();
+  const res = await fetch(`${apiBase()}/api/venues/${venueId}/bind`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${t}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ account_id: Number(accountId), reason }),
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as Venue;
+}
+
+export async function releaseVenue(venueId: number | string, reason = ""): Promise<Venue> {
+  const t = authToken();
+  const res = await fetch(`${apiBase()}/api/venues/${venueId}/release`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${t}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as Venue;
+}
+
+export async function archiveVenue(venueId: number | string, reason = ""): Promise<void> {
+  const t = authToken();
+  const res = await fetch(`${apiBase()}/api/venues/${venueId}/archive`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${t}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
 }
 
 export async function listSymbols(
