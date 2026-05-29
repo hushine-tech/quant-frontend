@@ -6,7 +6,7 @@ import SymbolPicker from "@/components/SymbolPicker";
 const modes = [
   { v: 0, label: "Backtest (0)" },
   { v: 1, label: "Binance live (1)" },
-  { v: 2, label: "Binance testnet (2)" },
+  { v: 2, label: "Binance demo (2)" },
 ];
 
 type SpotRow = { symbol: string; qty: string; price: string; avg: string };

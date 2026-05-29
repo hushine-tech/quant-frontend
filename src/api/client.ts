@@ -854,6 +854,11 @@ export type SessionOrderIntent = {
   requested_price: number;
   strategy_id: number;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   session_id?: string;
 };
 
@@ -873,6 +878,11 @@ export type SessionOrder = {
   price: number;
   status: string;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   strategy_id: number;
   error_message?: string;
 };
@@ -891,6 +901,11 @@ export type SessionOrderAttempt = {
   mark_price: number;
   status: string;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   strategy_id: number;
   error_message?: string;
   recovery_error?: string;
@@ -911,6 +926,11 @@ export type SessionOrderFill = {
   fee: number;
   status: string;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   strategy_id: number;
 };
 
@@ -1105,6 +1125,11 @@ export type OrderIntentEntry = {
   requested_price: number;
   strategy_id: number;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   session_id?: string;
 };
 
@@ -1125,6 +1150,11 @@ export type OrderEntry = {
   price: number;
   status: string;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   strategy_id: number;
   session_id?: string;
   error_message?: string;
@@ -1145,6 +1175,11 @@ export type OrderAttemptEntry = {
   mark_price: number;
   status: string;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   strategy_id: number;
   session_id?: string;
   error_message?: string;
@@ -1167,6 +1202,11 @@ export type OrderFillEntry = {
   fee: number;
   status: string;
   market: string;
+  market_label?: string;
+  venue_id?: number;
+  exchange?: number;
+  exchange_label?: string;
+  position_side?: string;
   strategy_id: number;
   session_id?: string;
 };

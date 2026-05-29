@@ -144,7 +144,7 @@ export default function SessionManagement() {
               <option value="">All modes</option>
               <option value="0">Backtest (0)</option>
               <option value="1">Live (1)</option>
-              <option value="2">Testnet (2)</option>
+              <option value="2">Demo (2)</option>
             </select>
           </FilterField>
           <FilterField label="Status">

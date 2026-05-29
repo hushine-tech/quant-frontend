@@ -19,6 +19,12 @@ export type TreeIntent = {
   side: string;
   requested_qty: number;
   requested_price: number;
+  venue_id?: number;
+  exchange?: number | string;
+  exchange_label?: string;
+  market?: number | string;
+  market_label?: string;
+  position_side?: string | number;
 };
 
 export type TreeAttempt = {
@@ -26,6 +32,12 @@ export type TreeAttempt = {
   attempt_id: string;
   status: string;
   mark_price: number;
+  venue_id?: number;
+  exchange?: number | string;
+  exchange_label?: string;
+  market?: number | string;
+  market_label?: string;
+  position_side?: string | number;
   error_message?: string;
   recovery_error?: string;
 };
@@ -37,6 +49,12 @@ export type TreeOrder = {
   executed_qty: number;
   orig_qty: number;
   avg_price: number;
+  venue_id?: number;
+  exchange?: number | string;
+  exchange_label?: string;
+  market?: number | string;
+  market_label?: string;
+  position_side?: string | number;
   error_message?: string;
 };
 
@@ -47,6 +65,12 @@ export type TreeFill = {
   fill_price: number;
   fee: number;
   status: string;
+  venue_id?: number;
+  exchange?: number | string;
+  exchange_label?: string;
+  market?: number | string;
+  market_label?: string;
+  position_side?: string | number;
 };
 
 // TreePage is just the canonical Page<T> shape from the API client — the
@@ -116,6 +140,30 @@ export function orderBadgeClass(status: string): string {
 
 export function isFillPendingOrder(order: Pick<TreeOrder, "executed_qty" | "error_message">): boolean {
   return order.executed_qty > 0 && Boolean(order.error_message?.trim());
+}
+
+type RouteFacts = {
+  venue_id?: number;
+  exchange?: number | string;
+  exchange_label?: string;
+  market?: number | string;
+  market_label?: string;
+  position_side?: string | number;
+};
+
+function routeFactText(item: RouteFacts): string {
+  const exchange = item.exchange_label || item.exchange || "-";
+  const market = item.market_label || item.market || "-";
+  const venue = item.venue_id || "-";
+  const position = positionSideText(item.position_side);
+  return `${exchange} / ${market} · venue ${venue} · position ${position}`;
+}
+
+function positionSideText(value?: string | number): string {
+  if (value === 1) return "LONG";
+  if (value === 2) return "SHORT";
+  const raw = String(value || "").trim();
+  return raw || "BOTH";
 }
 
 type PagedFetcher<T> = (offset: number, limit: number) => Promise<Page<T>>;
@@ -268,6 +316,7 @@ function IntentRow<
         <span className="muted">
           req px {intent.requested_price > 0 ? intent.requested_price.toFixed(2) : "—"}
         </span>
+        <span className="muted">{routeFactText(intent)}</span>
         {typeof intent.account_id === "number" && intent.account_id > 0 ? (
           <span className="muted">Account {intent.account_id}</span>
         ) : null}
@@ -396,6 +445,7 @@ function AttemptRow<
         <span className="muted">
           mark {attempt.mark_price > 0 ? attempt.mark_price.toFixed(2) : "—"}
         </span>
+        <span className="muted">{routeFactText(attempt)}</span>
         {attempt.recovery_error || attempt.error_message ? (
           <span style={{ color: "#dc2626" }}>
             {attempt.recovery_error || attempt.error_message}
@@ -503,6 +553,7 @@ function OrderRow<
         <span className="muted">
           avg {order.avg_price > 0 ? order.avg_price.toFixed(2) : "—"}
         </span>
+        <span className="muted">{routeFactText(order)}</span>
         <span className="muted" style={{ marginLeft: "auto", fontSize: "0.8rem" }}>
           {formatUTCWithLocal(order.time)}
         </span>
@@ -551,6 +602,7 @@ function OrderFills<F extends TreeFill>({
                 <th>Qty</th>
                 <th>Fill Price</th>
                 <th>Fee</th>
+                <th>Route</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -562,6 +614,7 @@ function OrderFills<F extends TreeFill>({
                   <td>{f.qty}</td>
                   <td>{f.fill_price.toFixed(2)}</td>
                   <td>{f.fee.toFixed(4)}</td>
+                  <td>{routeFactText(f)}</td>
                   <td><span className={orderBadgeClass(f.status)}>{f.status}</span></td>
                 </tr>
               ))}

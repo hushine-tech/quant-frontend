@@ -285,7 +285,7 @@ export default function RuntimeManagement() {
           <div className="runtime-create-stack">
             <section className="card runtime-create-section">
               <h2 className="section-title" style={{ marginTop: 0 }}>Hosted runtime</h2>
-              <p className="muted">Create a platform-owned executor runtime for backtest and testnet sessions.</p>
+              <p className="muted">Create a platform-owned executor runtime for backtest and demo sessions.</p>
               <FilterPanel>
                 <FilterField label="Runtime name">
                   <input

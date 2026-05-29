@@ -36,7 +36,7 @@ export default function AccountManagement() {
 
   const description = useMemo(() => {
     return activeTab === "accounts"
-      ? "Manage backtest, testnet, and live account contexts."
+      ? "Manage backtest, demo, and live account contexts."
       : "Create an account context for backtests or exchange-backed sessions.";
   }, [activeTab]);
 

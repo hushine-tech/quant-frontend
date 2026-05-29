@@ -632,7 +632,7 @@ function sessionKindBadge(session: Session): React.ReactNode {
 //
 // Asks strategy-service's PreviewRunStrategy — the same evaluator the real
 // start uses — so the hint is byte-for-byte consistent with what the user
-// will see when they click "Start Testnet Session". This replaced an earlier
+// will see when they click "Start Demo Session". This replaced an earlier
 // heuristic that looked at every market-data request on the user's account
 // (including streams unrelated to the current strategy), which could show
 // green on the wrong symbol/interval/account.
@@ -649,7 +649,7 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
         return;
       }
       try {
-        // No start/end — live/testnet profile ignores them. Backend picks the
+        // No start/end — live/demo profile ignores them. Backend picks the
         // declared strategy source from the active-strategy record.
         const p = await previewRunStrategy(accountId, { runtime_id: runtimeId });
         if (!cancelled) {
@@ -1649,7 +1649,7 @@ function StrategyPanel({
       {mode === 2 ? (
       <div className="card">
         {!activeStrat ? (
-          <p className="muted">Activate a strategy above to start a testnet session.</p>
+          <p className="muted">Activate a strategy above to start a demo session.</p>
         ) : (
           <p className="muted" style={{ marginBottom: "0.5rem" }}>
             Active: <strong>{activeStrat.strategy.name} v{activeStrat.strategy.version}</strong>
@@ -1657,7 +1657,7 @@ function StrategyPanel({
         )}
 
         <p className="muted" style={{ fontSize: "0.85rem", marginTop: 0 }}>
-          This starts a live <code>mode=2</code> testnet session using the active strategy's
+          This starts a live <code>mode=2</code> demo session using the active strategy's
           declared <code>INPUTS</code> — each <code>(market, symbol, interval)</code> is
           subscribed independently; the UI no longer picks an interval here.
         </p>
@@ -1681,7 +1681,7 @@ function StrategyPanel({
             disabled={running || !activeStrat || !startRuntimeId}
             onClick={() => { void handleLiveStart(); }}
           >
-            {running ? "Starting…" : "Start Testnet Session"}
+            {running ? "Starting…" : "Start Demo Session"}
           </button>
         </p>
       </div>
@@ -1702,7 +1702,7 @@ function StrategyPanel({
       />
       <RuntimeSelectionDialog
         open={startDialogOpen}
-        title={pendingStart?.kind === "testnet" ? "Start Testnet Session" : "Run Backtest"}
+        title={pendingStart?.kind === "testnet" ? "Start Demo Session" : "Run Backtest"}
         description={pendingStart?.kind === "testnet"
           ? <>Choose where the active strategy will run.</>
           : <>Choose where the backtest session will run.</>}
