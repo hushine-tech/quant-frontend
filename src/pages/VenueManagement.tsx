@@ -1,14 +1,20 @@
 import { useCallback, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Building2 } from "lucide-react";
 import {
   archiveVenue,
+  bindVenue,
   createVenue,
+  getVenueWallet,
+  listAccountsPage,
   listVenues,
   releaseVenue,
+  type Account,
   type CreateVenuePayload,
   type Venue,
+  type VenueWallet,
 } from "@/api/client";
+import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import InfiniteTable from "@/components/InfiniteTable";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
@@ -35,6 +41,26 @@ function maskAPIKey(value?: string): string {
   return `${value.slice(0, 4)}…${value.slice(-4)}`;
 }
 
+function accountEnvLabel(value?: number): string {
+  switch (value) {
+    case 1:
+      return "demo";
+    case 2:
+      return "live";
+    case 0:
+      return "backtest";
+    default:
+      return "-";
+  }
+}
+
+function accountEnvCode(account: Account): number {
+  if (typeof account.environment === "number") return account.environment;
+  if (account.mode === 2) return 1;
+  if (account.mode === 1) return 2;
+  return 0;
+}
+
 export default function VenueManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<VenueTab>(() => normalizeVenueTab(searchParams.get("tab")));
@@ -42,6 +68,13 @@ export default function VenueManagement() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [bindTargetVenue, setBindTargetVenue] = useState<Venue | null>(null);
+  const [viewTargetVenue, setViewTargetVenue] = useState<Venue | null>(null);
+  const [venueWallet, setVenueWallet] = useState<VenueWallet | null>(null);
+  const [venueWalletError, setVenueWalletError] = useState<string | null>(null);
+  const [venueWalletLoading, setVenueWalletLoading] = useState(false);
+  const [bindAccountID, setBindAccountID] = useState("");
+  const [binding, setBinding] = useState(false);
 
   function changeTab(tab: VenueTab) {
     setActiveTab(tab);
@@ -62,7 +95,7 @@ export default function VenueManagement() {
         offset,
         limit,
         include_inactive: true,
-        include_unbound: true,
+        include_unbound: accountFilter ? false : true,
         account_id: accountFilter,
       });
     } catch (e) {
@@ -97,6 +130,46 @@ export default function VenueManagement() {
     }
   }
 
+  async function loadVenueWallet(venue: Venue) {
+    setVenueWalletLoading(true);
+    setVenueWalletError(null);
+    setVenueWallet(null);
+    try {
+      const result = await getVenueWallet(venue.venue_id);
+      setVenueWallet(result);
+    } catch (e) {
+      setVenueWalletError(e instanceof Error ? e.message : "Load venue wallet failed");
+    } finally {
+      setVenueWalletLoading(false);
+    }
+  }
+
+  function openVenueDetail(venue: Venue) {
+    setViewTargetVenue(venue);
+    void loadVenueWallet(venue);
+  }
+
+  async function handleBindSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!bindTargetVenue || !bindAccountID) return;
+    setError(null);
+    setNotice(null);
+    setBinding(true);
+    try {
+      const nextAccountID = Number(bindAccountID);
+      await bindVenue(bindTargetVenue.venue_id, nextAccountID, `bound from venue management`);
+      setNotice(bindTargetVenue.account_id && bindTargetVenue.account_id !== nextAccountID ? "Venue rebound." : "Venue bound.");
+      setViewTargetVenue(null);
+      setBindTargetVenue(null);
+      setBindAccountID("");
+      setRefreshKey((v) => v + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bind venue failed");
+    } finally {
+      setBinding(false);
+    }
+  }
+
   const description = useMemo(() => {
     return activeTab === "venues"
       ? "Manage exchange venues, credentials, and account bindings."
@@ -113,6 +186,139 @@ export default function VenueManagement() {
       />
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p className="success">{notice}</p> : null}
+      {viewTargetVenue ? (
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "flex-start" }}>
+            <div>
+              <h2 className="section-title" style={{ marginBottom: "0.5rem" }}>Venue detail</h2>
+              <p style={{ margin: 0 }}><strong>{viewTargetVenue.display_name || `venue-${viewTargetVenue.venue_id}`}</strong></p>
+              <p className="muted" style={{ marginTop: "0.25rem" }}>
+                <code>{viewTargetVenue.venue_id}</code> · {label(viewTargetVenue.exchange_label, viewTargetVenue.exchange)} · {label(viewTargetVenue.market_label, viewTargetVenue.market)} · {label(viewTargetVenue.environment_label, viewTargetVenue.environment)}
+              </p>
+            </div>
+            <button type="button" onClick={() => setViewTargetVenue(null)}>Close</button>
+          </div>
+          <div className="strategy-new-form__row-2" style={{ marginTop: "0.75rem" }}>
+            <div>
+              <p className="muted" style={{ marginBottom: "0.25rem" }}>Bound account</p>
+              {viewTargetVenue.account_id ? (
+                <Link to={`/accounts/${viewTargetVenue.account_id}?tab=venues`}>Account {viewTargetVenue.account_id}</Link>
+              ) : (
+                <p style={{ margin: 0 }}>Unbound</p>
+              )}
+            </div>
+            <div>
+              <p className="muted" style={{ marginBottom: "0.25rem" }}>Credential</p>
+              <p style={{ margin: 0 }}><code>{maskAPIKey(viewTargetVenue.api_key)}</code></p>
+            </div>
+            <div>
+              <p className="muted" style={{ marginBottom: "0.25rem" }}>Modes</p>
+              <p style={{ margin: 0 }}>
+                {label(viewTargetVenue.margin_mode_label, viewTargetVenue.margin_mode)} · {label(viewTargetVenue.position_mode_label, viewTargetVenue.position_mode)}
+              </p>
+            </div>
+            <div>
+              <p className="muted" style={{ marginBottom: "0.25rem" }}>Updated</p>
+              <p style={{ margin: 0 }}>{viewTargetVenue.updated_at ? formatUTCWithLocal(viewTargetVenue.updated_at) : "-"}</p>
+            </div>
+          </div>
+          <div className="card" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+              <h3 className="section-title" style={{ marginBottom: 0 }}>Venue wallet</h3>
+              <button type="button" onClick={() => void loadVenueWallet(viewTargetVenue)} disabled={venueWalletLoading}>
+                {venueWalletLoading ? "Refreshing..." : "Refresh value"}
+              </button>
+            </div>
+            {venueWalletError ? <p className="error">{venueWalletError}</p> : null}
+            {!venueWalletError && venueWalletLoading ? <p className="muted">Loading venue wallet...</p> : null}
+            {!venueWalletError && venueWallet?.wallet ? (
+              <div className="strategy-new-form__row-2" style={{ marginTop: "0.75rem" }}>
+                <div>
+                  <p className="muted" style={{ marginBottom: "0.25rem" }}>Total value</p>
+                  <p style={{ margin: 0, fontWeight: 700 }}>{venueWallet.wallet.display?.total_value?.toFixed(4) ?? venueWallet.wallet.total_value.toFixed(4)} USDT</p>
+                </div>
+                <div>
+                  <p className="muted" style={{ marginBottom: "0.25rem" }}>Futures wallet</p>
+                  <p style={{ margin: 0 }}>{venueWallet.wallet.futures?.wallet_balance?.toFixed(4) ?? "-"} USDT</p>
+                </div>
+                <div>
+                  <p className="muted" style={{ marginBottom: "0.25rem" }}>Available</p>
+                  <p style={{ margin: 0 }}>{venueWallet.wallet.futures?.available_balance?.toFixed(4) ?? "-"} USDT</p>
+                </div>
+                <div>
+                  <p className="muted" style={{ marginBottom: "0.25rem" }}>Updated</p>
+                  <p style={{ margin: 0 }}>{venueWallet.wallet.updated_at ? formatUTCWithLocal(venueWallet.wallet.updated_at) : "-"}</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <p style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: 0 }}>
+            {!viewTargetVenue.archived_at && viewTargetVenue.status_label === "active" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setBindTargetVenue(viewTargetVenue);
+                  setBindAccountID(viewTargetVenue.account_id ? String(viewTargetVenue.account_id) : "");
+                  setError(null);
+                  setNotice(null);
+                }}
+              >
+                {viewTargetVenue.account_id ? "Rebind account" : "Bind account"}
+              </button>
+            ) : null}
+            {viewTargetVenue.account_id ? (
+              <button type="button" onClick={() => void handleRelease(viewTargetVenue)}>Release account</button>
+            ) : null}
+          </p>
+        </div>
+      ) : null}
+      {bindTargetVenue ? (
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <form onSubmit={handleBindSubmit}>
+            <h2 className="section-title" style={{ marginBottom: "0.5rem" }}>
+              {bindTargetVenue.account_id ? "Rebind venue" : "Bind venue"}
+            </h2>
+            <p className="muted">
+              {bindTargetVenue.display_name || `venue-${bindTargetVenue.venue_id}`} · {label(bindTargetVenue.exchange_label, bindTargetVenue.exchange)} · {label(bindTargetVenue.market_label, bindTargetVenue.market)} · {label(bindTargetVenue.environment_label, bindTargetVenue.environment)}
+            </p>
+            <label>Target account</label>
+            <AsyncSelect<Account>
+              value={bindAccountID}
+              placeholder="Select target account"
+              onChange={setBindAccountID}
+              loadPage={async (offset, limit, query) => {
+                const page = await listAccountsPage({ offset, limit });
+                const normalizedQuery = query.trim().toLowerCase();
+                const items = page.items
+                  .filter((account) => accountEnvCode(account) === bindTargetVenue.environment)
+                  .filter((account) => !normalizedQuery
+                    || account.name.toLowerCase().includes(normalizedQuery)
+                    || String(account.account_id).includes(normalizedQuery))
+                  .map<AsyncSelectOption<Account>>((account) => ({
+                    value: String(account.account_id),
+                    label: account.name || String(account.account_id),
+                    detail: `#${account.account_id} · ${accountEnvLabel(accountEnvCode(account))}`,
+                    item: account,
+                  }));
+                return { ...page, items };
+              }}
+              searchPlaceholder="Search account name or ID"
+              allowClear={false}
+            />
+            {bindTargetVenue.account_id ? (
+              <p className="muted">
+                Current account: {bindTargetVenue.account_id}. Rebinding hands the venue off to the selected account in one backend transaction.
+              </p>
+            ) : null}
+            <p style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+              <button type="submit" className="primary" disabled={binding || !bindAccountID}>
+                {binding ? "Binding..." : bindTargetVenue.account_id ? "Rebind venue" : "Bind venue"}
+              </button>
+              <button type="button" onClick={() => { setBindTargetVenue(null); setBindAccountID(""); }} disabled={binding}>Cancel</button>
+            </p>
+          </form>
+        </div>
+      ) : null}
       <PageTabs tabs={tabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Venue sections">
         {activeTab === "venues" ? (
           <InfiniteTable<Venue>
@@ -124,10 +330,27 @@ export default function VenueManagement() {
             renderRow={(venue) => (
               <>
                 <td>
-                  <strong>{venue.display_name || `venue-${venue.venue_id}`}</strong>
+                  <button
+                    type="button"
+                    onClick={() => openVenueDetail(venue)}
+                    style={{
+                      background: "none",
+                      border: 0,
+                      color: "#2563eb",
+                      cursor: "pointer",
+                      font: "inherit",
+                      fontWeight: 700,
+                      padding: 0,
+                      textDecoration: "underline",
+                    }}
+                  >
+                    {venue.display_name || `venue-${venue.venue_id}`}
+                  </button>
                   <div className="muted"><code>{venue.venue_id}</code></div>
                 </td>
-                <td>{venue.account_id || "-"}</td>
+                <td>
+                  {venue.account_id ? <Link to={`/accounts/${venue.account_id}?tab=venues`}>{venue.account_id}</Link> : "-"}
+                </td>
                 <td>{label(venue.exchange_label, venue.exchange)}</td>
                 <td>{label(venue.market_label, venue.market)}</td>
                 <td>{label(venue.environment_label, venue.environment)}</td>
@@ -140,9 +363,23 @@ export default function VenueManagement() {
                 <td>{venue.created_at ? formatUTCWithLocal(venue.created_at) : "-"}</td>
                 <td>
                   <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {!venue.archived_at && venue.status_label === "active" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBindTargetVenue(venue);
+                          setBindAccountID(venue.account_id ? String(venue.account_id) : "");
+                          setError(null);
+                          setNotice(null);
+                        }}
+                      >
+                        {venue.account_id ? "Rebind" : "Bind"}
+                      </button>
+                    ) : null}
                     {venue.account_id ? (
                       <button type="button" onClick={() => void handleRelease(venue)}>Release</button>
                     ) : null}
+                    <button type="button" onClick={() => openVenueDetail(venue)}>View</button>
                     {!venue.archived_at ? (
                       <button type="button" onClick={() => void handleArchive(venue)}>Archive</button>
                     ) : null}
@@ -223,13 +460,29 @@ function CreateVenueForm({
       <form className="strategy-new-form" onSubmit={handleSubmit}>
         <div className="strategy-new-form__row-2">
           <label className="field">
-            <span>Account ID</span>
-            <input
-              type="number"
-              min="1"
+            <span>Bind account</span>
+            <AsyncSelect<Account>
               value={accountID}
-              onChange={(e) => setAccountID(e.target.value)}
-              placeholder="Optional account ID"
+              placeholder="Leave unbound"
+              onChange={setAccountID}
+              loadPage={async (offset, limit, query) => {
+                const page = await listAccountsPage({ offset, limit });
+                const normalizedQuery = query.trim().toLowerCase();
+                const envCode = environment === "demo" ? 1 : 2;
+                const items = page.items
+                  .filter((account) => accountEnvCode(account) === envCode)
+                  .filter((account) => !normalizedQuery
+                    || account.name.toLowerCase().includes(normalizedQuery)
+                    || String(account.account_id).includes(normalizedQuery))
+                  .map<AsyncSelectOption<Account>>((account) => ({
+                    value: String(account.account_id),
+                    label: account.name || String(account.account_id),
+                    detail: `#${account.account_id} · ${accountEnvLabel(accountEnvCode(account))}`,
+                    item: account,
+                  }));
+                return { ...page, items };
+              }}
+              searchPlaceholder="Search account name or ID"
             />
           </label>
           <label className="field">

@@ -1,16 +1,26 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { createAccount, type CreateAccountPayload } from "@/api/client";
+import {
+  bindVenue,
+  createAccount,
+  createVenue,
+  listVenues,
+  type CreateAccountPayload,
+  type CreateVenuePayload,
+  type Venue,
+} from "@/api/client";
+import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import SymbolPicker from "@/components/SymbolPicker";
 
-const modes = [
-  { v: 0, label: "Backtest (0)" },
-  { v: 1, label: "Binance live (1)" },
-  { v: 2, label: "Binance demo (2)" },
+const environments = [
+  { v: 0, label: "Backtest" },
+  { v: 1, label: "Demo" },
+  { v: 2, label: "Live" },
 ];
 
 type SpotRow = { symbol: string; qty: string; price: string; avg: string };
 type FutRow = { symbol: string; direction: string; initial_balance: string; leverage: string; fee_rate: string };
+type VenueAttachMode = "none" | "create" | "bind";
 
 type AccountNewProps = {
   embedded?: boolean;
@@ -21,9 +31,17 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
   const nav = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [mode, setMode] = useState(0);
-  const [apiKey, setApiKey] = useState("");
-  const [apiSecret, setApiSecret] = useState("");
+  const [environment, setEnvironment] = useState(0);
+  const [venueAttachMode, setVenueAttachMode] = useState<VenueAttachMode>("none");
+  const [selectedVenueID, setSelectedVenueID] = useState("");
+  const [venueExchange, setVenueExchange] = useState<CreateVenuePayload["exchange"]>("binance");
+  const [venueMarket, setVenueMarket] = useState<CreateVenuePayload["market"]>("perpetual_futures");
+  const [venueDisplayName, setVenueDisplayName] = useState("");
+  const [venueDescription, setVenueDescription] = useState("");
+  const [venueAPIKey, setVenueAPIKey] = useState("");
+  const [venueAPISecret, setVenueAPISecret] = useState("");
+  const [venueMarginMode, setVenueMarginMode] = useState<NonNullable<CreateVenuePayload["margin_mode"]>>("cross");
+  const [venuePositionMode, setVenuePositionMode] = useState<NonNullable<CreateVenuePayload["position_mode"]>>("one_way");
 
   // Spot
   const [spotFree, setSpotFree] = useState("0");
@@ -42,7 +60,21 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const wizard = mode === 0;
+  const wizard = environment === 0;
+  const venueEnv = environment === 1 ? "demo" : environment === 2 ? "live" : "demo";
+  const isVenueSpot = venueMarket === "spot";
+
+  function legacyModeForEnvironment(value: number): number {
+    if (value === 1) return 2;
+    if (value === 2) return 1;
+    return 0;
+  }
+
+  function handleEnvironmentChange(value: number) {
+    setEnvironment(value);
+    setSelectedVenueID("");
+    if (value === 0) setVenueAttachMode("none");
+  }
 
   // ── Computed total value ────────────────────────────────────────────────
   function computeTotalValue(): number {
@@ -101,9 +133,8 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
     const body: CreateAccountPayload = {
       name,
       description: description.trim() || undefined,
-      mode,
-      api_key: apiKey || undefined,
-      api_secret: apiSecret || undefined,
+      environment,
+      mode: legacyModeForEnvironment(environment),
       initial_balance: 0,
     };
 
@@ -153,6 +184,32 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
     setLoading(true);
     try {
       const acc = await createAccount(buildPayload());
+      try {
+        if (environment !== 0 && venueAttachMode === "create") {
+          if (!venueAPIKey.trim() || !venueAPISecret.trim()) {
+            setErr(`Account ${acc.account_id} created, but venue was not created: API key and secret are required.`);
+            return;
+          }
+          await createVenue({
+            account_id: acc.account_id,
+            exchange: venueExchange,
+            market: venueMarket,
+            environment: venueEnv,
+            display_name: venueDisplayName.trim() || `${name.trim()} ${venueExchange} ${venueEnv} ${venueMarket}`,
+            description: venueDescription.trim(),
+            api_key: venueAPIKey.trim(),
+            credential_info: { api_key: venueAPIKey.trim(), api_secret: venueAPISecret.trim() },
+            margin_mode: isVenueSpot ? "none" : venueMarginMode,
+            position_mode: isVenueSpot ? "none" : venuePositionMode,
+          });
+        }
+        if (environment !== 0 && venueAttachMode === "bind" && selectedVenueID) {
+          await bindVenue(selectedVenueID, acc.account_id, `bound during account ${acc.account_id} creation`);
+        }
+      } catch (venueErr) {
+        setErr(`Account ${acc.account_id} created, but venue binding failed: ${venueErr instanceof Error ? venueErr.message : "unknown error"}`);
+        return;
+      }
       if (onCreated) {
         onCreated();
       } else {
@@ -179,7 +236,16 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
           <h2 className="section-title">Meta</h2>
           <p><strong>{name}</strong></p>
           {description.trim() ? <p className="muted">{description.trim()}</p> : null}
-          <p className="muted">Mode: {modes.find((m) => m.v === mode)?.label}</p>
+          <p className="muted">Environment: {environments.find((m) => m.v === environment)?.label}</p>
+          {!wizard ? (
+            <p className="muted">
+              Venue: {venueAttachMode === "create"
+                ? `Create and bind ${venueExchange} ${venueEnv} ${venueMarket}`
+                : venueAttachMode === "bind"
+                  ? `Bind existing venue ${selectedVenueID || "-"}`
+                  : "No venue during account creation"}
+            </p>
+          ) : null}
           {wizard ? (
             <p><strong>Estimated Total Value: {totalValue.toFixed(2)} USDT</strong></p>
           ) : null}
@@ -285,19 +351,31 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
             placeholder="Optional note for remembering this account"
           />
 
-          <label htmlFor="mode">Mode</label>
-          <select id="mode" value={mode} onChange={(e) => setMode(Number(e.target.value))}>
-            {modes.map((m) => (
+          <label htmlFor="environment">Environment</label>
+          <select id="environment" value={environment} onChange={(e) => handleEnvironmentChange(Number(e.target.value))}>
+            {environments.map((m) => (
               <option key={m.v} value={m.v}>{m.label}</option>
             ))}
           </select>
 
-          {mode !== 0 ? (
+          {environment !== 0 ? (
             <>
-              <label htmlFor="ak">API Key</label>
-              <input id="ak" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-              <label htmlFor="as">API Secret</label>
-              <input id="as" type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} />
+              <label htmlFor="venue-attach-mode">Venue binding</label>
+              <select
+                id="venue-attach-mode"
+                value={venueAttachMode}
+                onChange={(e) => {
+                  setVenueAttachMode(e.target.value as VenueAttachMode);
+                  setErr(null);
+                }}
+              >
+                <option value="none">Create account only</option>
+                <option value="create">Create venue and bind</option>
+                <option value="bind">Bind existing venue</option>
+              </select>
+              <p className="muted">
+                Account stores the environment. Venue stores exchange, market, and credentials.
+              </p>
             </>
           ) : null}
 
@@ -428,9 +506,112 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
               </details>
             </>
           ) : (
-            <p className="muted">
-              Spot/futures wallet configuration is available for <strong>backtest</strong> mode only.
-            </p>
+            <>
+              {venueAttachMode === "create" ? (
+                <details className="wallet-details" open>
+                  <summary>Create and bind venue</summary>
+                  <div className="wallet-details__body">
+                    <label htmlFor="venue-display-name">Display name</label>
+                    <input
+                      id="venue-display-name"
+                      value={venueDisplayName}
+                      onChange={(e) => setVenueDisplayName(e.target.value)}
+                      placeholder={`${name || "account"} binance ${venueEnv} perp`}
+                    />
+
+                    <label htmlFor="venue-description">Venue description</label>
+                    <input
+                      id="venue-description"
+                      value={venueDescription}
+                      onChange={(e) => setVenueDescription(e.target.value)}
+                      placeholder="Optional note for this exchange credential"
+                    />
+
+                    <div className="strategy-new-form__row-2">
+                      <label className="field">
+                        <span>Exchange</span>
+                        <select value={venueExchange} onChange={(e) => setVenueExchange(e.target.value as CreateVenuePayload["exchange"])}>
+                          <option value="binance">Binance</option>
+                          <option value="okx">OKX</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>Market</span>
+                        <select value={venueMarket} onChange={(e) => setVenueMarket(e.target.value as CreateVenuePayload["market"])}>
+                          <option value="spot">Spot</option>
+                          <option value="perpetual_futures">Perpetual futures</option>
+                          <option value="delivery_futures">Delivery futures</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    {!isVenueSpot ? (
+                      <div className="strategy-new-form__row-2">
+                        <label className="field">
+                          <span>Margin mode</span>
+                          <select value={venueMarginMode} onChange={(e) => setVenueMarginMode(e.target.value as NonNullable<CreateVenuePayload["margin_mode"]>)}>
+                            <option value="cross">Cross</option>
+                            <option value="isolated">Isolated</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Position mode</span>
+                          <select value={venuePositionMode} onChange={(e) => setVenuePositionMode(e.target.value as NonNullable<CreateVenuePayload["position_mode"]>)}>
+                            <option value="one_way">One-way</option>
+                            <option value="hedge">Hedge</option>
+                          </select>
+                        </label>
+                      </div>
+                    ) : null}
+
+                    <label htmlFor="venue-api-key">API key</label>
+                    <input id="venue-api-key" value={venueAPIKey} onChange={(e) => setVenueAPIKey(e.target.value)} />
+
+                    <label htmlFor="venue-api-secret">API secret</label>
+                    <input id="venue-api-secret" type="password" value={venueAPISecret} onChange={(e) => setVenueAPISecret(e.target.value)} />
+
+                    <p className="muted">This venue will be created as {venueEnv} and bound to the new account automatically.</p>
+                  </div>
+                </details>
+              ) : null}
+
+              {venueAttachMode === "bind" ? (
+                <details className="wallet-details" open>
+                  <summary>Bind existing venue</summary>
+                  <div className="wallet-details__body">
+                    <label>Venue</label>
+                    <AsyncSelect<Venue>
+                      value={selectedVenueID}
+                      placeholder="Select compatible venue"
+                      onChange={(value) => {
+                        setSelectedVenueID(value);
+                      }}
+                      loadPage={async (offset, limit, query) => {
+                        const page = await listVenues({ offset, limit, include_unbound: true });
+                        const normalizedQuery = query.trim().toLowerCase();
+                        const items = page.items
+                          .filter((venue) => venue.environment === environment)
+                          .filter((venue) => !normalizedQuery
+                            || (venue.display_name || "").toLowerCase().includes(normalizedQuery)
+                            || String(venue.venue_id).includes(normalizedQuery)
+                            || (venue.api_key || "").toLowerCase().includes(normalizedQuery))
+                          .map<AsyncSelectOption<Venue>>((venue) => ({
+                            value: String(venue.venue_id),
+                            label: venue.display_name || `venue-${venue.venue_id}`,
+                            detail: `${venue.exchange_label || venue.exchange} · ${venue.market_label || venue.market} · ${venue.environment_label || venue.environment} · ${venue.account_id ? `account ${venue.account_id}` : "unbound"}`,
+                            item: venue,
+                          }));
+                        return { ...page, items };
+                      }}
+                      searchPlaceholder="Search venue name, ID, or API key"
+                    />
+                    <p className="muted">
+                      If the selected venue is currently bound to another account, creation will hand it off to the new account in one backend transaction.
+                    </p>
+                  </div>
+                </details>
+              ) : null}
+            </>
           )}
 
           <p style={{ marginTop: "1rem" }}>

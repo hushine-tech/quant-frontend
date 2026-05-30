@@ -120,7 +120,8 @@ export type WalletSnapshot = {
 export type CreateAccountPayload = {
   name: string;
   description?: string;
-  mode: number;
+  mode?: number;
+  environment?: number;
   api_key?: string;
   api_secret?: string;
   initial_balance?: number;
@@ -177,6 +178,26 @@ export type Venue = {
 };
 
 export type VenuePage = Page<Venue>;
+
+export type VenueWallet = {
+  venue: Venue;
+  wallet: WalletSnapshot;
+};
+
+export type AccountVenueWalletItem = {
+  venue: Venue;
+  wallet?: WalletSnapshot;
+  error?: string;
+};
+
+export type AccountVenueWallets = {
+  items: AccountVenueWalletItem[];
+  venue_count: number;
+  successful: number;
+  failed: number;
+  total_value: number;
+  updated_at?: string;
+};
 
 export type CreateVenuePayload = {
   account_id?: number;
@@ -413,6 +434,15 @@ export async function archiveVenue(venueId: number | string, reason = ""): Promi
   if (!res.ok) throw new Error(await parseErr(res));
 }
 
+export async function getVenueWallet(venueId: number | string): Promise<VenueWallet> {
+  const t = authToken();
+  const res = await fetch(`${apiBase()}/api/venues/${venueId}/wallet`, {
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as VenueWallet;
+}
+
 export async function listSymbols(
   market: "spot" | "usdm_futures",
   q: string,
@@ -436,6 +466,16 @@ export async function getAccountWallet(id: number | string): Promise<WalletSnaps
   });
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as WalletSnapshot;
+}
+
+export async function getAccountVenueWallets(id: number | string): Promise<AccountVenueWallets> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const res = await fetch(`${apiBase()}/api/accounts/${id}/venue-wallets`, {
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as AccountVenueWallets;
 }
 
 // ── Strategy execution ───────────────────────────────────────────────────────

@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import {
   getAccount,
   getAccountWallet,
+  getAccountVenueWallets,
   runStrategy,
+  bindVenue,
   getStrategyStatus,
   getDownloadAndRunJob,
+  listVenues,
   listStrategiesPage,
   listAccountStrategies,
   listAccountVenues,
+  releaseVenue,
   mountStrategy,
   unmountStrategy,
   activateStrategy,
@@ -26,6 +30,7 @@ import {
   isSessionTerminal,
   type Account,
   type WalletSnapshot,
+  type AccountVenueWallets,
   type Strategy,
   type AccountStrategy,
   type Venue,
@@ -76,6 +81,10 @@ const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
   { id: "sessions", label: "Sessions" },
   { id: "venues", label: "Venues" },
 ];
+
+function normalizeAccountDetailTab(value: string | null): AccountDetailTab {
+  return value === "run" || value === "debug" || value === "sessions" || value === "venues" ? value : "portfolio";
+}
 
 const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -165,14 +174,19 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
 
 export default function AccountDetail() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [acc, setAcc] = useState<Account | null>(null);
   const [wallet, setWallet] = useState<WalletSnapshot | null>(null);
+  const [venueWallets, setVenueWallets] = useState<AccountVenueWallets | null>(null);
   const [sessionRefreshTick, setSessionRefreshTick] = useState(0);
+  const [venueMutationTick, setVenueMutationTick] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [wErr, setWErr] = useState<string | null>(null);
+  const [venueWalletErr, setVenueWalletErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [wLoading, setWLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<AccountDetailTab>("portfolio");
+  const [wLoading, setWLoading] = useState(false);
+  const [venueWalletLoading, setVenueWalletLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => normalizeAccountDetailTab(searchParams.get("tab")));
 
   useEffect(() => {
     if (!id) return;
@@ -193,27 +207,60 @@ export default function AccountDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !acc) return;
     let cancelled = false;
     (async () => {
-      setWLoading(true);
       setWErr(null);
+      setVenueWalletErr(null);
+      setWallet(null);
+      setVenueWallets(null);
+      const accountEnvironment = acc.environment ?? accountEnvironmentFromLegacyMode(acc.mode);
+      if (accountEnvironment === 0) {
+        setWLoading(true);
+        setVenueWalletLoading(false);
+        try {
+          const w = await getAccountWallet(id);
+          if (!cancelled) setWallet(w);
+        } catch (e) {
+          if (!cancelled) setWErr(e instanceof Error ? e.message : "Wallet load failed");
+        } finally {
+          if (!cancelled) setWLoading(false);
+        }
+        return;
+      }
+      setVenueWalletLoading(true);
+      setWLoading(false);
       try {
-        const w = await getAccountWallet(id);
-        if (!cancelled) setWallet(w);
+        const summary = await getAccountVenueWallets(id);
+        if (!cancelled) setVenueWallets(summary);
       } catch (e) {
-        if (!cancelled) setWErr(e instanceof Error ? e.message : "Wallet load failed");
+        if (!cancelled) setVenueWalletErr(e instanceof Error ? e.message : "Venue wallet load failed");
       } finally {
-        if (!cancelled) setWLoading(false);
+        if (!cancelled) setVenueWalletLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, acc, venueMutationTick]);
 
   const mode = acc?.mode ?? wallet?.mode ?? 0;
   const environment = acc?.environment ?? accountEnvironmentFromLegacyMode(mode);
   function bumpSessionRefreshTick() {
     setSessionRefreshTick((v) => v + 1);
+  }
+
+  function bumpVenueMutationTick() {
+    setVenueMutationTick((v) => v + 1);
+  }
+
+  function changeAccountTab(tab: AccountDetailTab) {
+    setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    if (tab === "portfolio") {
+      next.delete("tab");
+    } else {
+      next.set("tab", tab);
+    }
+    setSearchParams(next, { replace: true });
   }
 
   return (
@@ -238,10 +285,19 @@ export default function AccountDetail() {
         <PageTabs
           tabs={accountDetailTabs}
           activeTab={activeTab}
-          onChange={setActiveTab}
+          onChange={changeAccountTab}
           ariaLabel="Account detail sections"
         >
           {activeTab === "portfolio" ? (
+            environment !== 0 ? (
+              <>
+                {venueWalletLoading ? <p className="muted">Loading venue wallets...</p> : null}
+                {venueWalletErr ? <p className="error">{venueWalletErr}</p> : null}
+                {!venueWalletLoading && venueWallets ? (
+                  <AccountVenuePortfolio account={acc} summary={venueWallets} />
+                ) : null}
+              </>
+            ) : (
             <>
             {wLoading ? <p className="muted">Loading wallet…</p> : null}
             {wErr ? <p className="error">{wErr}</p> : null}
@@ -492,6 +548,7 @@ export default function AccountDetail() {
               </>
             ) : null}
             </>
+            )
           ) : null}
 
           {activeTab === "run" ? (
@@ -507,12 +564,135 @@ export default function AccountDetail() {
           ) : null}
 
           {activeTab === "venues" ? (
-            <AccountVenuesPanel accountId={acc.account_id} />
+            <AccountVenuesPanel account={acc} environment={environment} onChanged={bumpVenueMutationTick} />
           ) : null}
         </PageTabs>
         </>
       ) : null}
     </div>
+  );
+}
+
+function walletDisplayTotal(wallet: WalletSnapshot): number {
+  return wallet.display?.total_value ?? wallet.total_value ?? 0;
+}
+
+function formatUSDT(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(4)} USDT` : "-";
+}
+
+function AccountVenuePortfolio({ account, summary }: { account: Account; summary: AccountVenueWallets }) {
+  const hasVenues = summary.items.length > 0;
+  return (
+    <>
+      <div className="card">
+        <div className="portfolio-grid">
+          <div className="portfolio-panel">
+            <div className="portfolio-panel__title">Account aggregate</div>
+            <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
+              Sum of successfully loaded exchange venue wallets. Failed venues are excluded and shown below.
+            </p>
+            <div>
+              <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                Total Value
+              </div>
+              <div style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}>
+                {formatUSDT(summary.total_value)}
+              </div>
+            </div>
+            <div className="portfolio-metric">
+              <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                Loaded / Failed
+              </div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                {summary.successful} / {summary.failed}
+              </div>
+            </div>
+            <div className="portfolio-metric">
+              <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                Updated
+              </div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                {summary.updated_at ? formatUTCWithLocal(summary.updated_at) : "-"}
+              </div>
+            </div>
+          </div>
+          <div className="portfolio-panel portfolio-panel--secondary">
+            <div className="portfolio-panel__title">Bound venues</div>
+            <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
+              This account can route strategies only through bound venues with matching environment and market.
+            </p>
+            <div>
+              <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                Account
+              </div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                {account.name} <span className="muted">#{account.account_id}</span>
+              </div>
+            </div>
+            <div className="portfolio-metric">
+              <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
+                Active venues
+              </div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
+                {summary.venue_count}
+              </div>
+            </div>
+          </div>
+        </div>
+        {!hasVenues ? (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            No active venues are bound to this account. Open the Venues tab to bind one.
+          </p>
+        ) : null}
+      </div>
+
+      {hasVenues ? (
+        <div className="card">
+          <h2 className="section-title" style={{ marginTop: 0 }}>Venue wallets</h2>
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Venue</th>
+                <th>Route</th>
+                <th>Total value</th>
+                <th>Futures wallet</th>
+                <th>Available</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.items.map((item) => {
+                const wallet = item.wallet;
+                const venue = item.venue;
+                return (
+                  <tr key={venue.venue_id}>
+                    <td>
+                      <strong>{venue.display_name || `venue-${venue.venue_id}`}</strong>
+                      <div className="muted"><code>{venue.api_key ? venueAPIKeyLabel(venue.api_key) : venue.credential_fingerprint || venue.venue_id}</code></div>
+                    </td>
+                    <td>
+                      {venueRouteLabel(venue.exchange_label, venue.exchange)} · {venueRouteLabel(venue.market_label, venue.market)}
+                      <div className="muted">{venueRouteLabel(venue.environment_label, venue.environment)}</div>
+                    </td>
+                    <td>{wallet ? formatUSDT(walletDisplayTotal(wallet)) : "-"}</td>
+                    <td>{wallet ? formatUSDT(wallet.futures?.wallet_balance) : "-"}</td>
+                    <td>{wallet ? formatUSDT(wallet.futures?.available_balance) : "-"}</td>
+                    <td>
+                      {item.error ? (
+                        <span className="error">{item.error}</span>
+                      ) : (
+                        <span className="status-badge status-badge--completed">loaded</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -526,10 +706,23 @@ function venueAPIKeyLabel(value?: string): string {
   return `${value.slice(0, 4)}…${value.slice(-4)}`;
 }
 
-function AccountVenuesPanel({ accountId }: { accountId: number }) {
+function AccountVenuesPanel({
+  account,
+  environment,
+  onChanged,
+}: {
+  account: Account;
+  environment: number;
+  onChanged: () => void;
+}) {
+  const accountId = account.account_id;
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [selectedVenueID, setSelectedVenueID] = useState("");
+  const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
+  const [binding, setBinding] = useState(false);
 
   async function loadAccountVenues(offset: number, limit: number) {
     setLoading(true);
@@ -548,6 +741,43 @@ function AccountVenuesPanel({ accountId }: { accountId: number }) {
     }
   }
 
+  async function handleBindVenue(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedVenueID || !selectedVenue) return;
+    setError(null);
+    setNotice(null);
+    setBinding(true);
+    try {
+      if (selectedVenue.account_id === accountId) {
+        setNotice("Venue is already bound to this account.");
+        return;
+      }
+      await bindVenue(selectedVenue.venue_id, accountId, `bound from account ${accountId}`);
+      setNotice(selectedVenue.account_id ? "Venue rebound to this account." : "Venue bound to this account.");
+      setSelectedVenueID("");
+      setSelectedVenue(null);
+      setRefreshKey((v) => v + 1);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bind venue failed");
+    } finally {
+      setBinding(false);
+    }
+  }
+
+  async function handleReleaseVenue(venue: Venue) {
+    setError(null);
+    setNotice(null);
+    try {
+      await releaseVenue(venue.venue_id, `released from account ${accountId}`);
+      setNotice("Venue released from this account.");
+      setRefreshKey((v) => v + 1);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Release venue failed");
+    }
+  }
+
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.75rem" }}>
@@ -557,12 +787,54 @@ function AccountVenuesPanel({ accountId }: { accountId: number }) {
         </div>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>Refresh</button>
-          <Link to={`/venues?account_id=${accountId}`}>Open Venue Management</Link>
+          <Link to={`/venues?account_id=${accountId}&tab=create`}>Create venue</Link>
         </div>
       </div>
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <form onSubmit={handleBindVenue}>
+          <h3 className="section-title" style={{ marginBottom: "0.5rem" }}>Bind venue</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Select an active {accountEnvironmentLabel(environment)} venue. If it is bound to another account, it will be handed off to this account.
+          </p>
+          <label>Venue</label>
+          <AsyncSelect<Venue>
+            value={selectedVenueID}
+            placeholder="Select venue"
+            onChange={(value, option) => {
+              setSelectedVenueID(value);
+              setSelectedVenue(option?.item ?? null);
+            }}
+            loadPage={async (offset, limit, query) => {
+              const page = await listVenues({ offset, limit, include_unbound: true });
+              const normalizedQuery = query.trim().toLowerCase();
+              const items = page.items
+                .filter((venue) => venue.environment === environment)
+                .filter((venue) => !normalizedQuery
+                  || (venue.display_name || "").toLowerCase().includes(normalizedQuery)
+                  || String(venue.venue_id).includes(normalizedQuery)
+                  || (venue.api_key || "").toLowerCase().includes(normalizedQuery))
+                .map<AsyncSelectOption<Venue>>((venue) => ({
+                  value: String(venue.venue_id),
+                  label: venue.display_name || `venue-${venue.venue_id}`,
+                  detail: `${venue.exchange_label || venue.exchange} · ${venue.market_label || venue.market} · ${venue.account_id ? `account ${venue.account_id}` : "unbound"}`,
+                  item: venue,
+                }));
+              return { ...page, items };
+            }}
+            searchPlaceholder="Search venue name, ID, or API key"
+            allowClear
+          />
+          <p style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+            <button type="submit" className="primary" disabled={binding || !selectedVenueID}>
+              {binding ? "Binding..." : selectedVenue?.account_id && selectedVenue.account_id !== accountId ? "Rebind to this account" : "Bind to this account"}
+            </button>
+          </p>
+        </form>
+      </div>
       {error ? <p className="error">{error}</p> : null}
+      {notice ? <p className="success">{notice}</p> : null}
       <InfiniteTable<Venue>
-        columns={["Name", "Exchange", "Market", "Environment", "Status", "API Key", "Updated"]}
+        columns={["Name", "Exchange", "Market", "Environment", "Status", "API Key", "Updated", "Action"]}
         loadPage={loadAccountVenues}
         refreshKey={`${accountId}-${refreshKey}`}
         emptyText="No venues bound to this account."
@@ -583,6 +855,9 @@ function AccountVenuesPanel({ accountId }: { accountId: number }) {
             </td>
             <td><code>{venueAPIKeyLabel(venue.api_key)}</code></td>
             <td>{venue.updated_at ? formatUTCWithLocal(venue.updated_at) : "-"}</td>
+            <td>
+              <button type="button" onClick={() => void handleReleaseVenue(venue)}>Release</button>
+            </td>
           </>
         )}
       />
