@@ -3,8 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { formatUTCWithLocal } from "@/utils/time";
 import {
   getAccount,
+  getAccountPortfolioSnapshot,
   getAccountWallet,
-  getAccountVenueWallets,
   runStrategy,
   bindVenue,
   getStrategyStatus,
@@ -231,7 +231,7 @@ export default function AccountDetail() {
       setVenueWalletLoading(true);
       setWLoading(false);
       try {
-        const summary = await getAccountVenueWallets(id);
+        const summary = await getAccountPortfolioSnapshot(id);
         if (!cancelled) setVenueWallets(summary);
       } catch (e) {
         if (!cancelled) setVenueWalletErr(e instanceof Error ? e.message : "Venue wallet load failed");
@@ -883,6 +883,7 @@ function badgeClass(status: string): string {
     case "failed": return "status-badge status-badge--failed";
     case "recoverable": return "status-badge status-badge--recoverable";
     case "stop_failed": return "status-badge status-badge--stop-failed";
+    case "stopping_failed": return "status-badge status-badge--stop-failed";
     case "stopped": return "status-badge status-badge--stopped";
     default: return "status-badge status-badge--idle";
   }

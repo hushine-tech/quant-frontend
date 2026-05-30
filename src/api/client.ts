@@ -187,6 +187,7 @@ export type VenueWallet = {
 export type AccountVenueWalletItem = {
   venue: Venue;
   wallet?: WalletSnapshot;
+  snapshot?: VenuePortfolioSnapshot;
   error?: string;
 };
 
@@ -197,6 +198,40 @@ export type AccountVenueWallets = {
   failed: number;
   total_value: number;
   updated_at?: string;
+  wallet?: WalletSnapshot;
+  wallet_balance?: number;
+  available_balance?: number;
+};
+
+export type VenuePortfolioSnapshot = {
+  venue_id: number;
+  exchange: number;
+  exchange_label?: string;
+  environment: number;
+  environment_label?: string;
+  market: number;
+  market_label?: string;
+  total_value: number;
+  wallet_balance: number;
+  available_balance: number;
+  updated_at?: string;
+  balances: Array<{
+    asset: string;
+    wallet_balance: number;
+    available_balance: number;
+    locked: number;
+    value_usdt: number;
+  }>;
+  positions: Array<{
+    symbol: string;
+    position_side: string;
+    qty: number;
+    entry_price: number;
+    mark_price: number;
+    unrealized_pnl: number;
+    margin_balance: number;
+    liquidation_price: number;
+  }>;
 };
 
 export type CreateVenuePayload = {
@@ -472,6 +507,16 @@ export async function getAccountVenueWallets(id: number | string): Promise<Accou
   const t = getToken();
   if (!t) throw new Error("Not logged in");
   const res = await fetch(`${apiBase()}/api/accounts/${id}/venue-wallets`, {
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as AccountVenueWallets;
+}
+
+export async function getAccountPortfolioSnapshot(id: number | string): Promise<AccountVenueWallets> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const res = await fetch(`${apiBase()}/api/accounts/${id}/portfolio-snapshot`, {
     headers: { Authorization: `Bearer ${t}` },
   });
   if (!res.ok) throw new Error(await parseErr(res));
@@ -819,7 +864,7 @@ export type Session = {
   completed_at?: string;
 };
 
-const terminalSessionStatuses = new Set(["completed", "finished", "stopped", "failed", "stop_failed", "recoverable"]);
+const terminalSessionStatuses = new Set(["completed", "finished", "stopped", "failed", "stop_failed", "stopping_failed", "recoverable"]);
 
 export function isSessionTerminal(session: Pick<Session, "status"> | { status?: string }): boolean {
   return terminalSessionStatuses.has((session.status || "").toLowerCase());
@@ -974,6 +1019,56 @@ export type SessionOrderFill = {
   strategy_id: number;
 };
 
+export type OrderLifecycleFillDelta = {
+  exchange_trade_id?: string;
+  exchange_order_id?: string;
+  symbol: string;
+  qty: number;
+  fill_price: number;
+  fee: number;
+  fee_asset: string;
+  fee_missing: boolean;
+  trade_time?: string;
+};
+
+export type OrderLifecycleState = {
+  exchange_order_id?: string;
+  client_order_id?: string;
+  symbol: string;
+  status: string;
+  orig_qty: number;
+  executed_qty: number;
+  remaining_qty: number;
+  avg_price: number;
+  updated_at?: string;
+};
+
+export type OrderLifecycleEvent = {
+  event_id: number;
+  session_id: string;
+  account_id: number;
+  venue_id?: number;
+  intent_id?: string;
+  attempt_id?: string;
+  order_id?: string;
+  exchange_order_id?: string;
+  exchange_trade_id?: string;
+  event_type: string;
+  order_status: string;
+  environment: number;
+  environment_label?: string;
+  exchange: number;
+  exchange_label?: string;
+  market: number;
+  market_label?: string;
+  position_side?: string;
+  side?: string;
+  fill_delta?: OrderLifecycleFillDelta;
+  order_state?: OrderLifecycleState;
+  occurred_at: string;
+  created_at: string;
+};
+
 export type ReconciliationFieldDiff = {
   field: string;
   severity: string;
@@ -1042,6 +1137,7 @@ async function fetchPage<T>(url: URL): Promise<Page<T>> {
 export type AttemptsPageParams = PageParams & { intent_id?: string };
 export type OrdersPageParams = PageParams & { intent_id?: string; attempt_id?: string };
 export type FillsPageParams = PageParams & { intent_id?: string; attempt_id?: string; order_id?: string };
+export type LifecyclePageParams = { limit?: number; after_event_id?: number };
 
 function buildSessionPageURL(
   sessionId: string,
@@ -1104,6 +1200,20 @@ export async function getSessionFills(
   }));
 }
 
+export type LifecycleEventPage = Page<OrderLifecycleEvent> & {
+  next_event_id: number;
+};
+
+export async function getSessionLifecycleEvents(
+  sessionId: string,
+  params?: LifecyclePageParams,
+): Promise<LifecycleEventPage> {
+  const u = new URL(`${apiBase()}/api/sessions/${sessionId}/lifecycle-events`);
+  if (params?.limit != null) u.searchParams.set("limit", String(params.limit));
+  if (params?.after_event_id != null) u.searchParams.set("after_event_id", String(params.after_event_id));
+  return fetchPage<OrderLifecycleEvent>(u) as Promise<LifecycleEventPage>;
+}
+
 export async function getSessionReconciliation(
   sessionId: string,
   params?: PageParams,
@@ -1136,7 +1246,19 @@ export type StopSessionAction =
   | "STOP_ACTION_STOP_ONLY"
   | "STOP_ACTION_STOP_AND_CLOSE_POSITIONS";
 
-export async function stopSession(sessionId: string, action: StopSessionAction = "STOP_ACTION_STOP_ONLY"): Promise<boolean> {
+export type StopSessionResult = {
+  stopped: boolean;
+  stop_action?: string;
+  close_positions?: boolean;
+  runtime_id?: string;
+  status?: string;
+  error?: string;
+};
+
+export async function stopSessionResult(
+  sessionId: string,
+  action: StopSessionAction = "STOP_ACTION_STOP_ONLY",
+): Promise<StopSessionResult> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
   const res = await fetch(`${apiBase()}/api/strategy-sessions/${sessionId}/stop`, {
@@ -1145,8 +1267,12 @@ export async function stopSession(sessionId: string, action: StopSessionAction =
     body: JSON.stringify({ stop_action: action }),
   });
   if (!res.ok) throw new Error(await parseErr(res));
-  const json = await res.json() as { stopped?: boolean };
-  return Boolean(json.stopped);
+  const json = await res.json() as StopSessionResult;
+  return { ...json, stopped: Boolean(json.stopped) };
+}
+
+export async function stopSession(sessionId: string, action: StopSessionAction = "STOP_ACTION_STOP_ONLY"): Promise<boolean> {
+  return (await stopSessionResult(sessionId, action)).stopped;
 }
 
 export async function finishSession(sessionId: string): Promise<boolean> {

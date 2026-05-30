@@ -6,6 +6,7 @@ import {
   getSessionAttempts,
   getSessionFills,
   getSessionIntents,
+  getSessionLifecycleEvents,
   getSessionSnapshots,
   getSessionOrders,
   getSessionReconciliation,
@@ -18,7 +19,7 @@ import {
   listSessions,
   mountStrategy,
   runStrategy,
-  stopSession,
+  stopSessionResult,
   unmountStrategy,
   isSessionTerminal,
   runtimeRoleForSessionMode,
@@ -28,6 +29,7 @@ import {
   type ReconciliationRun,
   type ReconciliationFieldDiff,
   type SessionDeliveryHealth,
+  type OrderLifecycleEvent,
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import OrderTree from "@/components/OrderTree";
@@ -102,12 +104,13 @@ const REASON_NAMES: Record<number, string> = {
 // Shared constant so all three lists stay in lockstep.
 const PAGE_SIZE = 20;
 
-type SessionDetailTab = "snapshots" | "reconciliation" | "orders";
+type SessionDetailTab = "snapshots" | "reconciliation" | "orders" | "lifecycle";
 
 const sessionDetailTabs: Array<PageTab<SessionDetailTab>> = [
   { id: "snapshots", label: "Snapshots" },
   { id: "reconciliation", label: "Reconciliation" },
   { id: "orders", label: "Orders" },
+  { id: "lifecycle", label: "Lifecycle Events" },
 ];
 
 function sessionStartedAtMs(session: Session): number {
@@ -219,6 +222,7 @@ function badgeClass(status: string): string {
     case "failed": return "status-badge status-badge--failed";
     case "recoverable": return "status-badge status-badge--recoverable";
     case "stop_failed": return "status-badge status-badge--stop-failed";
+    case "stopping_failed": return "status-badge status-badge--stop-failed";
     case "stopped": return "status-badge status-badge--stopped";
     default: return "status-badge status-badge--idle";
   }
@@ -256,6 +260,13 @@ export default function SessionDetailPage() {
   const [activeTab, setActiveTab] = useState<SessionDetailTab>("orders");
   const [snapshotsLoaded, setSnapshotsLoaded] = useState(false);
   const [reconciliationLoaded, setReconciliationLoaded] = useState(false);
+  const [lifecycleLoaded, setLifecycleLoaded] = useState(false);
+  const [lifecycleEvents, setLifecycleEvents] = useState<OrderLifecycleEvent[]>([]);
+  const [lifecycleCursor, setLifecycleCursor] = useState(0);
+  const [lifecycleHasMore, setLifecycleHasMore] = useState(false);
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [stopFailureAcknowledged, setStopFailureAcknowledged] = useState(false);
 
   // Snapshots and Reconciliation are independent paged lists. The Orders
   // section is delegated to the shared <OrderTree> component below — it owns
@@ -294,13 +305,55 @@ export default function SessionDetailPage() {
     setActiveTab("orders");
     setSnapshotsLoaded(false);
     setReconciliationLoaded(false);
+    setLifecycleLoaded(false);
+    setLifecycleEvents([]);
+    setLifecycleCursor(0);
+    setLifecycleHasMore(false);
+    setLifecycleError(null);
+    setStopFailureAcknowledged(false);
   }, [stableSessionId]);
 
   function changeAuditTab(tab: SessionDetailTab) {
     setActiveTab(tab);
     if (tab === "snapshots") setSnapshotsLoaded(true);
     if (tab === "reconciliation") setReconciliationLoaded(true);
+    if (tab === "lifecycle") setLifecycleLoaded(true);
   }
+
+  useEffect(() => {
+    setStopFailureAcknowledged(false);
+  }, [stableSessionId, session?.status, session?.error]);
+
+  const loadLifecycleEvents = useCallback(async (reset = false) => {
+    if (!stableSessionId || lifecycleLoading) return;
+    const after = reset ? 0 : lifecycleCursor;
+    setLifecycleLoading(true);
+    setLifecycleError(null);
+    try {
+      const page = await getSessionLifecycleEvents(stableSessionId, {
+        limit: PAGE_SIZE,
+        after_event_id: after,
+      });
+      setLifecycleEvents((prev) => (reset ? page.items : [...prev, ...page.items]));
+      setLifecycleCursor(page.next_event_id ?? after);
+      setLifecycleHasMore(page.has_more);
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : "Failed to load lifecycle events");
+      if (reset) {
+        setLifecycleEvents([]);
+        setLifecycleCursor(0);
+        setLifecycleHasMore(false);
+      }
+    } finally {
+      setLifecycleLoading(false);
+    }
+  }, [stableSessionId, lifecycleCursor, lifecycleLoading]);
+
+  useEffect(() => {
+    if (!lifecycleLoaded) return;
+    void loadLifecycleEvents(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lifecycleLoaded, stableSessionId]);
 
   useEffect(() => {
     if (!stableSessionId) return;
@@ -378,13 +431,13 @@ export default function SessionDetailPage() {
     setStopError(null);
     setStopInfo(null);
     try {
-      const stopped = await stopSession(stableSessionId, "STOP_ACTION_STOP_ONLY");
-      if (!stopped) {
-        setStopInfo("Session is not running or has already been stopped.");
+      const result = await stopSessionResult(stableSessionId, "STOP_ACTION_STOP_ONLY");
+      if (!result.stopped) {
+        setStopInfo(result.status ? `Stop was not accepted. Current status: ${result.status}.` : "Session is not running or has already been stopped.");
         return;
       }
       setStopDialogOpen(false);
-      setStopInfo("Session stop request accepted. This is a soft stop only and does not close positions.");
+      setStopInfo(result.status ? `Session stop request accepted. Current status: ${result.status}.` : "Session stop request accepted. This is a soft stop only and does not close positions.");
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to stop session");
     } finally {
@@ -397,13 +450,13 @@ export default function SessionDetailPage() {
     setStopError(null);
     setStopInfo(null);
     try {
-      const stopped = await stopSession(stableSessionId, "STOP_ACTION_STOP_AND_CLOSE_POSITIONS");
-      if (!stopped) {
-        setStopInfo("Session stop-and-close was not accepted.");
+      const result = await stopSessionResult(stableSessionId, "STOP_ACTION_STOP_AND_CLOSE_POSITIONS");
+      if (!result.stopped) {
+        setStopInfo(result.status ? `Stop-and-close was not accepted. Current status: ${result.status}.` : "Session stop-and-close was not accepted.");
         return;
       }
       setStopDialogOpen(false);
-      setStopInfo("Session stop-and-close request accepted. The account is exiting to a flat state.");
+      setStopInfo(result.status ? `Stop-and-close request accepted. Current status: ${result.status}.` : "Session stop-and-close request accepted. The account is exiting to a flat state.");
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to stop and close session");
     } finally {
@@ -473,6 +526,9 @@ export default function SessionDetailPage() {
 
   const initialLoading = snapshotsState.loading && runsState.loading
     && snapshots.length === 0 && runs.length === 0;
+  const stopFailureStatus = (session?.status || "").toLowerCase();
+  const showStopFailureModal = (stopFailureStatus === "stop_failed" || stopFailureStatus === "stopping_failed")
+    && !stopFailureAcknowledged;
 
   return (
     <div>
@@ -848,8 +904,122 @@ export default function SessionDetailPage() {
                 resetKey={stableSessionId}
               />
             ) : null}
+
+            {activeTab === "lifecycle" ? (
+              lifecycleLoaded ? (
+                <div>
+                  {lifecycleError ? <p className="error">{lifecycleError}</p> : null}
+                  {lifecycleEvents.length === 0 && !lifecycleLoading && !lifecycleError ? (
+                    <p className="muted">No lifecycle events.</p>
+                  ) : null}
+                  {lifecycleEvents.length > 0 ? (
+                    <div className="table-scroll">
+                      <table className="compact" style={{ width: "100%", minWidth: "980px" }}>
+                        <thead>
+                          <tr>
+                            <th>Event</th>
+                            <th>Order</th>
+                            <th>Route</th>
+                            <th>Fill</th>
+                            <th>State</th>
+                            <th>Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lifecycleEvents.map((event) => (
+                            <tr key={event.event_id}>
+                              <td>
+                                <strong>{event.event_type || "-"}</strong>
+                                <div className="muted">#{event.event_id} · {event.order_status || "-"}</div>
+                              </td>
+                              <td>
+                                <code>{event.order_id || event.exchange_order_id || "-"}</code>
+                                <div className="muted">
+                                  {event.intent_id ? `intent ${event.intent_id}` : "intent -"}
+                                  {event.attempt_id ? ` · attempt ${event.attempt_id}` : ""}
+                                </div>
+                              </td>
+                              <td>
+                                {event.exchange_label || event.exchange} · {event.market_label || event.market}
+                                <div className="muted">
+                                  venue {event.venue_id || "-"} · {event.position_side || "-"} · {event.side || "-"}
+                                </div>
+                              </td>
+                              <td>
+                                {event.fill_delta ? (
+                                  <>
+                                    {event.fill_delta.symbol} {event.fill_delta.qty}
+                                    <div className="muted">
+                                      px {event.fill_delta.fill_price} · fee {event.fill_delta.fee} {event.fill_delta.fee_asset || ""}
+                                    </div>
+                                  </>
+                                ) : "-"}
+                              </td>
+                              <td>
+                                {event.order_state ? (
+                                  <>
+                                    {event.order_state.status || "-"}
+                                    <div className="muted">
+                                      filled {event.order_state.executed_qty} / {event.order_state.orig_qty}
+                                      {" · "}remain {event.order_state.remaining_qty}
+                                    </div>
+                                  </>
+                                ) : "-"}
+                              </td>
+                              <td>{event.occurred_at ? formatUTCWithLocal(event.occurred_at) : "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                  <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => { void loadLifecycleEvents(true); }}
+                      disabled={lifecycleLoading}
+                    >
+                      Refresh events
+                    </button>
+                    {lifecycleHasMore ? (
+                      <button
+                        type="button"
+                        onClick={() => { void loadLifecycleEvents(false); }}
+                        disabled={lifecycleLoading}
+                      >
+                        Load more
+                      </button>
+                    ) : null}
+                    {lifecycleLoading ? <span className="muted">Loading…</span> : null}
+                  </div>
+                </div>
+              ) : (
+                <p className="muted">Loading lifecycle events…</p>
+              )
+            ) : null}
           </PageTabs>
         </>
+      ) : null}
+      {showStopFailureModal ? (
+        <div className="dialog-backdrop" role="presentation">
+          <div className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="stop-failed-title">
+            <h3 id="stop-failed-title" style={{ marginTop: 0, marginBottom: "0.5rem" }}>
+              Manual exchange check required
+            </h3>
+            <p className="muted" style={{ marginTop: 0 }}>
+              The platform could not fully stop this session. Check the related exchange venue manually before continuing.
+            </p>
+            <p style={{ marginTop: "0.75rem" }}>
+              Status: <span className={badgeClass(session?.status || "")}>{session?.status}</span>
+            </p>
+            {session?.error ? <p className="error">{session.error}</p> : null}
+            <div className="dialog-action-list dialog-action-list--inline">
+              <button type="button" className="danger" onClick={() => setStopFailureAcknowledged(true)} autoFocus>
+                I have checked the exchange state
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
       <StopSessionDialog
         open={stopDialogOpen}
