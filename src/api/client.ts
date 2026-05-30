@@ -582,13 +582,36 @@ export type PreflightFailure = {
   input_key?: { market: string; symbol: string; interval: string };
 };
 
+export type StrategyInputDeclaration = {
+  exchange: string;
+  market: string;
+  kind?: string;
+  symbol: string;
+  interval: string;
+};
+
+export type StrategyOrderTargetDeclaration = {
+  exchange: string;
+  market: string;
+  symbol: string;
+};
+
+export type StrategyRouteDeclaration = {
+  exchange: string;
+  market: string;
+};
+
 export type PreviewRunStrategy = {
   profile: string;       // "backtest" | "live" | "testnet" | "unknown" | ""
   supported: boolean;
   ok: boolean;
   failures: PreflightFailure[];
   required_streams: StreamKey[];
-  declared_inputs?: StreamKey[];
+  inputs?: StrategyInputDeclaration[];
+  declared_inputs?: StrategyInputDeclaration[];
+  order_targets?: StrategyOrderTargetDeclaration[];
+  declared_order_targets?: StrategyOrderTargetDeclaration[];
+  required_routes?: StrategyRouteDeclaration[];
 };
 
 export async function previewRunStrategy(
@@ -681,7 +704,7 @@ export async function getDownloadAndRunJob(jobId: string): Promise<DownloadRunJo
 }
 
 export type DebugPackageRequest = {
-  market: "futures";
+  market: "perpetual_futures";
   symbol: string;
   interval: string;
   start_time_ms: number;
@@ -1453,7 +1476,7 @@ async function fetchOrderHistory<T>(suffix: string, params: QueryOrdersParams): 
 
 export type StreamKey = {
   exchange: string;
-  market: string;   // "spot" | "futures"
+  market: string;   // "spot" | "perpetual_futures" | "delivery_futures"
   kind: string;     // v1: "kline"
   symbol: string;   // canonical upper-case
   interval: string; // "1m" | "5m" | ...

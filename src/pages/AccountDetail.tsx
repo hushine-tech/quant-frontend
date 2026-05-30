@@ -904,6 +904,25 @@ function sessionKindBadge(session: Session): React.ReactNode {
   );
 }
 
+function declarationText(item: { exchange?: string; market?: string; symbol?: string; interval?: string }): string {
+  const route = `${item.exchange || "binance"} / ${item.market || "-"}`;
+  const symbol = item.symbol ? ` · ${item.symbol}` : "";
+  const interval = item.interval ? ` · ${item.interval}` : "";
+  return `${route}${symbol}${interval}`;
+}
+
+function previewInputs(preview: PreviewRunStrategy): NonNullable<PreviewRunStrategy["inputs"]> {
+  return preview.inputs ?? preview.declared_inputs ?? [];
+}
+
+function previewOrderTargets(preview: PreviewRunStrategy): NonNullable<PreviewRunStrategy["order_targets"]> {
+  return preview.order_targets ?? preview.declared_order_targets ?? [];
+}
+
+function previewRoutes(preview: PreviewRunStrategy): NonNullable<PreviewRunStrategy["required_routes"]> {
+  return preview.required_routes ?? [];
+}
+
 // Live-start readiness hint for mode=2 accounts.
 //
 // Asks strategy-service's PreviewRunStrategy — the same evaluator the real
@@ -955,6 +974,9 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
     );
   }
   if (!preview) return null;
+  const inputs = previewInputs(preview);
+  const orderTargets = previewOrderTargets(preview);
+  const routes = previewRoutes(preview);
 
   // Unsupported profile (e.g. mode=1 live not yet wired) — surface the same
   // profile-level failure backend would report on click.
@@ -974,10 +996,20 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
     return (
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #16a34a" }}>
         <p style={{ margin: 0, fontSize: "0.9rem" }}>
-          <strong>Streams ready:</strong>{" "}
-          {preview.required_streams.length} declared input(s) resolved and running.{" "}
+          <strong>Declarations ready:</strong>{" "}
+          {inputs.length} input(s), {orderTargets.length} order target(s), {routes.length} route(s).{" "}
           <Link to="/market-data">Details</Link>
         </p>
+        <div style={{ display: "grid", gap: "0.35rem", marginTop: "0.5rem", fontSize: "0.82rem" }}>
+          {inputs.length > 0 ? (
+            <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
+          ) : null}
+          {orderTargets.length > 0 ? (
+            <div><span className="muted">Order targets:</span> {orderTargets.slice(0, 3).map(declarationText).join("; ")}{orderTargets.length > 3 ? " …" : ""}</div>
+          ) : (
+            <div><span className="muted">Order targets:</span> read-only strategy</div>
+          )}
+        </div>
       </div>
     );
   }
@@ -989,6 +1021,14 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
         <strong>Live start may be blocked:</strong>{" "}
         {preview.failures.length} declared input(s) not ready.
       </p>
+      <div style={{ display: "grid", gap: "0.35rem", marginBottom: "0.5rem", fontSize: "0.82rem" }}>
+        {inputs.length > 0 ? (
+          <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
+        ) : null}
+        {orderTargets.length > 0 ? (
+          <div><span className="muted">Order targets:</span> {orderTargets.slice(0, 3).map(declarationText).join("; ")}{orderTargets.length > 3 ? " …" : ""}</div>
+        ) : null}
+      </div>
       <ul style={{ margin: 0, paddingLeft: "1.25rem", fontSize: "0.85rem" }}>
         {preview.failures.map((f, i) => (
           <li key={`${f.kind}-${i}`} className="muted">
@@ -1285,7 +1325,7 @@ function LocalDebugPackagePanel({
     setNotice(null);
     try {
       const blob = await downloadDebugPackage(account.account_id, {
-        market: "futures",
+        market: "perpetual_futures",
         symbol: symbol.trim().toUpperCase(),
         interval: interval.trim() || "1m",
         start_time_ms: startTimeMs,

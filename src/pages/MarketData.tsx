@@ -199,7 +199,7 @@ function RequestList({
 
 function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () => void | Promise<void> }) {
   const [exchange, setExchange] = useState<(typeof SUPPORTED_EXCHANGES)[number]>("binance");
-  const [market, setMarket] = useState<"futures" | "spot">("futures");
+  const [market, setMarket] = useState<"perpetual_futures" | "spot">("perpetual_futures");
   const [symbol, setSymbol] = useState("");
   const [interval, setInterval] = useState("1m");
   const [startAt, setStartAt] = useState(() => toLocalInputValue(new Date(Date.now() - 24 * 60 * 60_000)));
@@ -300,14 +300,14 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
         </FilterField>
 
         <FilterField label="Market">
-          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
-            <option value="futures">futures</option>
+          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "perpetual_futures" | "spot")}>
+            <option value="perpetual_futures">Perpetual futures</option>
             <option value="spot">spot</option>
           </select>
         </FilterField>
 
         <SymbolPicker
-          market={market === "futures" ? "usdm_futures" : "spot"}
+          market={market === "perpetual_futures" ? "usdm_futures" : "spot"}
           label="Symbol"
           onAdd={setSymbol}
           selected={symbol}
@@ -372,7 +372,7 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
 
 function KlineDataViewerPanel() {
   const [exchange, setExchange] = useState<(typeof SUPPORTED_EXCHANGES)[number]>("binance");
-  const [market, setMarket] = useState<"futures" | "spot">("futures");
+  const [market, setMarket] = useState<"perpetual_futures" | "spot">("perpetual_futures");
   const [symbol, setSymbol] = useState("");
   const [interval, setInterval] = useState("1m");
   const [startAt, setStartAt] = useState(() => toLocalInputValue(new Date(Date.now() - 60 * 60_000)));
@@ -438,14 +438,14 @@ function KlineDataViewerPanel() {
         </FilterField>
 
         <FilterField label="Market">
-          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
-            <option value="futures">futures</option>
+          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "perpetual_futures" | "spot")}>
+            <option value="perpetual_futures">Perpetual futures</option>
             <option value="spot">spot</option>
           </select>
         </FilterField>
 
         <SymbolPicker
-          market={market === "futures" ? "usdm_futures" : "spot"}
+          market={market === "perpetual_futures" ? "usdm_futures" : "spot"}
           label="Symbol"
           onAdd={setSymbol}
           selected={symbol}
@@ -743,7 +743,7 @@ function CoverageGaps({
 
 function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
   const [exchange, setExchange] = useState<(typeof SUPPORTED_EXCHANGES)[number]>("binance");
-  const [market, setMarket] = useState<"futures" | "spot">("futures");
+  const [market, setMarket] = useState<"perpetual_futures" | "spot">("perpetual_futures");
   const [symbol, setSymbol] = useState("");
   const [interval, setInterval] = useState("1m");
   const [submitting, setSubmitting] = useState(false);
@@ -798,14 +798,14 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
         </FilterField>
 
         <FilterField label="Market">
-          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "futures" | "spot")}>
-            <option value="futures">futures</option>
+          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "perpetual_futures" | "spot")}>
+            <option value="perpetual_futures">Perpetual futures</option>
             <option value="spot">spot</option>
           </select>
         </FilterField>
 
         <SymbolPicker
-          market={market === "futures" ? "usdm_futures" : "spot"}
+          market={market === "perpetual_futures" ? "usdm_futures" : "spot"}
           label="Symbol"
           onAdd={setSymbol}
           selected={symbol}
