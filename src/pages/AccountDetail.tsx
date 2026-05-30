@@ -787,7 +787,7 @@ function AccountVenuesPanel({
         </div>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>Refresh</button>
-          <Link to={`/venues?account_id=${accountId}&tab=create`}>Create venue</Link>
+          <Link to={`/venues?account_id=${accountId}&tab=create&environment=${String(accountEnvironmentLabel(environment)).toLowerCase()}`}>Create venue</Link>
         </div>
       </div>
       <div className="card" style={{ marginBottom: "1rem" }}>

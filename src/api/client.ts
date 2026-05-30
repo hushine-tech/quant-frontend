@@ -238,11 +238,11 @@ export type CreateVenuePayload = {
   account_id?: number;
   exchange: "binance" | "okx";
   market: "spot" | "perpetual_futures" | "delivery_futures";
-  environment: "demo" | "live";
+  environment: "backtest" | "demo" | "live";
   display_name: string;
   description?: string;
-  api_key: string;
-  credential_info: Record<string, unknown>;
+  api_key?: string;
+  credential_info?: Record<string, unknown>;
   margin_mode?: "cross" | "isolated" | "none";
   position_mode?: "one_way" | "hedge" | "none";
 };

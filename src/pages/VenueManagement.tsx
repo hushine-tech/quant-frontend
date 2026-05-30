@@ -61,6 +61,19 @@ function accountEnvCode(account: Account): number {
   return 0;
 }
 
+function normalizeCreateEnvironment(value: string | null): CreateVenuePayload["environment"] {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "backtest") return "backtest";
+  if (raw === "live") return "live";
+  return "demo";
+}
+
+function createEnvironmentCode(environment: CreateVenuePayload["environment"]): number {
+  if (environment === "backtest") return 0;
+  if (environment === "live") return 2;
+  return 1;
+}
+
 export default function VenueManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<VenueTab>(() => normalizeVenueTab(searchParams.get("tab")));
@@ -391,6 +404,7 @@ export default function VenueManagement() {
         ) : (
           <CreateVenueForm
             defaultAccountID={accountFilter || ""}
+            defaultEnvironment={normalizeCreateEnvironment(searchParams.get("environment"))}
             onCreated={() => {
               setNotice("Venue created.");
               setRefreshKey((v) => v + 1);
@@ -405,15 +419,17 @@ export default function VenueManagement() {
 
 function CreateVenueForm({
   defaultAccountID,
+  defaultEnvironment,
   onCreated,
 }: {
   defaultAccountID: string;
+  defaultEnvironment: CreateVenuePayload["environment"];
   onCreated: () => void;
 }) {
   const [accountID, setAccountID] = useState(defaultAccountID);
   const [exchange, setExchange] = useState<CreateVenuePayload["exchange"]>("binance");
   const [market, setMarket] = useState<CreateVenuePayload["market"]>("perpetual_futures");
-  const [environment, setEnvironment] = useState<CreateVenuePayload["environment"]>("demo");
+  const [environment, setEnvironment] = useState<CreateVenuePayload["environment"]>(defaultEnvironment);
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
   const [apiKey, setAPIKey] = useState("");
@@ -424,10 +440,11 @@ function CreateVenueForm({
   const [error, setError] = useState<string | null>(null);
 
   const isSpot = market === "spot";
+  const requiresCredentials = environment !== "backtest";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!apiKey.trim() || !apiSecret.trim()) return;
+    if (requiresCredentials && (!apiKey.trim() || !apiSecret.trim())) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -438,8 +455,8 @@ function CreateVenueForm({
         environment,
         display_name: displayName.trim() || `${exchange}-${environment}-${market}`,
         description: description.trim(),
-        api_key: apiKey.trim(),
-        credential_info: { api_key: apiKey.trim(), api_secret: apiSecret.trim() },
+        api_key: requiresCredentials ? apiKey.trim() : "",
+        credential_info: requiresCredentials ? { api_key: apiKey.trim(), api_secret: apiSecret.trim() } : {},
         margin_mode: isSpot ? "none" : marginMode,
         position_mode: isSpot ? "none" : positionMode,
       });
@@ -468,7 +485,7 @@ function CreateVenueForm({
               loadPage={async (offset, limit, query) => {
                 const page = await listAccountsPage({ offset, limit });
                 const normalizedQuery = query.trim().toLowerCase();
-                const envCode = environment === "demo" ? 1 : 2;
+                const envCode = createEnvironmentCode(environment);
                 const items = page.items
                   .filter((account) => accountEnvCode(account) === envCode)
                   .filter((account) => !normalizedQuery
@@ -506,6 +523,7 @@ function CreateVenueForm({
           <label className="field">
             <span>Environment</span>
             <select value={environment} onChange={(e) => setEnvironment(e.target.value as CreateVenuePayload["environment"])}>
+              <option value="backtest">Backtest</option>
               <option value="demo">Demo</option>
               <option value="live">Live</option>
             </select>
@@ -548,26 +566,32 @@ function CreateVenueForm({
             </label>
           </div>
         ) : null}
-        <div className="strategy-new-form__row-2">
-          <label className="field">
-            <span>API key</span>
-            <input
-              type="text"
-              value={apiKey}
-              onChange={(e) => setAPIKey(e.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>API secret</span>
-            <input
-              type="password"
-              value={apiSecret}
-              onChange={(e) => setAPISecret(e.target.value)}
-              required
-            />
-          </label>
-        </div>
+        {requiresCredentials ? (
+          <div className="strategy-new-form__row-2">
+            <label className="field">
+              <span>API key</span>
+              <input
+                type="text"
+                value={apiKey}
+                onChange={(e) => setAPIKey(e.target.value)}
+                required
+              />
+            </label>
+            <label className="field">
+              <span>API secret</span>
+              <input
+                type="password"
+                value={apiSecret}
+                onChange={(e) => setAPISecret(e.target.value)}
+                required
+              />
+            </label>
+          </div>
+        ) : (
+          <p className="muted">
+            Backtest venues are simulated and do not require exchange credentials.
+          </p>
+        )}
         {error ? <p className="error">{error}</p> : null}
         <p style={{ marginTop: "0.75rem" }}>
           <button type="submit" className="primary" disabled={submitting}>
