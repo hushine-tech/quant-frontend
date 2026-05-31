@@ -106,7 +106,7 @@ function CreateStrategyForm({ onCreated }: { onCreated: () => void }) {
   const [version, setVersion] = useState("1.0.0");
   const [description, setDescription] = useState("");
   const [code, setCode] = useState(
-    `class MyStrategy:\n    def on_market_data(self, data, wallet):\n        return None\n`
+    `from hushine_strategy import Exchange, Market, OrderDecision, OrderSide, OrderType\n\n\nclass MyStrategy:\n    INPUTS = [\n        {\n            "exchange": Exchange.BINANCE,\n            "market": Market.PERPETUAL_FUTURES,\n            "symbol": "ETHUSDT",\n            "interval": "1m",\n        },\n    ]\n    ORDER_TARGETS = [\n        {\n            "exchange": Exchange.BINANCE,\n            "market": Market.PERPETUAL_FUTURES,\n            "symbol": "ETHUSDT",\n        },\n    ]\n\n    def on_market_data(self, data, wallet):\n        return None\n`
   );
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
