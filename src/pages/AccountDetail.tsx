@@ -26,7 +26,7 @@ import {
   startDownloadAndRunBacktest,
   downloadDebugPackage,
   queryMarketDataKlines,
-  runtimeRoleForSessionMode,
+  runtimeRoleForSessionEnvironment,
   isSessionTerminal,
   type Account,
   type WalletSnapshot,
@@ -51,25 +51,19 @@ import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import SymbolPicker from "@/components/SymbolPicker";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
-import { accountEnvironmentLabel } from "@/utils/accountMode";
+import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 
 function envBannerClass(environment: number): string {
   switch (environment) {
     case 0:
       return "env-banner env-banner--backtest";
     case 1:
-      return "env-banner env-banner--testnet";
+      return "env-banner env-banner--demo";
     case 2:
       return "env-banner env-banner--live";
     default:
       return "env-banner env-banner--other";
   }
-}
-
-function accountEnvironmentFromLegacyMode(mode: number): number {
-  if (mode === 2) return 1;
-  if (mode === 1) return 2;
-  return 0;
 }
 
 type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues";
@@ -113,7 +107,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
     other.session_id !== session.session_id
     && other.account_id === session.account_id
     && other.strategy_id === session.strategy_id
-    && other.mode === session.mode
+    && other.environment === session.environment
     && other.interval === session.interval
     && (other.start_time_ms ?? 0) === (session.start_time_ms ?? 0)
     && (other.end_time_ms ?? 0) === (session.end_time_ms ?? 0)
@@ -214,7 +208,7 @@ export default function AccountDetail() {
       setVenueWalletErr(null);
       setWallet(null);
       setVenueWallets(null);
-      const accountEnvironment = acc.environment ?? accountEnvironmentFromLegacyMode(acc.mode);
+      const accountEnvironment = acc.environment;
       if (accountEnvironment === 0) {
         setWLoading(true);
         setVenueWalletLoading(false);
@@ -242,8 +236,7 @@ export default function AccountDetail() {
     return () => { cancelled = true; };
   }, [id, acc, venueMutationTick]);
 
-  const mode = acc?.mode ?? wallet?.mode ?? 0;
-  const environment = acc?.environment ?? accountEnvironmentFromLegacyMode(mode);
+  const environment = acc?.environment ?? wallet?.environment ?? 0;
   function bumpSessionRefreshTick() {
     setSessionRefreshTick((v) => v + 1);
   }
@@ -552,7 +545,7 @@ export default function AccountDetail() {
           ) : null}
 
           {activeTab === "run" ? (
-            <StrategyPanel accountId={acc.account_id} mode={mode} onSessionsChanged={bumpSessionRefreshTick} />
+            <StrategyPanel accountId={acc.account_id} environment={environment} onSessionsChanged={bumpSessionRefreshTick} />
           ) : null}
 
           {activeTab === "debug" ? (
@@ -923,7 +916,7 @@ function previewRoutes(preview: PreviewRunStrategy): NonNullable<PreviewRunStrat
   return preview.required_routes ?? [];
 }
 
-// Live-start readiness hint for mode=2 accounts.
+// Demo-start readiness hint.
 //
 // Asks strategy-service's PreviewRunStrategy — the same evaluator the real
 // start uses — so the hint is byte-for-byte consistent with what the user
@@ -978,14 +971,14 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
   const orderTargets = previewOrderTargets(preview);
   const routes = previewRoutes(preview);
 
-  // Unsupported profile (e.g. mode=1 live not yet wired) — surface the same
+  // Unsupported profile (e.g. live not yet wired) — surface the same
   // profile-level failure backend would report on click.
   if (!preview.supported) {
     return (
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #ef4444" }}>
         <p style={{ margin: 0, fontSize: "0.9rem" }}>
           <strong>Runtime profile unsupported:</strong>{" "}
-          profile <code>{preview.profile || "unknown"}</code> is not wired up for this account mode.
+          profile <code>{preview.profile || "unknown"}</code> is not wired up for this account environment.
           {preview.failures.length > 0 ? ` ${preview.failures[0].reason}` : ""}
         </p>
       </div>
@@ -1428,11 +1421,11 @@ cd ~/hushine-debug-workspace
 
 function StrategyPanel({
   accountId,
-  mode,
+  environment,
   onSessionsChanged,
 }: {
   accountId: number;
-  mode: number;
+  environment: number;
   onSessionsChanged: () => void;
 }) {
   // Interval is no longer user-selectable: the strategy's declared INPUTS
@@ -1456,7 +1449,7 @@ function StrategyPanel({
   const [startRuntimeId, setStartRuntimeId] = useState("");
   const [startRuntime, setStartRuntime] = useState<Runtime | null>(null);
   const [pendingStart, setPendingStart] = useState<{
-    kind: "backtest" | "testnet";
+    kind: "backtest" | "demo";
     interval: string;
     startTimeMs?: number;
     endTimeMs?: number;
@@ -1690,7 +1683,7 @@ function StrategyPanel({
     }
   }
 
-  function openStartDialog(params: { kind: "backtest" | "testnet"; interval: string; startTimeMs?: number; endTimeMs?: number }) {
+  function openStartDialog(params: { kind: "backtest" | "demo"; interval: string; startTimeMs?: number; endTimeMs?: number }) {
     setError(null);
     setPendingStart(params);
     setStartDialogOpen(true);
@@ -1727,7 +1720,7 @@ function StrategyPanel({
   }
 
   async function handleLiveStart() {
-    openStartDialog({ kind: "testnet", interval: sessionMetadataInterval });
+    openStartDialog({ kind: "demo", interval: sessionMetadataInterval });
   }
 
   async function handleStopCurrentSession() {
@@ -1912,8 +1905,8 @@ function StrategyPanel({
         </div>
       ) : null}
 
-      {/* ── Run backtest (mode=0 only) ── */}
-      {mode === 0 ? (
+      {/* ── Run backtest ── */}
+      {environment === 0 ? (
       <div className="card">
         {!activeStrat ? (
           <p className="muted">Activate a strategy above to run a backtest.</p>
@@ -1935,7 +1928,7 @@ function StrategyPanel({
               setCoveragePreview(null);
               setCoverageError(null);
             }}
-            mode={0}
+            environment={0}
             role="executor"
             label="Runtime"
           />
@@ -1961,8 +1954,8 @@ function StrategyPanel({
       </div>
       ) : null}
 
-      {/* ── Start mode=2 session ── */}
-      {mode === 2 ? (
+      {/* ── Start demo session ── */}
+      {environment === 1 ? (
       <div className="card">
         {!activeStrat ? (
           <p className="muted">Activate a strategy above to start a demo session.</p>
@@ -1973,7 +1966,7 @@ function StrategyPanel({
         )}
 
         <p className="muted" style={{ fontSize: "0.85rem", marginTop: 0 }}>
-          This starts a live <code>mode=2</code> demo session using the active strategy's
+          This starts a demo session using the active strategy's
           declared <code>INPUTS</code> — each <code>(market, symbol, interval)</code> is
           subscribed independently; the UI no longer picks an interval here.
         </p>
@@ -1983,7 +1976,7 @@ function StrategyPanel({
             setStartRuntimeId(runtimeId);
             setStartRuntime(runtime ?? null);
           }}
-          mode={2}
+          environment={1}
           role="executor"
           label="Executor runtime"
         />
@@ -2018,17 +2011,17 @@ function StrategyPanel({
       />
       <RuntimeSelectionDialog
         open={startDialogOpen}
-        title={pendingStart?.kind === "testnet" ? "Start Demo Session" : "Run Backtest"}
-        description={pendingStart?.kind === "testnet"
+        title={pendingStart?.kind === "demo" ? "Start Demo Session" : "Run Backtest"}
+        description={pendingStart?.kind === "demo"
           ? <>Choose where the active strategy will run.</>
           : <>Choose where the backtest session will run.</>}
         runtimeId={startRuntimeId}
-        runtimeLabel={pendingStart?.kind === "testnet" ? "Executor runtime" : "Runtime"}
-        mode={pendingStart?.kind === "testnet" ? 2 : 0}
-        role={runtimeRoleForSessionMode(pendingStart?.kind === "testnet" ? 2 : 0)}
+        runtimeLabel={pendingStart?.kind === "demo" ? "Executor runtime" : "Runtime"}
+        environment={pendingStart?.kind === "demo" ? 1 : 0}
+        role={runtimeRoleForSessionEnvironment(pendingStart?.kind === "demo" ? 1 : 0)}
         busy={running}
         error={error}
-        confirmLabel={pendingStart?.kind === "testnet" ? "Start Session" : "Run Backtest"}
+        confirmLabel={pendingStart?.kind === "demo" ? "Start Session" : "Run Backtest"}
         confirmDisabled={pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error"))}
         onRuntimeChange={(runtimeId, runtime) => {
           setStartRuntimeId(runtimeId);
@@ -2057,7 +2050,7 @@ function StrategyPanel({
             }}
             onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
           />
-        ) : pendingStart?.kind === "testnet" && startRuntimeId ? (
+        ) : pendingStart?.kind === "demo" && startRuntimeId ? (
           <LiveStartReadinessHint accountId={accountId} runtimeId={startRuntimeId} />
         ) : null}
       </RuntimeSelectionDialog>
@@ -2263,9 +2256,9 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       title="Resume With New Session"
       description={resumeDialogSession ? <>Session <code>{resumeDialogSession.session_id}</code></> : null}
       runtimeId={resumeRuntimeId}
-      runtimeLabel={resumeDialogSession?.mode === 0 ? "Backtest runtime" : "Executor runtime"}
-      mode={resumeDialogSession?.mode}
-      role={runtimeRoleForSessionMode(resumeDialogSession?.mode)}
+      runtimeLabel={resumeDialogSession?.environment === 0 ? "Backtest runtime" : "Executor runtime"}
+      environment={resumeDialogSession?.environment}
+      role={runtimeRoleForSessionEnvironment(resumeDialogSession?.environment)}
       busy={resuming}
       error={stopError}
       confirmLabel="Resume"

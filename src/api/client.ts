@@ -2,8 +2,7 @@ export type Account = {
   account_id: number;
   name: string;
   description?: string;
-  mode: number;
-  environment?: number;
+  environment: number;
   created_at: string;
 };
 
@@ -24,7 +23,7 @@ export type AuthUser = {
  *    balances for the single-asset `USDT@-M` futures + USDT-mediated spot
  *    runtime.
  *
- *    - `mode`, `updated_at`
+ *    - `environment`, `updated_at`
  *    - `wallet_balance`, `margin_balance`, `total_margin_balance`, `available_balance`
  *    - nested `spot` / `futures` sub-objects (full canonical detail)
  *
@@ -59,7 +58,7 @@ export type WalletDisplay = {
 
 export type WalletSnapshot = {
   // ── canonical (authoritative) ─────────────────────────────────────────
-  mode: number;
+  environment: number;
   updated_at: string;
   wallet_balance: number;
   margin_balance: number;
@@ -120,7 +119,6 @@ export type WalletSnapshot = {
 export type CreateAccountPayload = {
   name: string;
   description?: string;
-  mode?: number;
   environment?: number;
   api_key?: string;
   api_secret?: string;
@@ -602,7 +600,7 @@ export type StrategyRouteDeclaration = {
 };
 
 export type PreviewRunStrategy = {
-  profile: string;       // "backtest" | "live" | "testnet" | "unknown" | ""
+  profile: string;       // "backtest" | "demo" | "live" | "unknown" | ""
   supported: boolean;
   ok: boolean;
   failures: PreflightFailure[];
@@ -870,7 +868,7 @@ export type Session = {
   session_id: string;
   account_id: number;
   strategy_id: number;
-  mode: number;
+  environment: number;
   status: string;
   interval: string;
   start_time_ms?: number;
@@ -909,7 +907,7 @@ export type SessionPageParams = PageParams & {
   account_id?: number | string;
   runtime_id?: string;
   strategy_id?: number | string;
-  mode?: number | string;
+  environment?: number | string;
   status?: string;
   session_id?: string;
   started_after_ms?: number;
@@ -921,7 +919,7 @@ export async function listSessionsPage(params?: SessionPageParams): Promise<Page
   if (params?.account_id != null && params.account_id !== "") u.searchParams.set("account_id", String(params.account_id));
   if (params?.runtime_id) u.searchParams.set("runtime_id", params.runtime_id);
   if (params?.strategy_id != null && params.strategy_id !== "") u.searchParams.set("strategy_id", String(params.strategy_id));
-  if (params?.mode != null && params.mode !== "") u.searchParams.set("mode", String(params.mode));
+  if (params?.environment != null && params.environment !== "") u.searchParams.set("environment", String(params.environment));
   if (params?.status) u.searchParams.set("status", params.status);
   if (params?.session_id) u.searchParams.set("session_id", params.session_id);
   if (params?.started_after_ms) u.searchParams.set("started_after_ms", String(params.started_after_ms));
@@ -1111,7 +1109,7 @@ export type ReconciliationRun = {
   session_id: string;
   snapshot_reason: number;
   run_type: string;
-  mode: number;
+  environment: number;
   hard_pass: boolean;
   soft_pass: boolean;
   hard_fail_count: number;
@@ -1574,7 +1572,7 @@ export type SessionMarketDataSubscription = {
   session_id: string;
   runtime_id: string;
   key: StreamKey;
-  mode: number;
+  environment: number;
   status: string;
   created_at?: string;
   updated_at?: string;
@@ -1993,7 +1991,7 @@ export function isRuntimeRouteable(rt: Runtime): boolean {
   return runtimeUnavailableReason(rt) === undefined;
 }
 
-export function runtimeRoleForSessionMode(_mode?: number): "executor" {
+export function runtimeRoleForSessionEnvironment(_environment?: number): "executor" {
   return "executor";
 }
 
@@ -2019,7 +2017,7 @@ export async function listRuntimes(params: {
   eligible?: string;
   eligible_for?: string;
   role?: string;
-  mode?: number;
+  environment?: number;
   limit?: number;
   offset?: number;
 } = {}): Promise<RuntimeListResult> {
@@ -2031,7 +2029,7 @@ export async function listRuntimes(params: {
   if (params.eligible) u.searchParams.set("eligible", params.eligible);
   if (params.eligible_for) u.searchParams.set("eligible_for", params.eligible_for);
   if (params.role) u.searchParams.set("role", params.role);
-  if (params.mode != null) u.searchParams.set("mode", String(params.mode));
+  if (params.environment != null) u.searchParams.set("environment", String(params.environment));
   if (params.limit) u.searchParams.set("limit", String(params.limit));
   if (params.offset) u.searchParams.set("offset", String(params.offset));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });

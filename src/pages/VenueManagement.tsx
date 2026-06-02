@@ -55,10 +55,7 @@ function accountEnvLabel(value?: number): string {
 }
 
 function accountEnvCode(account: Account): number {
-  if (typeof account.environment === "number") return account.environment;
-  if (account.mode === 2) return 1;
-  if (account.mode === 1) return 2;
-  return 0;
+  return typeof account.environment === "number" ? account.environment : 0;
 }
 
 function normalizeCreateEnvironment(value: string | null): CreateVenuePayload["environment"] {

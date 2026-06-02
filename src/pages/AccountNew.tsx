@@ -64,12 +64,6 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
   const venueEnv = environment === 1 ? "demo" : environment === 2 ? "live" : "demo";
   const isVenueSpot = venueMarket === "spot";
 
-  function legacyModeForEnvironment(value: number): number {
-    if (value === 1) return 2;
-    if (value === 2) return 1;
-    return 0;
-  }
-
   function handleEnvironmentChange(value: number) {
     setEnvironment(value);
     setSelectedVenueID("");
@@ -134,7 +128,6 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
       name,
       description: description.trim() || undefined,
       environment,
-      mode: legacyModeForEnvironment(environment),
       initial_balance: 0,
     };
 

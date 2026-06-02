@@ -8,7 +8,7 @@ type RuntimeSelectionDialogProps = {
   description?: ReactNode;
   runtimeId: string;
   runtimeLabel?: string;
-  mode?: number;
+  environment?: number;
   role?: "executor" | "debugger";
   busy?: boolean;
   error?: string | null;
@@ -26,7 +26,7 @@ export default function RuntimeSelectionDialog({
   description,
   runtimeId,
   runtimeLabel = "Runtime",
-  mode,
+  environment,
   role,
   busy = false,
   error,
@@ -52,7 +52,7 @@ export default function RuntimeSelectionDialog({
           disabled={busy}
           compact
           label={runtimeLabel}
-          mode={mode}
+          environment={environment}
           role={role}
         />
         {children}

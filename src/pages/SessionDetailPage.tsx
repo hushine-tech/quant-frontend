@@ -22,7 +22,7 @@ import {
   stopSessionResult,
   unmountStrategy,
   isSessionTerminal,
-  runtimeRoleForSessionMode,
+  runtimeRoleForSessionEnvironment,
   type Session,
   type SessionReconciliationSummary,
   type SnapshotEntry,
@@ -124,7 +124,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
     other.session_id !== session.session_id
     && other.account_id === session.account_id
     && other.strategy_id === session.strategy_id
-    && other.mode === session.mode
+    && other.environment === session.environment
     && other.interval === session.interval
     && (other.start_time_ms ?? 0) === (session.start_time_ms ?? 0)
     && (other.end_time_ms ?? 0) === (session.end_time_ms ?? 0)
@@ -1039,9 +1039,9 @@ export default function SessionDetailPage() {
         title="Resume With New Session"
         description={session ? <>Session <code>{session.session_id}</code></> : null}
         runtimeId={resumeRuntimeId}
-        runtimeLabel={session?.mode === 0 ? "Backtest runtime" : "Executor runtime"}
-        mode={session?.mode}
-        role={runtimeRoleForSessionMode(session?.mode)}
+        runtimeLabel={session?.environment === 0 ? "Backtest runtime" : "Executor runtime"}
+        environment={session?.environment}
+        role={runtimeRoleForSessionEnvironment(session?.environment)}
         busy={resuming}
         error={stopError}
         confirmLabel="Resume"

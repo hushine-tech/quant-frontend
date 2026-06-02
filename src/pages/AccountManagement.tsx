@@ -5,7 +5,7 @@ import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AccountNew from "@/pages/AccountNew";
-import { accountEnvironmentLabel } from "@/utils/accountMode";
+import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 import { formatUTCWithLocal } from "@/utils/time";
 
 type AccountTab = "accounts" | "create";
@@ -69,7 +69,7 @@ export default function AccountManagement() {
               <>
                 <td><Link to={`/accounts/${account.account_id}`}>{account.name}</Link></td>
                 <td><code>{account.account_id}</code></td>
-                <td>{accountEnvironmentLabel(account.environment ?? (account.mode === 2 ? 1 : account.mode))}</td>
+                <td>{accountEnvironmentLabel(account.environment)}</td>
                 <td>{account.created_at ? formatUTCWithLocal(account.created_at) : "-"}</td>
                 <td>{account.description?.trim() || "-"}</td>
               </>

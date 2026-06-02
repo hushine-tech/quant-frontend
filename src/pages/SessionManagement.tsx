@@ -15,7 +15,7 @@ import { FilterField, FilterPanel } from "@/components/FilterControls";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
-import { accountModeLabel } from "@/utils/accountMode";
+import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 import { formatUTCWithLocal } from "@/utils/time";
 
 function fmtTime(value?: string): string {
@@ -34,7 +34,7 @@ export default function SessionManagement() {
   const [accountFilter, setAccountFilter] = useState("");
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState("");
-  const [modeFilter, setModeFilter] = useState("");
+  const [environmentFilter, setEnvironmentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sessionIdFilter, setSessionIdFilter] = useState("");
   const [startedAfterFilter, setStartedAfterFilter] = useState("");
@@ -44,13 +44,13 @@ export default function SessionManagement() {
     accountFilter,
     runtimeFilter,
     strategyFilter,
-    modeFilter,
+    environmentFilter,
     statusFilter,
     sessionIdFilter,
     startedAfterFilter,
     startedBeforeFilter,
     refreshKey,
-  }), [accountFilter, modeFilter, refreshKey, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
+  }), [accountFilter, environmentFilter, refreshKey, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
 
   const loadSessions = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
@@ -61,7 +61,7 @@ export default function SessionManagement() {
         account_id: accountFilter || undefined,
         runtime_id: runtimeFilter || undefined,
         strategy_id: strategyFilter || undefined,
-        mode: modeFilter || undefined,
+        environment: environmentFilter || undefined,
         status: statusFilter || undefined,
         session_id: sessionIdFilter || undefined,
         started_after_ms: parseLocalDateTime(startedAfterFilter),
@@ -70,7 +70,7 @@ export default function SessionManagement() {
     } finally {
       setLoading(false);
     }
-  }, [accountFilter, modeFilter, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
+  }, [accountFilter, environmentFilter, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
 
   return (
     <div>
@@ -139,9 +139,9 @@ export default function SessionManagement() {
               }}
             />
           </FilterField>
-          <FilterField label="Mode">
-            <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)}>
-              <option value="">All modes</option>
+          <FilterField label="Environment">
+            <select value={environmentFilter} onChange={(e) => setEnvironmentFilter(e.target.value)}>
+              <option value="">All environments</option>
               <option value="0">Backtest (0)</option>
               <option value="1">Live (1)</option>
               <option value="2">Demo (2)</option>
@@ -173,7 +173,7 @@ export default function SessionManagement() {
         </FilterPanel>
 
         <InfiniteTable<Session>
-          columns={["Session", "Account", "Strategy", "Runtime", "Mode", "Type", "Status", "Started", "Completed", "Bars", "Error"]}
+          columns={["Session", "Account", "Strategy", "Runtime", "Environment", "Type", "Status", "Started", "Completed", "Bars", "Error"]}
           loadPage={loadSessions}
           refreshKey={filterKey}
           emptyText="No sessions found."
@@ -188,7 +188,7 @@ export default function SessionManagement() {
                   <Link to={`/runtimes/${encodeURIComponent(session.runtime_id)}`}>{session.runtime_name || session.runtime_id}</Link>
                 ) : "-"}
               </td>
-              <td>{accountModeLabel(session.mode)}</td>
+              <td>{accountEnvironmentLabel(session.environment)}</td>
               <td>{session.session_type || "-"}</td>
               <td><span className="status-badge status-badge--idle">{session.status}</span></td>
               <td>{fmtTime(session.started_at)}</td>

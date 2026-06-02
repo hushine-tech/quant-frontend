@@ -648,7 +648,7 @@ export function RuntimeDetailPage() {
               <div className="card">
                 <h2 className="section-title" style={{ marginTop: 0 }}>Live Delivery</h2>
                 {deliveryHealth.length === 0 ? (
-                  <p className="muted" style={{ margin: 0 }}>No active mode=2 delivery subscriptions for this runtime.</p>
+                  <p className="muted" style={{ margin: 0 }}>No active demo delivery subscriptions for this runtime.</p>
                 ) : (
                   <table className="compact">
                     <thead>

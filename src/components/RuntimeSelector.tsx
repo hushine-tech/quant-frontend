@@ -10,7 +10,7 @@ import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 type RuntimeSelectorProps = {
   value: string;
   onChange: (runtimeId: string, runtime?: Runtime) => void;
-  mode?: number;
+  environment?: number;
   role?: "executor" | "debugger";
   eligible?: string;
   disabled?: boolean;
@@ -21,7 +21,7 @@ type RuntimeSelectorProps = {
 export default function RuntimeSelector({
   value,
   onChange,
-  mode,
+  environment,
   role,
   eligible = "session_start",
   disabled = false,
@@ -42,7 +42,7 @@ export default function RuntimeSelector({
           limit: 100,
           eligible,
           role,
-          mode,
+          environment,
         });
         if (!cancelled) setRuntimes(result.runtimes);
       } catch (e) {
@@ -53,7 +53,7 @@ export default function RuntimeSelector({
     }
     void load();
     return () => { cancelled = true; };
-  }, [eligible, mode, role]);
+  }, [eligible, environment, role]);
 
   const options = useMemo(() => runtimeSelectionOptions(runtimes), [runtimes]);
   const routeable = useMemo(() => options.filter((o) => o.routeable), [options]);
@@ -92,7 +92,7 @@ export default function RuntimeSelector({
             onChange(next, opt?.item);
           }}
           loadPage={async (offset, limit, query) => {
-            const result = await listRuntimes({ limit, offset, eligible, role, mode });
+            const result = await listRuntimes({ limit, offset, eligible, role, environment });
             const items = runtimeSelectionOptions(result.runtimes)
               .filter((opt) => !query || opt.label.toLowerCase().includes(query.toLowerCase()) || opt.runtime_id.includes(query))
               .filter((opt) => opt.routeable)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listAccounts, type Account } from "@/api/client";
-import { accountModeLabel } from "@/utils/accountMode";
+import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 
 export default function AccountList() {
   const [rows, setRows] = useState<Account[] | null>(null);
@@ -45,7 +45,7 @@ export default function AccountList() {
               <tr>
                 <th>Name</th>
                 <th>ID</th>
-                <th>Mode</th>
+                <th>Environment</th>
                 <th>Description</th>
               </tr>
             </thead>
@@ -58,7 +58,7 @@ export default function AccountList() {
                   <td className="muted" style={{ fontSize: "0.85rem" }}>
                     {a.account_id}
                   </td>
-                  <td>{accountModeLabel(a.mode)}</td>
+                  <td>{accountEnvironmentLabel(a.environment)}</td>
                   <td>{a.description?.trim() || "-"}</td>
                 </tr>
               ))}
