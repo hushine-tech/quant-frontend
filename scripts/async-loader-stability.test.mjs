@@ -7,6 +7,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const infiniteTable = readFileSync(join(here, "../src/components/InfiniteTable.tsx"), "utf8");
 const asyncSelect = readFileSync(join(here, "../src/components/AsyncSelect.tsx"), "utf8");
+const asyncSelectPagination = readFileSync(join(here, "../src/utils/asyncSelectPagination.ts"), "utf8");
 
 for (const [name, source] of Object.entries({ InfiniteTable: infiniteTable, AsyncSelect: asyncSelect })) {
   assert.equal(source.includes("const loadPageRef = useRef(loadPage)"), true, `${name} should keep loadPage in a ref`);
@@ -24,4 +25,20 @@ assert.equal(
   /\}, \[loadPage,\s*pageSize/.test(asyncSelect),
   false,
   "AsyncSelect load callback must not depend on loadPage identity",
+);
+
+assert.equal(
+  asyncSelectPagination.includes("const targetOffset = Math.max(0, offset)"),
+  true,
+  "AsyncSelect filtered pagination should treat offset as the filtered option offset",
+);
+assert.equal(
+  asyncSelectPagination.includes("let sourceOffset = 0"),
+  true,
+  "AsyncSelect filtered pagination should scan source pages from the start to avoid skipping matches",
+);
+assert.equal(
+  asyncSelectPagination.includes("matchedCount < targetOffset"),
+  true,
+  "AsyncSelect filtered pagination should skip already returned filtered matches, not raw source rows",
 );

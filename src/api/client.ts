@@ -120,32 +120,6 @@ export type CreateAccountPayload = {
   name: string;
   description?: string;
   environment?: number;
-  api_key?: string;
-  api_secret?: string;
-  initial_balance?: number;
-  spot?: {
-    free: number;
-    locked: number;
-    assets: Array<{
-      symbol: string;
-      qty: number;
-      locked?: number;
-      avg_entry_price?: number;
-      price?: number;
-    }>;
-  };
-  futures?: {
-    margin_mode: string;
-    position_mode: string;
-    initial_balance?: number;
-    positions: Array<{
-      symbol: string;
-      direction?: number;
-      initial_balance?: number;
-      leverage?: number;
-      fee_rate?: number;
-    }>;
-  };
 };
 
 export type Venue = {
@@ -243,6 +217,30 @@ export type CreateVenuePayload = {
   credential_info?: Record<string, unknown>;
   margin_mode?: "cross" | "isolated" | "none";
   position_mode?: "one_way" | "hedge" | "none";
+  initial_balance?: number;
+  spot?: {
+    free: number;
+    locked?: number;
+    assets?: Array<{
+      symbol: string;
+      qty: number;
+      locked?: number;
+      avg_entry_price: number;
+      price?: number;
+    }>;
+  };
+  futures?: {
+    margin_mode: "cross" | "isolated";
+    position_mode: "one_way" | "hedge";
+    initial_balance?: number;
+    positions?: Array<{
+      symbol: string;
+      direction: number;
+      initial_balance?: number;
+      leverage?: number;
+      fee_rate?: number;
+    }>;
+  };
 };
 
 function sameHostApiBase(): string {

@@ -23,6 +23,8 @@ const files = {
   asyncSelect: readFileSync(join(here, "../src/components/AsyncSelect.tsx"), "utf8"),
   orderTree: readFileSync(join(here, "../src/components/OrderTree.tsx"), "utf8"),
   api: readFileSync(join(here, "../src/api/client.ts"), "utf8"),
+  venueManagement: readFileSync(join(here, "../src/pages/VenueManagement.tsx"), "utf8"),
+  asyncSelectPagination: readFileSync(join(here, "../src/utils/asyncSelectPagination.ts"), "utf8"),
 };
 
 assert.equal(files.app.includes("UsersRound"), true, "Account nav should use a multi-user icon");
@@ -41,7 +43,17 @@ assert.deepEqual([...navOrder].sort((a, b) => a - b), navOrder, "Primary nav sho
 
 assert.equal(files.api.includes("description?: string"), true, "Account API type should expose optional description");
 assert.equal(files.accountNew.includes("Description"), true, "Create Account should include a description field");
-assert.equal(files.accountList.includes("modeLabel"), true, "Account list should render readable mode labels");
+assert.equal(files.accountNew.includes("Initial venue"), true, "Create Account should model backtest/demo/live as an initial venue decision");
+for (const token of [
+  "Spot wallet",
+  "Futures wallet",
+  "body.spot",
+  "body.futures",
+  "Account stores the environment",
+]) {
+  assert.equal(files.accountNew.includes(token), false, `Create Account must not configure account-level wallet or venue semantics: ${token}`);
+}
+assert.equal(files.accountList.includes("accountEnvironmentLabel"), true, "Account list should render readable environment labels");
 assert.equal(files.accountList.includes('"Description"'), true, "Account list should show Description column");
 assert.equal(files.accountList.includes("<th>Action</th>"), false, "Account list should not show an Action column");
 assert.equal(files.accountList.includes(">View</Link>"), false, "Account list should not use a separate View link");
@@ -74,15 +86,26 @@ assert.equal(files.orderTree.includes("session_id?: string"), true, "Order tree 
 assert.equal(files.orderTree.includes("/accounts/${intent.account_id}/sessions/${intent.session_id}"), true, "Order rows should link to source session");
 
 for (const token of [
-  'type AccountDetailTab = "portfolio" | "run" | "sessions"',
+  'type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues"',
   "Portfolio",
   "Run Strategy",
+  "Local Debug",
   "Sessions",
+  "Venues",
 ]) {
   assert.equal(files.accountDetail.includes(token), true, `Account detail should include ${token}`);
 }
 assert.equal(files.accountDetail.includes("SessionPanel accountId"), true, "Account detail should keep session inspection as a tab panel");
 assert.equal(files.accountDetail.includes("View reconciliation"), false, "Account detail should not keep the old reconciliation shortcut panel");
+assert.equal(files.venueManagement.includes("credential_info: requiresCredentials ?"), false, "Venue create payload must not send empty credential_info for backtest venues");
+assert.equal(files.venueManagement.includes("api_key: requiresCredentials ?"), false, "Venue create payload must not send empty api_key for backtest venues");
+assert.equal(files.venueManagement.includes('environment === "backtest" && !accountID'), false, "Venue create form must allow unbound backtest venues");
+assert.equal(files.venueManagement.includes('placeholder="Leave unbound"'), true, "Venue create form should present venue binding as optional");
+assert.equal(files.venueManagement.includes("applyBacktestWalletPayload"), true, "Venue create form must attach backtest wallet bootstrap to venue payload");
+assert.equal(files.venueManagement.includes("Spot wallet"), true, "Venue create form must expose backtest spot wallet bootstrap");
+assert.equal(files.venueManagement.includes("Futures wallet"), true, "Venue create form must expose backtest futures wallet bootstrap");
+assert.equal(files.venueManagement.includes("Synthetic"), true, "Venue management should label synthetic backtest keys");
+assert.equal(files.accountDetail.includes("Synthetic"), true, "Account detail should label synthetic backtest keys");
 
 for (const token of [
   'type SessionDetailTab = "snapshots" | "reconciliation" | "orders"',
@@ -99,6 +122,17 @@ for (const [name, content] of [
   ["Runtime Selector", files.runtimeSelector],
 ]) {
   assert.equal(content.includes("AsyncSelect"), true, `${name} should use async paged select controls for large option sets`);
+}
+assert.equal(files.asyncSelectPagination.includes("collectFilteredPage"), true, "AsyncSelect client-side filtering should use a cross-page pagination helper");
+for (const [name, content] of [
+  ["Create Account", files.accountNew],
+  ["Venue Management", files.venueManagement],
+  ["Account Detail", files.accountDetail],
+  ["Session Management", files.sessionManagement],
+  ["Order History", files.orderHistory],
+  ["Runtime Selector", files.runtimeSelector],
+]) {
+  assert.equal(content.includes("collectFilteredPage"), true, `${name} should not filter only the current backend page in AsyncSelect loaders`);
 }
 
 for (const [name, content] of [

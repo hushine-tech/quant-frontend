@@ -18,9 +18,13 @@ import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import InfiniteTable from "@/components/InfiniteTable";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import SymbolPicker from "@/components/SymbolPicker";
+import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { formatUTCWithLocal } from "@/utils/time";
 
 type VenueTab = "venues" | "create";
+type SpotRow = { symbol: string; qty: string; price: string; avg: string };
+type FutRow = { symbol: string; direction: string; initial_balance: string; leverage: string; fee_rate: string };
 
 const tabs: Array<PageTab<VenueTab>> = [
   { id: "venues", label: "Venues" },
@@ -39,6 +43,16 @@ function maskAPIKey(value?: string): string {
   if (!value) return "-";
   if (value.length <= 8) return value;
   return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function isSyntheticBacktestKey(value?: string): boolean {
+  return /^sim_btv_[0-9a-f]{32}$/.test(value || "");
+}
+
+function venueKeyLabel(value?: string): string {
+  if (!value) return "-";
+  const masked = maskAPIKey(value);
+  return isSyntheticBacktestKey(value) ? `Synthetic ${masked}` : masked;
 }
 
 function accountEnvLabel(value?: number): string {
@@ -219,7 +233,7 @@ export default function VenueManagement() {
             </div>
             <div>
               <p className="muted" style={{ marginBottom: "0.25rem" }}>Credential</p>
-              <p style={{ margin: 0 }}><code>{maskAPIKey(viewTargetVenue.api_key)}</code></p>
+              <p style={{ margin: 0 }}><code>{venueKeyLabel(viewTargetVenue.api_key)}</code></p>
             </div>
             <div>
               <p className="muted" style={{ marginBottom: "0.25rem" }}>Modes</p>
@@ -297,20 +311,22 @@ export default function VenueManagement() {
               placeholder="Select target account"
               onChange={setBindAccountID}
               loadPage={async (offset, limit, query) => {
-                const page = await listAccountsPage({ offset, limit });
                 const normalizedQuery = query.trim().toLowerCase();
-                const items = page.items
-                  .filter((account) => accountEnvCode(account) === bindTargetVenue.environment)
-                  .filter((account) => !normalizedQuery
+                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                  offset,
+                  limit,
+                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (account) => accountEnvCode(account) === bindTargetVenue.environment
+                    && (!normalizedQuery
                     || account.name.toLowerCase().includes(normalizedQuery)
-                    || String(account.account_id).includes(normalizedQuery))
-                  .map<AsyncSelectOption<Account>>((account) => ({
+                    || String(account.account_id).includes(normalizedQuery)),
+                  map: (account) => ({
                     value: String(account.account_id),
                     label: account.name || String(account.account_id),
                     detail: `#${account.account_id} · ${accountEnvLabel(accountEnvCode(account))}`,
                     item: account,
-                  }));
-                return { ...page, items };
+                  }),
+                });
               }}
               searchPlaceholder="Search account name or ID"
               allowClear={false}
@@ -369,7 +385,7 @@ export default function VenueManagement() {
                     {label(venue.status_label, venue.status)}
                   </span>
                 </td>
-                <td><code>{maskAPIKey(venue.api_key)}</code></td>
+                <td><code>{venueKeyLabel(venue.api_key)}</code></td>
                 <td>{venue.created_at ? formatUTCWithLocal(venue.created_at) : "-"}</td>
                 <td>
                   <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -435,9 +451,77 @@ function CreateVenueForm({
   const [positionMode, setPositionMode] = useState<NonNullable<CreateVenuePayload["position_mode"]>>("one_way");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [spotFree, setSpotFree] = useState("0");
+  const [spotRows, setSpotRows] = useState<SpotRow[]>([]);
+  const [showSpotAdd, setShowSpotAdd] = useState(false);
+  const [futInitial, setFutInitial] = useState("0");
+  const [futRows, setFutRows] = useState<FutRow[]>([]);
+  const [showFutAdd, setShowFutAdd] = useState(false);
 
   const isSpot = market === "spot";
   const requiresCredentials = environment !== "backtest";
+  const isBacktest = environment === "backtest";
+
+  function addSpot(sym: string) {
+    const u = sym.toUpperCase();
+    if (spotRows.some((r) => r.symbol === u)) return;
+    setSpotRows((r) => [...r, { symbol: u, qty: "0", price: "", avg: "0" }]);
+    setShowSpotAdd(false);
+  }
+
+  function addFut(sym: string) {
+    const u = sym.toUpperCase();
+    if (futRows.some((r) => r.symbol === u)) return;
+    setFutRows((r) => [...r, { symbol: u, direction: "0", initial_balance: "1000", leverage: "10", fee_rate: "0.0004" }]);
+    setShowFutAdd(false);
+  }
+
+  function updateSpotRow(sym: string, field: keyof SpotRow, val: string) {
+    setSpotRows((rows) => rows.map((x) => (x.symbol === sym ? { ...x, [field]: val } : x)));
+  }
+
+  function updateFutRow(sym: string, field: keyof FutRow, val: string) {
+    setFutRows((rows) => rows.map((x) => (x.symbol === sym ? { ...x, [field]: val } : x)));
+  }
+
+  function applyBacktestWalletPayload(payload: CreateVenuePayload) {
+    if (!isBacktest) return;
+    if (isSpot) {
+      payload.spot = {
+        free: parseFloat(spotFree) || 0,
+        locked: 0,
+        assets: spotRows.map((r) => {
+          const asset: { symbol: string; qty: number; locked: number; avg_entry_price: number; price?: number } = {
+            symbol: r.symbol,
+            qty: parseFloat(r.qty) || 0,
+            locked: 0,
+            avg_entry_price: parseFloat(r.avg) || 0,
+          };
+          if (r.price.trim() !== "") {
+            const p = parseFloat(r.price);
+            if (!Number.isNaN(p)) asset.price = p;
+          }
+          return asset;
+        }),
+      };
+      return;
+    }
+    payload.futures = {
+      margin_mode: marginMode === "isolated" ? "isolated" : "cross",
+      position_mode: positionMode === "hedge" ? "hedge" : "one_way",
+      initial_balance: marginMode === "cross" ? (parseFloat(futInitial) || 0) : 0,
+      positions: futRows.map((r) => {
+        const dir = parseInt(r.direction, 10);
+        return {
+          symbol: r.symbol,
+          direction: Number.isFinite(dir) ? dir : 0,
+          initial_balance: marginMode === "isolated" ? (parseFloat(r.initial_balance) || 0) : undefined,
+          leverage: parseFloat(r.leverage) || 10,
+          fee_rate: parseFloat(r.fee_rate) || 0.0004,
+        };
+      }),
+    };
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -445,18 +529,22 @@ function CreateVenueForm({
     setSubmitting(true);
     setError(null);
     try {
-      await createVenue({
+      const payload: CreateVenuePayload = {
         account_id: accountID ? Number(accountID) : undefined,
         exchange,
         market,
         environment,
         display_name: displayName.trim() || `${exchange}-${environment}-${market}`,
         description: description.trim(),
-        api_key: requiresCredentials ? apiKey.trim() : "",
-        credential_info: requiresCredentials ? { api_key: apiKey.trim(), api_secret: apiSecret.trim() } : {},
         margin_mode: isSpot ? "none" : marginMode,
         position_mode: isSpot ? "none" : positionMode,
-      });
+      };
+      if (requiresCredentials) {
+        payload.api_key = apiKey.trim();
+        payload.credential_info = { api_key: apiKey.trim(), api_secret: apiSecret.trim() };
+      }
+      applyBacktestWalletPayload(payload);
+      await createVenue(payload);
       onCreated();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Create venue failed");
@@ -480,21 +568,23 @@ function CreateVenueForm({
               placeholder="Leave unbound"
               onChange={setAccountID}
               loadPage={async (offset, limit, query) => {
-                const page = await listAccountsPage({ offset, limit });
                 const normalizedQuery = query.trim().toLowerCase();
                 const envCode = createEnvironmentCode(environment);
-                const items = page.items
-                  .filter((account) => accountEnvCode(account) === envCode)
-                  .filter((account) => !normalizedQuery
+                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                  offset,
+                  limit,
+                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (account) => accountEnvCode(account) === envCode
+                    && (!normalizedQuery
                     || account.name.toLowerCase().includes(normalizedQuery)
-                    || String(account.account_id).includes(normalizedQuery))
-                  .map<AsyncSelectOption<Account>>((account) => ({
+                    || String(account.account_id).includes(normalizedQuery)),
+                  map: (account) => ({
                     value: String(account.account_id),
                     label: account.name || String(account.account_id),
                     detail: `#${account.account_id} · ${accountEnvLabel(accountEnvCode(account))}`,
                     item: account,
-                  }));
-                return { ...page, items };
+                  }),
+                });
               }}
               searchPlaceholder="Search account name or ID"
             />
@@ -562,6 +652,85 @@ function CreateVenueForm({
               </select>
             </label>
           </div>
+        ) : null}
+        {isBacktest && isSpot ? (
+          <details className="wallet-details" open>
+            <summary>Spot wallet</summary>
+            <div className="wallet-details__body">
+              <label className="field">
+                <span>Free USDT</span>
+                <input type="number" step="0.0001" value={spotFree} onChange={(e) => setSpotFree(e.target.value)} />
+              </label>
+              <button type="button" onClick={() => setShowSpotAdd((v) => !v)}>
+                {showSpotAdd ? "Hide symbol search" : "Add spot asset"}
+              </button>
+              {showSpotAdd ? (
+                <SymbolPicker market="spot" label="Spot symbol" onAdd={addSpot} />
+              ) : null}
+              {spotRows.length > 0 ? (
+                <table className="compact">
+                  <thead>
+                    <tr><th>Symbol</th><th>Qty</th><th>Avg entry</th><th>Mark price</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {spotRows.map((r) => (
+                      <tr key={r.symbol}>
+                        <td><strong>{r.symbol}</strong></td>
+                        <td><input type="number" step="0.00000001" value={r.qty} onChange={(e) => updateSpotRow(r.symbol, "qty", e.target.value)} /></td>
+                        <td><input type="number" step="0.0001" value={r.avg} onChange={(e) => updateSpotRow(r.symbol, "avg", e.target.value)} /></td>
+                        <td><input type="number" step="0.0001" value={r.price} onChange={(e) => updateSpotRow(r.symbol, "price", e.target.value)} /></td>
+                        <td><button type="button" onClick={() => setSpotRows((rows) => rows.filter((x) => x.symbol !== r.symbol))}>Remove</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
+        {isBacktest && !isSpot ? (
+          <details className="wallet-details" open>
+            <summary>Futures wallet</summary>
+            <div className="wallet-details__body">
+              {marginMode === "cross" ? (
+                <label className="field">
+                  <span>Cross wallet balance</span>
+                  <input type="number" step="0.0001" value={futInitial} onChange={(e) => setFutInitial(e.target.value)} />
+                </label>
+              ) : null}
+              <button type="button" onClick={() => setShowFutAdd((v) => !v)}>
+                {showFutAdd ? "Hide symbol search" : "Add futures position"}
+              </button>
+              {showFutAdd ? (
+                <SymbolPicker market="usdm_futures" label="Futures symbol" onAdd={addFut} />
+              ) : null}
+              {futRows.length > 0 ? (
+                <table className="compact">
+                  <thead>
+                    <tr><th>Symbol</th><th>Direction</th><th>Initial balance</th><th>Leverage</th><th>Fee rate</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {futRows.map((r) => (
+                      <tr key={r.symbol}>
+                        <td><strong>{r.symbol}</strong></td>
+                        <td>
+                          <select value={r.direction} onChange={(e) => updateFutRow(r.symbol, "direction", e.target.value)}>
+                            <option value="0">Flat</option>
+                            <option value="1">Long</option>
+                            <option value="-1">Short</option>
+                          </select>
+                        </td>
+                        <td><input type="number" step="0.0001" value={r.initial_balance} disabled={marginMode === "cross"} onChange={(e) => updateFutRow(r.symbol, "initial_balance", e.target.value)} /></td>
+                        <td><input type="number" step="1" value={r.leverage} onChange={(e) => updateFutRow(r.symbol, "leverage", e.target.value)} /></td>
+                        <td><input type="number" step="0.0001" value={r.fee_rate} onChange={(e) => updateFutRow(r.symbol, "fee_rate", e.target.value)} /></td>
+                        <td><button type="button" onClick={() => setFutRows((rows) => rows.filter((x) => x.symbol !== r.symbol))}>Remove</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : null}
+            </div>
+          </details>
         ) : null}
         {requiresCredentials ? (
           <div className="strategy-new-form__row-2">

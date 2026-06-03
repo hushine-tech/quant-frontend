@@ -52,6 +52,7 @@ import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import SymbolPicker from "@/components/SymbolPicker";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 
 function envBannerClass(environment: number): string {
   switch (environment) {
@@ -693,10 +694,14 @@ function venueRouteLabel(labelValue?: string, code?: number): string {
   return labelValue || (code == null ? "-" : String(code));
 }
 
+function isSyntheticBacktestKey(value?: string): boolean {
+  return /^sim_btv_[0-9a-f]{32}$/.test(value || "");
+}
+
 function venueAPIKeyLabel(value?: string): string {
   if (!value) return "-";
-  if (value.length <= 8) return value;
-  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+  const masked = value.length <= 8 ? value : `${value.slice(0, 4)}…${value.slice(-4)}`;
+  return isSyntheticBacktestKey(value) ? `Synthetic ${masked}` : masked;
 }
 
 function AccountVenuesPanel({
@@ -798,21 +803,23 @@ function AccountVenuesPanel({
               setSelectedVenue(option?.item ?? null);
             }}
             loadPage={async (offset, limit, query) => {
-              const page = await listVenues({ offset, limit, include_unbound: true });
               const normalizedQuery = query.trim().toLowerCase();
-              const items = page.items
-                .filter((venue) => venue.environment === environment)
-                .filter((venue) => !normalizedQuery
+              return collectFilteredPage<Venue, AsyncSelectOption<Venue>>({
+                offset,
+                limit,
+                loadSourcePage: (sourceOffset, sourceLimit) => listVenues({ offset: sourceOffset, limit: sourceLimit, include_unbound: true }),
+                matches: (venue) => venue.environment === environment
+                  && (!normalizedQuery
                   || (venue.display_name || "").toLowerCase().includes(normalizedQuery)
                   || String(venue.venue_id).includes(normalizedQuery)
-                  || (venue.api_key || "").toLowerCase().includes(normalizedQuery))
-                .map<AsyncSelectOption<Venue>>((venue) => ({
+                  || (venue.api_key || "").toLowerCase().includes(normalizedQuery)),
+                map: (venue) => ({
                   value: String(venue.venue_id),
                   label: venue.display_name || `venue-${venue.venue_id}`,
                   detail: `${venue.exchange_label || venue.exchange} · ${venue.market_label || venue.market} · ${venue.account_id ? `account ${venue.account_id}` : "unbound"}`,
                   item: venue,
-                }));
-              return { ...page, items };
+                }),
+              });
             }}
             searchPlaceholder="Search venue name, ID, or API key"
             allowClear
@@ -1837,18 +1844,18 @@ function StrategyPanel({
               placeholder="Mount a strategy"
               onChange={(value) => setSelectedMountId(value === "" ? "" : Number(value))}
               loadPage={async (offset, limit, query) => {
-                const page = await listStrategiesPage({ offset, limit, namePrefix: query || undefined, activeOnly: true });
-                return {
-                  ...page,
-                  items: page.items
-                    .filter((s) => !mountedIds.has(s.strategy_id))
-                    .map<AsyncSelectOption<Strategy>>((s) => ({
-                      value: String(s.strategy_id),
-                      label: `${s.name} v${s.version}`,
-                      detail: `#${s.strategy_id}`,
-                      item: s,
-                    })),
-                };
+                return collectFilteredPage<Strategy, AsyncSelectOption<Strategy>>({
+                  offset,
+                  limit,
+                  loadSourcePage: (sourceOffset, sourceLimit) => listStrategiesPage({ offset: sourceOffset, limit: sourceLimit, namePrefix: query || undefined, activeOnly: true }),
+                  matches: (s) => !mountedIds.has(s.strategy_id),
+                  map: (s) => ({
+                    value: String(s.strategy_id),
+                    label: `${s.name} v${s.version}`,
+                    detail: `#${s.strategy_id}`,
+                    item: s,
+                  }),
+                });
               }}
             />
             <button onClick={handleMount} disabled={!selectedMountId}>Mount</button>

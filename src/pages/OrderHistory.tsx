@@ -14,6 +14,7 @@ import PageHeader from "@/components/PageHeader";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
 import OrderTree from "@/components/OrderTree";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
+import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 
 // Order-history flat queries return ``{ items, total }``; OrderTree's fetchers
 // expect the canonical Page<T> shape ``{ items, has_more, next_offset, total }``.
@@ -90,17 +91,18 @@ export default function OrderHistory() {
               placeholder="All accounts"
               onChange={setAccountId}
               loadPage={async (offset, limit, query) => {
-                const page = await listAccountsPage({ offset, limit });
-                return {
-                  ...page,
-                  items: page.items
-                    .filter((a) => !query || a.name.toLowerCase().includes(query.toLowerCase()) || String(a.account_id).includes(query))
-                    .map<AsyncSelectOption<Account>>((a) => ({
-                      value: String(a.account_id),
-                      label: `${a.account_id} (${a.name})`,
-                      item: a,
-                    })),
-                };
+                const normalizedQuery = query.trim().toLowerCase();
+                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                  offset,
+                  limit,
+                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (a) => !normalizedQuery || a.name.toLowerCase().includes(normalizedQuery) || String(a.account_id).includes(normalizedQuery),
+                  map: (a) => ({
+                    value: String(a.account_id),
+                    label: `${a.account_id} (${a.name})`,
+                    item: a,
+                  }),
+                });
               }}
             />
           </FilterField>

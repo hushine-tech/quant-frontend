@@ -3,44 +3,44 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runtimeRoleForSessionMode } from "../src/api/client.ts";
+import { runtimeRoleForSessionEnvironment } from "../src/api/client.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const accountDetail = readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8");
 const sessionDetail = readFileSync(join(here, "../src/pages/SessionDetailPage.tsx"), "utf8");
 
 assert.equal(
-  runtimeRoleForSessionMode(0),
-  undefined,
-  "mode=0 backtest/debug sessions must allow executor and debugger runtimes",
-);
-
-assert.equal(
-  runtimeRoleForSessionMode(2),
+  runtimeRoleForSessionEnvironment(0),
   "executor",
-  "mode=2 testnet sessions must select executor runtimes",
+  "backtest environment should request executor runtimes through the unified route policy",
 );
 
 assert.equal(
-  runtimeRoleForSessionMode(undefined),
+  runtimeRoleForSessionEnvironment(1),
   "executor",
-  "unknown session mode should keep executor as the conservative default",
+  "demo environment should request executor runtimes",
 );
 
 assert.equal(
-  accountDetail.includes("role={runtimeRoleForSessionMode(pendingStart?.kind === \"testnet\" ? 2 : 0)}"),
-  true,
-  "Account detail start dialog must route testnet to executor while leaving backtest role-unfiltered",
+  runtimeRoleForSessionEnvironment(undefined),
+  "executor",
+  "unknown session environment should keep executor as the conservative default",
 );
 
 assert.equal(
-  accountDetail.includes("role={runtimeRoleForSessionMode(resumeDialogSession?.mode)}"),
+  accountDetail.includes("role={runtimeRoleForSessionEnvironment(pendingStart?.kind === \"demo\" ? 1 : 0)}"),
   true,
-  "Account detail resume dialog must route by session mode",
+  "Account detail start dialog must route by account environment",
 );
 
 assert.equal(
-  sessionDetail.includes("role={runtimeRoleForSessionMode(session?.mode)}"),
+  accountDetail.includes("role={runtimeRoleForSessionEnvironment(resumeDialogSession?.environment)}"),
   true,
-  "Session detail resume dialog must route by session mode",
+  "Account detail resume dialog must route by session environment",
+);
+
+assert.equal(
+  sessionDetail.includes("role={runtimeRoleForSessionEnvironment(session?.environment)}"),
+  true,
+  "Session detail resume dialog must route by session environment",
 );

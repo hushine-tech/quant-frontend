@@ -16,6 +16,7 @@ import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { formatUTCWithLocal } from "@/utils/time";
 
 function fmtTime(value?: string): string {
@@ -88,16 +89,19 @@ export default function SessionManagement() {
               placeholder="All accounts"
               onChange={setAccountFilter}
               loadPage={async (offset, limit, query) => {
-                const page = await listAccountsPage({ offset, limit });
-                const items = page.items
-                  .filter((a) => !query || a.name.toLowerCase().includes(query.toLowerCase()) || String(a.account_id).includes(query))
-                  .map<AsyncSelectOption<Account>>((a) => ({
+                const normalizedQuery = query.trim().toLowerCase();
+                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                  offset,
+                  limit,
+                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (a) => !normalizedQuery || a.name.toLowerCase().includes(normalizedQuery) || String(a.account_id).includes(normalizedQuery),
+                  map: (a) => ({
                     value: String(a.account_id),
                     label: a.name || String(a.account_id),
                     detail: `#${a.account_id}`,
                     item: a,
-                  }));
-                return { ...page, items };
+                  }),
+                });
               }}
             />
           </FilterField>
@@ -107,16 +111,22 @@ export default function SessionManagement() {
               placeholder="All runtimes"
               onChange={setRuntimeFilter}
               loadPage={async (offset, limit, query) => {
-                const result = await listRuntimes({ offset, limit });
-                const items = result.runtimes
-                  .filter((r) => !query || (r.name || r.runtime_id).toLowerCase().includes(query.toLowerCase()) || r.runtime_id.includes(query))
-                  .map<AsyncSelectOption<Runtime>>((r) => ({
+                const normalizedQuery = query.trim().toLowerCase();
+                return collectFilteredPage<Runtime, AsyncSelectOption<Runtime>>({
+                  offset,
+                  limit,
+                  loadSourcePage: async (sourceOffset, sourceLimit) => {
+                    const result = await listRuntimes({ offset: sourceOffset, limit: sourceLimit });
+                    return { items: result.runtimes, next_offset: sourceOffset + result.runtimes.length, has_more: result.has_more, total: result.total };
+                  },
+                  matches: (r) => !normalizedQuery || (r.name || r.runtime_id).toLowerCase().includes(normalizedQuery) || r.runtime_id.toLowerCase().includes(normalizedQuery),
+                  map: (r) => ({
                     value: r.runtime_id,
                     label: r.name || r.runtime_id,
                     detail: `${r.source || "runtime"} · ${r.role || "role n/a"} · ${r.status || "unknown"}`,
                     item: r,
-                  }));
-                return { items, next_offset: offset + result.runtimes.length, has_more: result.has_more, total: result.total };
+                  }),
+                });
               }}
             />
           </FilterField>
@@ -143,8 +153,8 @@ export default function SessionManagement() {
             <select value={environmentFilter} onChange={(e) => setEnvironmentFilter(e.target.value)}>
               <option value="">All environments</option>
               <option value="0">Backtest (0)</option>
-              <option value="1">Live (1)</option>
-              <option value="2">Demo (2)</option>
+              <option value="1">Demo (1)</option>
+              <option value="2">Live (2)</option>
             </select>
           </FilterField>
           <FilterField label="Status">

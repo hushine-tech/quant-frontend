@@ -6,6 +6,7 @@ import {
   type Runtime,
 } from "@/api/client";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
+import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 
 type RuntimeSelectorProps = {
   value: string;
@@ -92,17 +93,27 @@ export default function RuntimeSelector({
             onChange(next, opt?.item);
           }}
           loadPage={async (offset, limit, query) => {
-            const result = await listRuntimes({ limit, offset, eligible, role, environment });
-            const items = runtimeSelectionOptions(result.runtimes)
-              .filter((opt) => !query || opt.label.toLowerCase().includes(query.toLowerCase()) || opt.runtime_id.includes(query))
-              .filter((opt) => opt.routeable)
-              .map<AsyncSelectOption<Runtime>>((opt) => ({
+            const normalizedQuery = query.trim().toLowerCase();
+            return collectFilteredPage<ReturnType<typeof runtimeSelectionOptions>[number], AsyncSelectOption<Runtime>>({
+              offset,
+              limit,
+              loadSourcePage: async (sourceOffset, sourceLimit) => {
+                const result = await listRuntimes({ limit: sourceLimit, offset: sourceOffset, eligible, role, environment });
+                return {
+                  items: runtimeSelectionOptions(result.runtimes),
+                  next_offset: sourceOffset + result.runtimes.length,
+                  has_more: result.has_more,
+                  total: result.total,
+                };
+              },
+              matches: (opt) => opt.routeable && (!normalizedQuery || opt.label.toLowerCase().includes(normalizedQuery) || opt.runtime_id.toLowerCase().includes(normalizedQuery)),
+              map: (opt) => ({
                 value: opt.runtime_id,
                 label: opt.label,
                 detail: opt.detail,
                 item: opt.runtime,
-              }));
-            return { items, next_offset: offset + result.runtimes.length, has_more: result.has_more, total: result.total };
+              }),
+            });
           }}
         />
       </label>
