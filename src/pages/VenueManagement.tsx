@@ -259,7 +259,7 @@ export default function VenueManagement() {
               <div className="strategy-new-form__row-2" style={{ marginTop: "0.75rem" }}>
                 <div>
                   <p className="muted" style={{ marginBottom: "0.25rem" }}>Total value</p>
-                  <p style={{ margin: 0, fontWeight: 700 }}>{venueWallet.wallet.display?.total_value?.toFixed(4) ?? venueWallet.wallet.total_value.toFixed(4)} USDT</p>
+                  <p style={{ margin: 0, fontWeight: 700 }}>{venueWallet.wallet.display.total_value.toFixed(4)} USDT</p>
                 </div>
                 <div>
                   <p className="muted" style={{ marginBottom: "0.25rem" }}>Futures wallet</p>

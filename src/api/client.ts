@@ -12,38 +12,6 @@ export type AuthUser = {
   created_at: string;
 };
 
-/**
- * Shape of the `/api/accounts/:id/wallet` response.
- *
- * canonical-wallet-display-boundary: the backend exposes TWO clearly
- * separated views.
- *
- * 1. CANONICAL runtime fields — these feed trading / risk / reconciliation
- *    logic on the backend. The frontend should treat them as authoritative
- *    balances for the single-asset `USDT@-M` futures + USDT-mediated spot
- *    runtime.
- *
- *    - `environment`, `updated_at`
- *    - `wallet_balance`, `margin_balance`, `total_margin_balance`, `available_balance`
- *    - nested `spot` / `futures` sub-objects (full canonical detail)
- *
- * 2. DISPLAY values under `display.*` — provider-aligned UI explanations,
- *    most notably multi-asset USD sums that let users reconcile the
- *    platform view against the exchange's native wallet page. These must
- *    be rendered with a clear label so users understand they are display
- *    explanations, NOT the runtime balance.
- *
- *    - `display.total_value`
- *    - `display.spot_estimated_value`
- *    - `display.futures_position_equity`
- *    - `display.metrics_authoritative`
- *    - `display.futures_display_usd`
- *
- * Legacy flat display duplicates (`total_value`, `spot_estimated_value`,
- * ...) are still emitted for backward compatibility and will be removed
- * once all UI readers have moved to `display.*`.
- */
-
 export type WalletDisplay = {
   total_value: number;
   spot_estimated_value: number;
@@ -106,14 +74,7 @@ export type WalletSnapshot = {
       display_equity?: number;
     }>;
   } | null;
-  // ── namespaced display (UI-explanation layer; not runtime-authoritative) ──
-  display?: WalletDisplay;
-  // ── legacy flat display duplicates (deprecated — prefer display.*) ──
-  total_value: number;
-  spot_estimated_value: number;
-  futures_position_equity: number;
-  metrics_authoritative?: boolean;
-  futures_display_usd?: WalletDisplay["futures_display_usd"];
+  display: WalletDisplay;
 };
 
 export type CreateAccountPayload = {
@@ -487,26 +448,6 @@ export async function listSymbols(
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as { symbols: string[]; stale: boolean };
-}
-
-export async function getAccountWallet(id: number | string): Promise<WalletSnapshot> {
-  const t = getToken();
-  if (!t) throw new Error("Not logged in");
-  const res = await fetch(`${apiBase()}/api/accounts/${id}/wallet`, {
-    headers: { Authorization: `Bearer ${t}` },
-  });
-  if (!res.ok) throw new Error(await parseErr(res));
-  return (await res.json()) as WalletSnapshot;
-}
-
-export async function getAccountVenueWallets(id: number | string): Promise<AccountVenueWallets> {
-  const t = getToken();
-  if (!t) throw new Error("Not logged in");
-  const res = await fetch(`${apiBase()}/api/accounts/${id}/venue-wallets`, {
-    headers: { Authorization: `Bearer ${t}` },
-  });
-  if (!res.ok) throw new Error(await parseErr(res));
-  return (await res.json()) as AccountVenueWallets;
 }
 
 export async function getAccountPortfolioSnapshot(id: number | string): Promise<AccountVenueWallets> {
@@ -1268,7 +1209,6 @@ export type StopSessionAction =
 export type StopSessionResult = {
   stopped: boolean;
   stop_action?: string;
-  close_positions?: boolean;
   runtime_id?: string;
   status?: string;
   error?: string;

@@ -4,7 +4,6 @@ import { formatUTCWithLocal } from "@/utils/time";
 import {
   getAccount,
   getAccountPortfolioSnapshot,
-  getAccountWallet,
   runStrategy,
   bindVenue,
   getStrategyStatus,
@@ -171,15 +170,12 @@ export default function AccountDetail() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [acc, setAcc] = useState<Account | null>(null);
-  const [wallet, setWallet] = useState<WalletSnapshot | null>(null);
   const [venueWallets, setVenueWallets] = useState<AccountVenueWallets | null>(null);
   const [sessionRefreshTick, setSessionRefreshTick] = useState(0);
   const [venueMutationTick, setVenueMutationTick] = useState(0);
   const [err, setErr] = useState<string | null>(null);
-  const [wErr, setWErr] = useState<string | null>(null);
   const [venueWalletErr, setVenueWalletErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [wLoading, setWLoading] = useState(false);
   const [venueWalletLoading, setVenueWalletLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => normalizeAccountDetailTab(searchParams.get("tab")));
 
@@ -205,26 +201,9 @@ export default function AccountDetail() {
     if (!id || !acc) return;
     let cancelled = false;
     (async () => {
-      setWErr(null);
       setVenueWalletErr(null);
-      setWallet(null);
       setVenueWallets(null);
-      const accountEnvironment = acc.environment;
-      if (accountEnvironment === 0) {
-        setWLoading(true);
-        setVenueWalletLoading(false);
-        try {
-          const w = await getAccountWallet(id);
-          if (!cancelled) setWallet(w);
-        } catch (e) {
-          if (!cancelled) setWErr(e instanceof Error ? e.message : "Wallet load failed");
-        } finally {
-          if (!cancelled) setWLoading(false);
-        }
-        return;
-      }
       setVenueWalletLoading(true);
-      setWLoading(false);
       try {
         const summary = await getAccountPortfolioSnapshot(id);
         if (!cancelled) setVenueWallets(summary);
@@ -237,7 +216,8 @@ export default function AccountDetail() {
     return () => { cancelled = true; };
   }, [id, acc, venueMutationTick]);
 
-  const environment = acc?.environment ?? wallet?.environment ?? 0;
+  const portfolioWallet = walletFromPortfolioSnapshot(venueWallets);
+  const environment = acc?.environment ?? portfolioWallet?.environment ?? 0;
   function bumpSessionRefreshTick() {
     setSessionRefreshTick((v) => v + 1);
   }
@@ -283,266 +263,13 @@ export default function AccountDetail() {
           ariaLabel="Account detail sections"
         >
           {activeTab === "portfolio" ? (
-            environment !== 0 ? (
-              <>
-                {venueWalletLoading ? <p className="muted">Loading venue wallets...</p> : null}
-                {venueWalletErr ? <p className="error">{venueWalletErr}</p> : null}
-                {!venueWalletLoading && venueWallets ? (
-                  <AccountVenuePortfolio account={acc} summary={venueWallets} />
-                ) : null}
-              </>
-            ) : (
             <>
-            {wLoading ? <p className="muted">Loading wallet…</p> : null}
-            {wErr ? <p className="error">{wErr}</p> : null}
-            {!wLoading && wallet ? (
-              <>
-                {/*
-                  canonical-wallet-display-boundary: left panel shows the
-                  canonical runtime balances (authoritative trading values);
-                  right panel shows provider-aligned USD display values —
-                  those match the exchange's wallet page but are NOT the
-                  numbers the strategy/risk engine uses. The card header
-                  wording makes that distinction explicit.
-                */}
-                {(() => {
-                  // Prefer the namespaced `display.*` surface, fall back to
-                  // the deprecated flat fields for pre-cutover backends.
-                  const display = wallet.display ?? {
-                    total_value: wallet.total_value,
-                    spot_estimated_value: wallet.spot_estimated_value,
-                    futures_position_equity: wallet.futures_position_equity,
-                    metrics_authoritative: wallet.metrics_authoritative,
-                    futures_display_usd: wallet.futures_display_usd ?? null,
-                  };
-                  return (
-                <div className="card">
-                  <div className="portfolio-grid">
-                    <div className="portfolio-panel">
-                      <div className="portfolio-panel__title">
-                        Canonical runtime (USDT)
-                      </div>
-                      <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
-                        Authoritative balances used by strategy execution, risk checks and reconciliation.
-                      </p>
-                      <div>
-                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                          Total Value (USDT)
-                        </div>
-                        <div style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}>
-                          {display.total_value.toFixed(4)}
-                        </div>
-                      </div>
-                      <div className="portfolio-metric">
-                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                          Spot (est.)
-                        </div>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                          {display.spot_estimated_value.toFixed(4)}
-                        </div>
-                      </div>
-                      <div className="portfolio-metric">
-                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                          Futures Margin Balance (USDT)
-                        </div>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                          {wallet.margin_balance.toFixed(4)}
-                        </div>
-                      </div>
-                      <div className="portfolio-metric">
-                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                          Unrealized PnL (USDT)
-                        </div>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                          {wallet.futures?.total_unrealized_pnl.toFixed(4) ?? "0.0000"}
-                        </div>
-                      </div>
-                      <div className="portfolio-metric">
-                        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                          Wallet Balance (USDT)
-                        </div>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                          {wallet.futures?.wallet_balance.toFixed(4) ?? wallet.wallet_balance.toFixed(4)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {display.futures_display_usd ? (
-                      <div className="portfolio-panel portfolio-panel--secondary">
-                        <div className="portfolio-panel__title">
-                          Exchange-aligned display (USD)
-                        </div>
-                        <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
-                          Matches the exchange wallet page. Display-only — not used for risk or order sizing.
-                        </p>
-                        <div>
-                          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                            Futures Margin Balance (USD)
-                          </div>
-                          <div style={{ fontSize: "1.2rem", fontWeight: 700, lineHeight: 1.2 }}>
-                            {display.futures_display_usd.margin_balance.toFixed(4)}
-                          </div>
-                        </div>
-                        <div className="portfolio-metric">
-                          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                            Unrealized PnL (USD)
-                          </div>
-                          <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                            {display.futures_display_usd.unrealized_pnl.toFixed(4)}
-                          </div>
-                        </div>
-                        <div className="portfolio-metric">
-                          <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                            Wallet Balance (USD)
-                          </div>
-                          <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                            {display.futures_display_usd.wallet_balance.toFixed(4)}
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                  {display.metrics_authoritative === false ? (
-                    <p className="error" role="status">
-                      Display estimates may not reconcile to canonical total value; expand sections for raw balances.
-                    </p>
-                  ) : null}
-                  <p className="muted">Updated: {formatUTCWithLocal(wallet.updated_at)}</p>
-                </div>
-                  );
-                })()}
-
-                <details className="wallet-details">
-                  <summary>
-                    Spot details<span className="muted"> — click to expand</span>
-                  </summary>
-                  <div className="wallet-details__body">
-                    {wallet.spot ? (
-                      <>
-                        <ul className="wallet-stats">
-                          <li className="wallet-stats__item">
-                            <span className="wallet-stats__label">Free (USDT)</span>
-                            <span className="wallet-stats__value">
-                              {wallet.spot.free.toFixed(2)}
-                            </span>
-                          </li>
-                          <li className="wallet-stats__item">
-                            <span className="wallet-stats__label">Locked (USDT)</span>
-                            <span className="wallet-stats__value">
-                              {wallet.spot.locked.toFixed(2)}
-                            </span>
-                          </li>
-                        </ul>
-                        {(wallet.spot.assets ?? []).length === 0 ? (
-                          <p className="muted">No spot assets.</p>
-                        ) : (
-                          <table className="compact">
-                            <thead>
-                              <tr>
-                                <th>Symbol</th><th>Qty</th><th>Locked</th><th>Avg entry</th><th>Mark</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(wallet.spot.assets ?? []).map((a) => (
-                                <tr key={a.symbol}>
-                                  <td>{a.symbol}</td>
-                                  <td>{a.qty}</td>
-                                  <td>{a.locked}</td>
-                                  <td>{a.avg_entry_price}</td>
-                                  <td>{a.price ?? "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </>
-                    ) : <p className="muted">No spot wallet on snapshot.</p>}
-                  </div>
-                </details>
-
-                <details className="wallet-details">
-                  <summary>
-                    Futures details<span className="muted"> — click to expand</span>
-                  </summary>
-                  <div className="wallet-details__body">
-                    {wallet.futures ? (
-                      <>
-                        <ul className="wallet-stats">
-                          {wallet.futures.margin_mode ? (
-                            <li className="wallet-stats__item">
-                              <span className="wallet-stats__label">Margin mode</span>
-                              <span className="wallet-stats__value wallet-stats__value--muted">
-                                {wallet.futures.margin_mode}
-                              </span>
-                            </li>
-                          ) : null}
-                          {wallet.futures.position_mode ? (
-                            <li className="wallet-stats__item">
-                              <span className="wallet-stats__label">Position mode</span>
-                              <span className="wallet-stats__value wallet-stats__value--muted">
-                                {wallet.futures.position_mode.replace(/_/g, " ")}
-                              </span>
-                            </li>
-                          ) : null}
-                          <li className="wallet-stats__item">
-                            <span className="wallet-stats__label">Wallet balance</span>
-                            <span className="wallet-stats__value">
-                              {wallet.futures.wallet_balance.toFixed(2)}
-                            </span>
-                          </li>
-                          <li className="wallet-stats__item">
-                            <span className="wallet-stats__label">Margin balance</span>
-                            <span className="wallet-stats__value">
-                              {wallet.futures.margin_balance.toFixed(2)}
-                            </span>
-                          </li>
-                          <li className="wallet-stats__item">
-                            <span className="wallet-stats__label">Available</span>
-                            <span className="wallet-stats__value">
-                              {wallet.futures.available_balance.toFixed(2)}
-                            </span>
-                          </li>
-                          <li className="wallet-stats__item">
-                            <span className="wallet-stats__label">Unrealized PnL</span>
-                            <span className="wallet-stats__value">
-                              {wallet.futures.total_unrealized_pnl.toFixed(2)}
-                            </span>
-                          </li>
-                        </ul>
-                        {(wallet.futures.positions ?? []).length === 0 ? (
-                          <p className="muted">No open positions.</p>
-                        ) : (
-                          <table className="compact">
-                            <thead>
-                              <tr>
-                                <th>Symbol</th><th>Qty</th><th>Lev.</th><th>Entry</th><th>Mark</th>
-                                <th>uPnL</th><th>Side</th><th>Row est.</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(wallet.futures.positions ?? []).map((p, idx) => (
-                                <tr key={`${idx}-${p.symbol}-${p.position_side || "both"}`}>
-                                  <td>{p.symbol}</td>
-                                  <td>{p.qty}</td>
-                                  <td>{p.leverage ? `${p.leverage}x` : "—"}</td>
-                                  <td>{p.entry_price.toFixed(2)}</td>
-                                  <td>{p.mark_price.toFixed(2)}</td>
-                                  <td>{p.unrealized_pnl.toFixed(2)}</td>
-                                  <td>{p.position_side || "—"}</td>
-                                  <td>{p.display_equity != null ? p.display_equity.toFixed(2) : "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </>
-                    ) : <p className="muted">No futures wallet on snapshot.</p>}
-                  </div>
-                </details>
-              </>
-            ) : null}
+              {venueWalletLoading ? <p className="muted">Loading venue wallets...</p> : null}
+              {venueWalletErr ? <p className="error">{venueWalletErr}</p> : null}
+              {!venueWalletLoading && venueWallets ? (
+                <AccountVenuePortfolio account={acc} summary={venueWallets} />
+              ) : null}
             </>
-            )
           ) : null}
 
           {activeTab === "run" ? (
@@ -550,7 +277,7 @@ export default function AccountDetail() {
           ) : null}
 
           {activeTab === "debug" ? (
-            <LocalDebugPackagePanel account={acc} wallet={wallet} />
+            <LocalDebugPackagePanel account={acc} wallet={portfolioWallet} />
           ) : null}
 
           {activeTab === "sessions" ? (
@@ -567,8 +294,12 @@ export default function AccountDetail() {
   );
 }
 
+function walletFromPortfolioSnapshot(summary: AccountVenueWallets | null): WalletSnapshot | null {
+  return summary?.wallet ?? summary?.items.find((item) => item.wallet)?.wallet ?? null;
+}
+
 function walletDisplayTotal(wallet: WalletSnapshot): number {
-  return wallet.display?.total_value ?? wallet.total_value ?? 0;
+  return wallet.display?.total_value ?? 0;
 }
 
 function formatUSDT(value: number | null | undefined): string {

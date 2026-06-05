@@ -47,7 +47,7 @@ function dateOnly(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function mergeDateAndTime(date: Date, timeSource: Date | null, _fallback: "start" | "end"): Date {
+function mergeDateAndTime(date: Date, timeSource: Date | null): Date {
   const merged = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   if (timeSource) {
     merged.setHours(timeSource.getHours(), timeSource.getMinutes(), timeSource.getSeconds(), 0);
@@ -63,19 +63,19 @@ function formatDisplay(value: string): string {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
 }
 
-function timeValue(value: string, fallback: "start" | "end"): string {
+function timeValue(value: string): string {
   const date = parseLocalDateTime(value);
   if (date) return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
-  return fallback === "end" ? "00:00:00" : "00:00:00";
+  return "00:00:00";
 }
 
-function applyTime(value: string, rawTime: string, fallback: "start" | "end"): string {
+function applyTime(value: string, rawTime: string): string {
   const base = parseLocalDateTime(value) ?? new Date();
   const parts = rawTime.split(":").map((part) => Number(part));
   const hours = Number.isFinite(parts[0]) ? parts[0] : 0;
   const minutes = Number.isFinite(parts[1]) ? parts[1] : 0;
   const seconds = Number.isFinite(parts[2]) ? parts[2] : 0;
-  const next = mergeDateAndTime(base, null, fallback);
+  const next = mergeDateAndTime(base, null);
   next.setHours(hours, minutes, seconds, 0);
   return toLocalDateTimeValue(next);
 }
@@ -185,22 +185,22 @@ export default function DateTimeRangePicker({
 
   function pickDate(date: Date) {
     if (!startDate || (startDate && endDate)) {
-      onStartChange(toLocalDateTimeValue(mergeDateAndTime(date, startDate, "start")));
+      onStartChange(toLocalDateTimeValue(mergeDateAndTime(date, startDate)));
       onEndChange("");
       return;
     }
     const pickedStart = dateOnly(startDate).getTime();
     const pickedEnd = dateOnly(date).getTime();
     if (pickedEnd < pickedStart) {
-      onStartChange(toLocalDateTimeValue(mergeDateAndTime(date, startDate, "start")));
-      onEndChange(toLocalDateTimeValue(mergeDateAndTime(startDate, endDate, "end")));
+      onStartChange(toLocalDateTimeValue(mergeDateAndTime(date, startDate)));
+      onEndChange(toLocalDateTimeValue(mergeDateAndTime(startDate, endDate)));
       return;
     }
     if (pickedEnd === pickedStart) {
-      onEndChange(toLocalDateTimeValue(mergeDateAndTime(addDays(dateOnly(date), 1), null, "end")));
+      onEndChange(toLocalDateTimeValue(mergeDateAndTime(addDays(dateOnly(date), 1), null)));
       return;
     }
-    onEndChange(toLocalDateTimeValue(mergeDateAndTime(date, endDate, "end")));
+    onEndChange(toLocalDateTimeValue(mergeDateAndTime(date, endDate)));
   }
 
   function cellClass(date: Date | null): string {
@@ -272,9 +272,9 @@ export default function DateTimeRangePicker({
               <input
                 type="time"
                 step={1}
-                value={timeValue(startValue, "start")}
+                value={timeValue(startValue)}
                 disabled={!startValue}
-                onChange={(e) => onStartChange(applyTime(startValue, e.target.value, "start"))}
+                onChange={(e) => onStartChange(applyTime(startValue, e.target.value))}
               />
             </label>
             <label>
@@ -282,9 +282,9 @@ export default function DateTimeRangePicker({
               <input
                 type="time"
                 step={1}
-                value={timeValue(endValue, "end")}
+                value={timeValue(endValue)}
                 disabled={!endValue}
-                onChange={(e) => onEndChange(applyTime(endValue, e.target.value, "end"))}
+                onChange={(e) => onEndChange(applyTime(endValue, e.target.value))}
               />
             </label>
             <button type="button" onClick={() => { onStartChange(""); onEndChange(""); }}>Clear</button>
