@@ -40,6 +40,7 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [environment, setEnvironment] = useState(0);
+  const [backtestInitialBalance, setBacktestInitialBalance] = useState("10000");
   const [venueAttachPolicy, setVenueAttachPolicy] = useState<VenueAttachPolicy>("none");
   const [selectedVenueID, setSelectedVenueID] = useState("");
   const [venueExchange, setVenueExchange] = useState<CreateVenuePayload["exchange"]>("binance");
@@ -56,7 +57,7 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
 
   const venueEnv = venueEnvironmentFromCode(environment);
   const isVenueSpot = venueMarket === "spot";
-  const canAttachVenue = environment !== 0;
+  const canAttachExchangeVenue = environment !== 0;
 
   function handleEnvironmentChange(value: number) {
     setEnvironment(value);
@@ -77,7 +78,7 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
 
   function initialVenueSummary(): string {
     if (environment === 0) {
-      return "Create simulated Binance perpetual_futures venue";
+      return `Create simulated Binance perpetual_futures venue with ${backtestInitialBalance || "0"} USDT`;
     }
     if (venueAttachPolicy === "create") {
       return `Create and bind ${venueExchange} ${venueEnv} ${venueMarket}`;
@@ -90,11 +91,16 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
 
   async function doCreate() {
     setErr(null);
-    if (canAttachVenue && venueAttachPolicy === "create" && (!venueAPIKey.trim() || !venueAPISecret.trim())) {
+    const parsedBacktestInitialBalance = parseFloat(backtestInitialBalance);
+    if (environment === 0 && (!Number.isFinite(parsedBacktestInitialBalance) || parsedBacktestInitialBalance <= 0)) {
+      setErr("Backtest initial USDT must be greater than 0.");
+      return;
+    }
+    if (canAttachExchangeVenue && venueAttachPolicy === "create" && (!venueAPIKey.trim() || !venueAPISecret.trim())) {
       setErr("API key and secret are required to create a demo/live venue.");
       return;
     }
-    if (canAttachVenue && venueAttachPolicy === "bind" && !selectedVenueID) {
+    if (canAttachExchangeVenue && venueAttachPolicy === "bind" && !selectedVenueID) {
       setErr("Select a venue to bind, or choose Create account only.");
       return;
     }
@@ -103,7 +109,25 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
     try {
       const acc = await createAccount(buildPayload());
       try {
-        if (canAttachVenue && venueAttachPolicy === "create") {
+        if (environment === 0) {
+          await createVenue({
+            account_id: acc.account_id,
+            exchange: "binance",
+            market: "perpetual_futures",
+            environment: "backtest",
+            display_name: `${name.trim()} binance backtest perpetual_futures`,
+            description: "Backtest wallet venue",
+            margin_mode: "cross",
+            position_mode: "one_way",
+            futures: {
+              margin_mode: "cross",
+              position_mode: "one_way",
+              initial_balance: parsedBacktestInitialBalance,
+              positions: [],
+            },
+          });
+        }
+        if (canAttachExchangeVenue && venueAttachPolicy === "create") {
           await createVenue({
             account_id: acc.account_id,
             exchange: venueExchange,
@@ -117,7 +141,7 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
             position_mode: isVenueSpot ? "none" : venuePositionMode,
           });
         }
-        if (canAttachVenue && venueAttachPolicy === "bind") {
+        if (canAttachExchangeVenue && venueAttachPolicy === "bind") {
           await bindVenue(selectedVenueID, acc.account_id, `bound during account ${acc.account_id} creation`);
         }
       } catch (venueErr) {
@@ -191,7 +215,19 @@ export default function AccountNew({ embedded = false, onCreated }: AccountNewPr
           </select>
 
           {environment === 0 ? (
-            <p className="muted">Backtest uses the simulated Binance perpetual futures venue created by core-service.</p>
+            <>
+              <p className="muted">Backtest creates a simulated Binance perpetual futures venue and wallet.</p>
+              <label htmlFor="backtest-initial-balance">Initial USDT</label>
+              <input
+                id="backtest-initial-balance"
+                type="number"
+                min="0"
+                step="0.0001"
+                required
+                value={backtestInitialBalance}
+                onChange={(e) => setBacktestInitialBalance(e.target.value)}
+              />
+            </>
           ) : (
             <>
               <label htmlFor="venue-attach-policy">Venue binding</label>
