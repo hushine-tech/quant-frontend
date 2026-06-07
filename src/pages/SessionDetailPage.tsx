@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
+import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 import {
   getSession,
   getSessionAttempts,
@@ -11,6 +12,7 @@ import {
   getSessionOrders,
   getSessionReconciliation,
   getSessionReconciliationSummary,
+  getStrategy,
   listSessionDeliveryHealth,
   activateStrategy,
   deactivateStrategy,
@@ -30,6 +32,9 @@ import {
   type ReconciliationFieldDiff,
   type SessionDeliveryHealth,
   type OrderLifecycleEvent,
+  type Strategy,
+  type StrategyInputDeclaration,
+  type StrategyOrderTargetDeclaration,
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import OrderTree from "@/components/OrderTree";
@@ -105,6 +110,29 @@ const REASON_NAMES: Record<number, string> = {
 const PAGE_SIZE = 20;
 
 type SessionDetailTab = "snapshots" | "reconciliation" | "orders" | "lifecycle";
+
+type SessionPnLSummary = {
+  initialValue: number;
+  finalValue: number;
+  pnl: number;
+};
+
+type VenueReconciliationDiff = {
+  venue_id?: number;
+  exchange?: number | string;
+  environment?: number | string;
+  market?: number | string;
+  hard_pass?: boolean;
+  soft_pass?: boolean;
+  field_diffs?: ReconciliationFieldDiff[];
+  advisory_diffs?: ReconciliationFieldDiff[];
+};
+
+type ReconciliationRunCounts = {
+  hardFail: number;
+  softFail: number;
+  advisory: number;
+};
 
 const sessionDetailTabs: Array<PageTab<SessionDetailTab>> = [
   { id: "snapshots", label: "Snapshots" },
@@ -237,6 +265,183 @@ function sessionKindBadge(session: Session): React.ReactNode {
   );
 }
 
+function extractAssignmentList(code: string | undefined, name: string): string {
+  if (!code) return "";
+  const match = new RegExp(`\\b${name}\\s*=`).exec(code);
+  if (!match) return "";
+  const start = code.indexOf("[", match.index);
+  if (start < 0) return "";
+
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let i = start; i < code.length; i += 1) {
+    const ch = code[i];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "[") depth += 1;
+    if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) return code.slice(start + 1, i);
+    }
+  }
+  return "";
+}
+
+function splitPythonDicts(block: string): string[] {
+  const result: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let i = 0; i < block.length; i += 1) {
+    const ch = block[i];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i + 1;
+      depth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        result.push(block.slice(start, i));
+        start = -1;
+      }
+    }
+  }
+  return result;
+}
+
+function parsePythonValue(raw: string | undefined): string {
+  if (!raw) return "";
+  const trimmed = raw.trim().replace(/,$/, "");
+  const quoted = /^["'](.*)["']$/.exec(trimmed);
+  if (quoted) return quoted[1];
+  const enumValue = /(?:Exchange|Market)\.([A-Z0-9_]+)/.exec(trimmed);
+  if (enumValue) return enumValue[1].toLowerCase();
+  return trimmed;
+}
+
+function dictValue(dict: string, key: string): string {
+  const match = new RegExp(`["']${key}["']\\s*:\\s*([^,}\\n]+)`).exec(dict);
+  return parsePythonValue(match?.[1]);
+}
+
+function extractStrategyInputs(code: string | undefined): StrategyInputDeclaration[] {
+  return splitPythonDicts(extractAssignmentList(code, "INPUTS"))
+    .map((dict) => ({
+      exchange: dictValue(dict, "exchange") || "binance",
+      market: dictValue(dict, "market"),
+      kind: dictValue(dict, "kind") || "kline",
+      symbol: dictValue(dict, "symbol"),
+      interval: dictValue(dict, "interval"),
+    }))
+    .filter((input) => input.symbol && input.interval);
+}
+
+function extractStrategyOrderTargets(code: string | undefined): StrategyOrderTargetDeclaration[] {
+  return splitPythonDicts(extractAssignmentList(code, "ORDER_TARGETS"))
+    .map((dict) => ({
+      exchange: dictValue(dict, "exchange") || "binance",
+      market: dictValue(dict, "market"),
+      symbol: dictValue(dict, "symbol"),
+    }))
+    .filter((target) => target.symbol);
+}
+
+function formatInputRoute(input: StrategyInputDeclaration): string {
+  return `${input.symbol || "-"} ${input.interval || "-"}`;
+}
+
+function formatInputMeta(input: StrategyInputDeclaration): string {
+  const kind = input.kind || "kline";
+  return `${input.exchange || "-"} / ${input.market || "-"} / ${kind}`;
+}
+
+function formatOrderTarget(target: StrategyOrderTargetDeclaration): string {
+  return `${target.exchange || "-"} / ${target.market || "-"} / ${target.symbol || "-"}`;
+}
+
+function formatRangeEndpoint(ms?: number): string {
+  return ms ? formatUTCWithLocal(ms) : "-";
+}
+
+function parseVenueDiffs(raw: string): VenueReconciliationDiff[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is VenueReconciliationDiff => item !== null && typeof item === "object");
+  } catch {
+    return [];
+  }
+}
+
+const EXCHANGE_LABELS: Record<number, string> = {
+  1: "binance",
+  2: "okx",
+};
+
+const MARKET_LABELS: Record<number, string> = {
+  1: "spot",
+  2: "perpetual_futures",
+  3: "delivery_futures",
+};
+
+function enumLabel(labels: Record<number, string>, value: number | string | undefined, fallback: string): string {
+  if (value == null || value === "") return `${fallback}=?`;
+  if (typeof value === "string" && Number.isNaN(Number(value))) return value;
+  const numeric = Number(value);
+  return labels[numeric] ?? `${fallback}=${value}`;
+}
+
+function venueScopeLabel(venue: VenueReconciliationDiff): string {
+  const venueID = venue.venue_id ?? "-";
+  const exchange = enumLabel(EXCHANGE_LABELS, venue.exchange, "exchange");
+  const market = enumLabel(MARKET_LABELS, venue.market, "market");
+  const environment = accountEnvironmentLabel(venue.environment);
+  return `Venue ${venueID} · ${exchange} / ${market} / ${environment}`;
+}
+
+function reconciliationRunCounts(run: ReconciliationRun): ReconciliationRunCounts {
+  const counts: ReconciliationRunCounts = { hardFail: 0, softFail: 0, advisory: 0 };
+  for (const venue of parseVenueDiffs(run.venue_diffs_json || "[]")) {
+    for (const diff of venue.field_diffs ?? []) {
+      if (diff.passed) continue;
+      if (diff.severity === "hard") counts.hardFail += 1;
+      if (diff.severity === "soft") counts.softFail += 1;
+    }
+    counts.advisory += (venue.advisory_diffs ?? []).length;
+  }
+  return counts;
+}
+
 export default function SessionDetailPage() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
   const navigate = useNavigate();
@@ -254,9 +459,8 @@ export default function SessionDetailPage() {
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
   const [resuming, setResuming] = useState(false);
 
-  // Tab loaded state is sticky once a tab has been opened. Snapshots and
-  // reconciliation stay lazy so a session page does not fan out every audit
-  // query before the user asks for it. Orders are the default tab.
+  // Orders stay the default tab. Audit tables load lazily when opened; the
+  // headline PnL card has its own lightweight session-wide snapshot query.
   const [activeTab, setActiveTab] = useState<SessionDetailTab>("orders");
   const [snapshotsLoaded, setSnapshotsLoaded] = useState(false);
   const [reconciliationLoaded, setReconciliationLoaded] = useState(false);
@@ -267,6 +471,12 @@ export default function SessionDetailPage() {
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [stopFailureAcknowledged, setStopFailureAcknowledged] = useState(false);
+  const [pnlSummary, setPnlSummary] = useState<SessionPnLSummary | null>(null);
+  const [pnlSummaryLoading, setPnlSummaryLoading] = useState(false);
+  const [sessionStrategy, setSessionStrategy] = useState<Strategy | null>(null);
+  const [strategyInputs, setStrategyInputs] = useState<StrategyInputDeclaration[]>([]);
+  const [strategyOrderTargets, setStrategyOrderTargets] = useState<StrategyOrderTargetDeclaration[]>([]);
+  const [strategyContextError, setStrategyContextError] = useState<string | null>(null);
 
   // Snapshots and Reconciliation are independent paged lists. The Orders
   // section is delegated to the shared <OrderTree> component below — it owns
@@ -290,13 +500,45 @@ export default function SessionDetailPage() {
 
   const stableSessionId = sessionId ?? "";
 
-  useEffect(() => {
+  const loadReconciliationSummary = useCallback(() => {
     if (!stableSessionId) return;
     let cancelled = false;
     setReconciliationSummary(null);
     getSessionReconciliationSummary(stableSessionId)
       .then((s) => { if (!cancelled) setReconciliationSummary(s); })
       .catch(() => { if (!cancelled) setReconciliationSummary(null); });
+    return () => { cancelled = true; };
+  }, [stableSessionId]);
+
+  useEffect(() => {
+    return loadReconciliationSummary();
+  }, [loadReconciliationSummary]);
+
+  useEffect(() => {
+    if (!stableSessionId) return;
+    let cancelled = false;
+    setPnlSummary(null);
+    setPnlSummaryLoading(true);
+
+    getSessionSnapshots(stableSessionId, { limit: 1, offset: 0 })
+      .then(async (summaryFirstPage) => {
+        const finalSnap = summaryFirstPage.items[0] ?? null;
+        let initialSnap = finalSnap;
+        if (summaryFirstPage.total > 1) {
+          const summaryLastPage = await getSessionSnapshots(stableSessionId, {
+            limit: 1,
+            offset: Math.max(summaryFirstPage.total - 1, 0),
+          });
+          initialSnap = summaryLastPage.items[0] ?? finalSnap;
+        }
+        if (cancelled) return;
+        const initialValue = initialSnap?.total_value ?? 0;
+        const finalValue = finalSnap?.total_value ?? initialValue;
+        setPnlSummary({ initialValue, finalValue, pnl: finalValue - initialValue });
+      })
+      .catch(() => { if (!cancelled) setPnlSummary(null); })
+      .finally(() => { if (!cancelled) setPnlSummaryLoading(false); });
+
     return () => { cancelled = true; };
   }, [stableSessionId]);
 
@@ -315,8 +557,21 @@ export default function SessionDetailPage() {
 
   function changeAuditTab(tab: SessionDetailTab) {
     setActiveTab(tab);
-    if (tab === "snapshots") setSnapshotsLoaded(true);
-    if (tab === "reconciliation") setReconciliationLoaded(true);
+    if (tab === "snapshots") {
+      if (snapshotsLoaded) {
+        snapshotsState.reload();
+      } else {
+        setSnapshotsLoaded(true);
+      }
+    }
+    if (tab === "reconciliation") {
+      if (reconciliationLoaded) {
+        runsState.reload();
+      } else {
+        setReconciliationLoaded(true);
+      }
+      void loadReconciliationSummary();
+    }
     if (tab === "lifecycle") setLifecycleLoaded(true);
   }
 
@@ -380,6 +635,37 @@ export default function SessionDetailPage() {
       if (timer !== undefined) window.clearInterval(timer);
     };
   }, [stableSessionId]);
+
+  useEffect(() => {
+    const strategyID = session?.strategy_id ?? 0;
+    if (strategyID <= 0) {
+      setSessionStrategy(null);
+      setStrategyInputs([]);
+      setStrategyOrderTargets([]);
+      setStrategyContextError(null);
+      return;
+    }
+    let cancelled = false;
+    setSessionStrategy(null);
+    setStrategyInputs([]);
+    setStrategyOrderTargets([]);
+    setStrategyContextError(null);
+    getStrategy(strategyID)
+      .then((strategy) => {
+        if (cancelled) return;
+        setSessionStrategy(strategy);
+        setStrategyInputs(extractStrategyInputs(strategy.code));
+        setStrategyOrderTargets(extractStrategyOrderTargets(strategy.code));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSessionStrategy(null);
+        setStrategyInputs([]);
+        setStrategyOrderTargets([]);
+        setStrategyContextError(err instanceof Error ? err.message : "Failed to load strategy context");
+      });
+    return () => { cancelled = true; };
+  }, [session?.strategy_id]);
 
   useEffect(() => {
     const accountId = session?.account_id;
@@ -507,25 +793,17 @@ export default function SessionDetailPage() {
   const snapshots = snapshotsState.items;
   const runs = runsState.items;
 
-  // PnL summary uses the CURRENT snapshots page. Because snapshots are
-  // ordered newest-first and paginated 20/page, a long session's
-  // strategy_start snapshot may live on a later page. We still try to find
-  // strategy_start / strategy_end on the current page and fall back to
-  // first/last in the page — but surface a hint when the session ran long.
-  const startSnap = snapshots.find((s) => s.snapshot_reason === 2) ?? snapshots[snapshots.length - 1];
-  const endSnap = snapshots.find((s) => s.snapshot_reason === 3) ?? snapshots[0];
-  const initialValue = startSnap?.total_value ?? 0;
-  const finalValue = endSnap?.total_value ?? initialValue;
-  const pnl = finalValue - initialValue;
-  const pnlIsApproximate = snapshotsState.hasMore || snapshotsState.offset > 0;
+  const pnlReady = pnlSummary !== null;
+  const initialValue = pnlSummary?.initialValue ?? 0;
+  const finalValue = pnlSummary?.finalValue ?? initialValue;
+  const pnl = pnlSummary?.pnl ?? 0;
   // Headline reconciliation tiles read from the session-wide summary, not
   // from the current page of runs (which would silently under-report on any
   // session larger than one page). ``null`` while the summary fetch is in
   // flight — render a placeholder rather than the page slice.
   const summaryReady = reconciliationSummary !== null;
 
-  const initialLoading = snapshotsState.loading && runsState.loading
-    && snapshots.length === 0 && runs.length === 0;
+  const initialLoading = pnlSummaryLoading && !pnlReady && !session;
   const stopFailureStatus = (session?.status || "").toLowerCase();
   const showStopFailureModal = (stopFailureStatus === "stop_failed" || stopFailureStatus === "stopping_failed")
     && !stopFailureAcknowledged;
@@ -592,6 +870,103 @@ export default function SessionDetailPage() {
             </button>
           ) : null}
         </div>
+        {session ? (
+          <div
+            style={{
+              marginTop: "0.85rem",
+              paddingTop: "0.85rem",
+              borderTop: "1px solid #e2e8f0",
+              display: "grid",
+              gap: "0.7rem",
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>Session context</div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "0.75rem",
+                fontSize: "0.88rem",
+              }}
+            >
+              <div>
+                <div className="muted" style={{ fontSize: "0.78rem" }}>Strategy</div>
+                <div>
+                  {session.strategy_id > 0 ? (
+                    <>
+                      <Link to={`/strategies/${session.strategy_id}`}>
+                        {sessionStrategy ? `${sessionStrategy.name} v${sessionStrategy.version}` : `#${session.strategy_id}`}
+                      </Link>
+                      {sessionStrategy ? (
+                        <span className="muted"> #{session.strategy_id}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    "-"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="muted" style={{ fontSize: "0.78rem" }}>Input range</div>
+                <div style={{ display: "grid", gap: "0.18rem", lineHeight: 1.35 }}>
+                  <div>
+                    <span className="muted" style={{ marginRight: "0.35rem" }}>Start</span>
+                    {" "}
+                    <span>{formatRangeEndpoint(session.start_time_ms)}</span>
+                  </div>
+                  <div>
+                    <span className="muted" style={{ marginRight: "0.35rem" }}>End</span>
+                    {" "}
+                    <span>{formatRangeEndpoint(session.end_time_ms)}</span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="muted" style={{ fontSize: "0.78rem" }}>Progress</div>
+                <div>{session.bars_processed ?? 0} bars processed</div>
+              </div>
+            </div>
+
+            <div>
+              <div className="muted" style={{ fontSize: "0.78rem", marginBottom: "0.25rem" }}>Market inputs</div>
+              {strategyInputs.length > 0 ? (
+                <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                  {strategyInputs.map((input) => (
+                    <span
+                      key={`${input.exchange}-${input.market}-${input.symbol}-${input.interval}`}
+                      className="status-badge status-badge--idle"
+                      style={{ display: "inline-flex", gap: "0.4rem", alignItems: "center" }}
+                    >
+                      <code>{formatInputRoute(input)}</code>
+                      <span className="muted">{formatInputMeta(input)}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="muted">{strategyContextError ? "Unable to load declared inputs." : "No declared inputs found."}</span>
+              )}
+            </div>
+
+            {strategyOrderTargets.length > 0 ? (
+              <div>
+                <div className="muted" style={{ fontSize: "0.78rem", marginBottom: "0.25rem" }}>Order targets</div>
+                <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                  {strategyOrderTargets.map((target) => (
+                    <span
+                      key={`${target.exchange}-${target.market}-${target.symbol}`}
+                      className="status-badge status-badge--idle"
+                    >
+                      {formatOrderTarget(target)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {strategyContextError ? (
+              <p className="error" style={{ marginTop: 0, marginBottom: 0 }}>{strategyContextError}</p>
+            ) : null}
+          </div>
+        ) : null}
         {stopError ? <p className="error" style={{ marginTop: "0.75rem", marginBottom: 0 }}>{stopError}</p> : null}
         {stopInfo ? <p className="muted" style={{ marginTop: "0.75rem", marginBottom: 0 }}>{stopInfo}</p> : null}
         {session && canResumeSession(session, accountSessions) ? (
@@ -658,11 +1033,15 @@ export default function SessionDetailPage() {
             >
               <div>
                 <div className="muted" style={{ fontSize: "0.8rem" }}>Initial</div>
-                <div style={{ fontWeight: 600, fontSize: "1.2rem" }}>{initialValue.toFixed(2)}</div>
+                <div style={{ fontWeight: 600, fontSize: "1.2rem" }}>
+                  {pnlReady ? initialValue.toFixed(2) : "—"}
+                </div>
               </div>
               <div>
                 <div className="muted" style={{ fontSize: "0.8rem" }}>Final</div>
-                <div style={{ fontWeight: 600, fontSize: "1.2rem" }}>{finalValue.toFixed(2)}</div>
+                <div style={{ fontWeight: 600, fontSize: "1.2rem" }}>
+                  {pnlReady ? finalValue.toFixed(2) : "—"}
+                </div>
               </div>
               <div>
                 <div className="muted" style={{ fontSize: "0.8rem" }}>PnL</div>
@@ -670,11 +1049,10 @@ export default function SessionDetailPage() {
                   style={{
                     fontWeight: 600,
                     fontSize: "1.2rem",
-                    color: pnl >= 0 ? "#16a34a" : "#dc2626",
+                    color: pnlReady ? (pnl >= 0 ? "#16a34a" : "#dc2626") : undefined,
                   }}
                 >
-                  {pnl >= 0 ? "+" : ""}
-                  {pnl.toFixed(2)}
+                  {pnlReady ? `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}` : "—"}
                 </div>
               </div>
               <div>
@@ -712,16 +1090,6 @@ export default function SessionDetailPage() {
                 </div>
               </div>
             </div>
-            {pnlIsApproximate ? (
-              <p
-                className="muted"
-                style={{ fontSize: "0.78rem", marginTop: "0.75rem", marginBottom: 0 }}
-              >
-                PnL is derived from the currently-visible snapshots page. For long-running sessions
-                the strategy_start / strategy_end markers may live on an earlier page — browse the
-                Snapshots pager to confirm.
-              </p>
-            ) : null}
           </div>
 
           <PageTabs
@@ -811,69 +1179,71 @@ export default function SessionDetailPage() {
                   ) : runs.length === 0 ? (
                     <p className="muted">No reconciliation runs.</p>
                   ) : (
-                    runs.map((run, idx) => (
-                      <div
-                        key={run.run_id || `${runsState.offset}-${idx}`}
-                        style={{ borderBottom: "1px solid #f1f5f9", padding: "0.5rem 0" }}
-                      >
+                    runs.map((run, idx) => {
+                      const counts = reconciliationRunCounts(run);
+                      return (
                         <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            cursor: "pointer",
-                            fontSize: "0.9rem",
-                            flexWrap: "wrap",
-                            gap: "0.5rem",
-                          }}
-                          onClick={() => setExpandedRun(expandedRun === idx ? null : idx)}
+                          key={run.run_id || `${runsState.offset}-${idx}`}
+                          style={{ borderBottom: "1px solid #f1f5f9", padding: "0.5rem 0" }}
                         >
-                          <span style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-                            <span className="status-badge status-badge--idle">{run.run_type || "unknown"}</span>
-                            <span className="muted">
-                              {REASON_NAMES[run.snapshot_reason] ?? `reason=${run.snapshot_reason}`}
-                            </span>
-                            <span style={{ color: run.hard_pass ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                              hard {run.hard_pass ? "pass" : "fail"}
-                            </span>
-                            <span style={{ color: run.soft_pass ? "#16a34a" : "#d97706", fontWeight: 600 }}>
-                              soft {run.soft_pass ? "pass" : "fail"}
-                            </span>
-                            <span className="muted">
-                              H {run.hard_fail_count} · S {run.soft_fail_count} · A {run.advisory_count}
-                            </span>
-                          </span>
-                          <span className="muted" style={{ fontSize: "0.85rem" }}>
-                            {formatUTCWithLocal(run.time)}
-                          </span>
-                        </div>
-                        {expandedRun === idx ? (
                           <div
                             style={{
-                              fontSize: "0.8rem",
-                              padding: "0.75rem",
-                              background: "#f8fafc",
-                              borderRadius: "4px",
-                              marginTop: "0.4rem",
-                              overflowX: "auto",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              cursor: "pointer",
+                              fontSize: "0.9rem",
+                              flexWrap: "wrap",
+                              gap: "0.5rem",
                             }}
+                            onClick={() => setExpandedRun(expandedRun === idx ? null : idx)}
                           >
-                            <p style={{ margin: "0 0 0.5rem" }}>
-                              <strong>Run ID:</strong> <span style={{ fontFamily: "monospace" }}>{run.run_id}</span>
-                            </p>
-                            <DiffTable title="Hard + Soft Diffs" diffs={run.field_diffs} />
-                            <DiffTable title="Advisory Diffs" diffs={run.advisory_diffs} />
-                            <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Local snapshot:</p>
-                            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                              {prettyJSON(run.local_snapshot_json)}
-                            </pre>
-                            <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Exchange snapshot:</p>
-                            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                              {prettyJSON(run.exchange_snapshot_json)}
-                            </pre>
+                            <span style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                              <span className="status-badge status-badge--idle">{run.run_type || "unknown"}</span>
+                              <span className="muted">
+                                {REASON_NAMES[run.snapshot_reason] ?? `reason=${run.snapshot_reason}`}
+                              </span>
+                              <span style={{ color: run.hard_pass ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                                hard {run.hard_pass ? "pass" : "fail"}
+                              </span>
+                              <span style={{ color: run.soft_pass ? "#16a34a" : "#d97706", fontWeight: 600 }}>
+                                soft {run.soft_pass ? "pass" : "fail"}
+                              </span>
+                              <span className="muted">
+                                H {counts.hardFail} · S {counts.softFail} · A {counts.advisory}
+                              </span>
+                            </span>
+                            <span className="muted" style={{ fontSize: "0.85rem" }}>
+                              {formatUTCWithLocal(run.time)}
+                            </span>
                           </div>
-                        ) : null}
-                      </div>
-                    ))
+                          {expandedRun === idx ? (
+                            <div
+                              style={{
+                                fontSize: "0.8rem",
+                                padding: "0.75rem",
+                                background: "#f8fafc",
+                                borderRadius: "4px",
+                                marginTop: "0.4rem",
+                                overflowX: "auto",
+                              }}
+                            >
+                              <p style={{ margin: "0 0 0.5rem" }}>
+                                <strong>Run ID:</strong> <span style={{ fontFamily: "monospace" }}>{run.run_id}</span>
+                              </p>
+                              <VenueDiffSections raw={run.venue_diffs_json || "[]"} />
+                              <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Local snapshot:</p>
+                              <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
+                                {prettyJSON(run.local_snapshot_json)}
+                              </pre>
+                              <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Exchange snapshot:</p>
+                              <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
+                                {prettyJSON(run.exchange_snapshot_json)}
+                              </pre>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
                   )}
                   <Pager
                     offset={runsState.offset}
@@ -1064,6 +1434,59 @@ function prettyJSON(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+function VenueDiffSections({ raw }: { raw: string }) {
+  const venues = parseVenueDiffs(raw);
+  if (venues.length === 0) {
+    return (
+      <>
+        <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Venue-scoped diffs:</p>
+        <p className="muted" style={{ margin: 0 }}>None.</p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p style={{ fontWeight: 600, margin: "0.75rem 0 0.25rem" }}>Venue-scoped diffs:</p>
+      <div style={{ display: "grid", gap: "0.75rem" }}>
+        {venues.map((venue, idx) => (
+          <div
+            key={`${venue.venue_id ?? "unknown"}-${idx}`}
+            style={{
+              border: "1px solid #e2e8f0",
+              borderRadius: "4px",
+              padding: "0.65rem",
+              background: "#fff",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "0.75rem",
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <strong>{venueScopeLabel(venue)}</strong>
+              <span style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <span style={{ color: venue.hard_pass === false ? "#dc2626" : "#16a34a", fontWeight: 600 }}>
+                  hard {venue.hard_pass === false ? "fail" : "pass"}
+                </span>
+                <span style={{ color: venue.soft_pass === false ? "#d97706" : "#16a34a", fontWeight: 600 }}>
+                  soft {venue.soft_pass === false ? "fail" : "pass"}
+                </span>
+              </span>
+            </div>
+            <DiffTable title="Hard + Soft Diffs" diffs={venue.field_diffs ?? []} />
+            <DiffTable title="Advisory Diffs" diffs={venue.advisory_diffs ?? []} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
 }
 
 function DiffTable({ title, diffs }: { title: string; diffs: ReconciliationFieldDiff[] }) {

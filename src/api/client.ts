@@ -1058,6 +1058,7 @@ export type ReconciliationRun = {
   advisory_diffs: ReconciliationFieldDiff[];
   local_snapshot_json: string;
   exchange_snapshot_json: string;
+  venue_diffs_json: string;
 };
 
 // ── Paged audit list contract (paginate-session-detail-lists) ──────────────
@@ -1691,6 +1692,7 @@ export async function listSessionDeliveryHealth(params: {
 // ── Notification Management ────────────────────────────────────────────────
 
 export type NotificationPreferences = {
+  enabled: boolean;
   system_enabled: boolean;
   strategy_enabled: boolean;
   custom_enabled: boolean;

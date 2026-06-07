@@ -157,6 +157,7 @@ export default function NotificationManagement() {
   const plan = settings?.plan;
   const telegram = settings?.telegram;
   const notificationEnabled = !!plan?.notification_enabled;
+  const userNotificationsEnabled = preferences?.enabled !== false;
   const channelBound = telegram?.status === "bound";
   const botUsername = bindCode?.bot_username || settings?.bot_username || "";
   const botHref = botUsername ? `https://t.me/${botUsername.replace(/^@/, "")}` : "";
@@ -166,25 +167,25 @@ export default function NotificationManagement() {
         key: "system_enabled" as const,
         label: "System",
         planAllowed: notificationEnabled && !!plan?.allow_system,
-        userEnabled: !!preferences?.system_enabled,
+        userEnabled: userNotificationsEnabled && !!preferences?.system_enabled,
         channelBound,
       },
       {
         key: "strategy_enabled" as const,
         label: "Strategy",
         planAllowed: notificationEnabled && !!plan?.allow_strategy,
-        userEnabled: !!preferences?.strategy_enabled,
+        userEnabled: userNotificationsEnabled && !!preferences?.strategy_enabled,
         channelBound,
       },
       {
         key: "custom_enabled" as const,
         label: "Custom",
         planAllowed: notificationEnabled && !!plan?.allow_custom,
-        userEnabled: !!preferences?.custom_enabled,
+        userEnabled: userNotificationsEnabled && !!preferences?.custom_enabled,
         channelBound,
       },
     ];
-  }, [channelBound, notificationEnabled, plan, preferences]);
+  }, [channelBound, notificationEnabled, plan, preferences, userNotificationsEnabled]);
 
   return (
     <div>
@@ -212,6 +213,10 @@ export default function NotificationManagement() {
                 <div>
                   <p className="muted">Notification</p>
                   <p>{notificationEnabled ? "Enabled" : "Disabled"}</p>
+                </div>
+                <div>
+                  <p className="muted">User switch</p>
+                  <p>{userNotificationsEnabled ? "On" : "Off"}</p>
                 </div>
                 <div>
                   <p className="muted">Telegram</p>
@@ -293,6 +298,19 @@ export default function NotificationManagement() {
             <section className="card">
               <h2 className="section-title" style={{ marginTop: 0 }}>Preferences</h2>
               <div className="notification-toggle-grid">
+                <label className="notification-toggle">
+                  <input
+                    type="checkbox"
+                    checked={userNotificationsEnabled}
+                    disabled={saving || !notificationEnabled}
+                    onChange={(e) => {
+                      if (!preferences) return;
+                      void savePreferences({ ...preferences, enabled: e.target.checked });
+                    }}
+                  />
+                  <span>All notifications</span>
+                  {!notificationEnabled ? <small className="muted">Plan disabled</small> : <small className="muted">Master switch</small>}
+                </label>
                 {availability.map((row) => (
                   <label key={row.key} className="notification-toggle">
                     <input
@@ -330,7 +348,7 @@ export default function NotificationManagement() {
                 </div>
                 <div>
                   <p className="muted">Effective channel</p>
-                  <p>{channelBound && notificationEnabled ? "Ready" : "Not ready"}</p>
+                  <p>{channelBound && notificationEnabled && userNotificationsEnabled ? "Ready" : "Not ready"}</p>
                 </div>
               </div>
 
@@ -339,7 +357,7 @@ export default function NotificationManagement() {
                   type="button"
                   className="primary"
                   onClick={() => void sendTest()}
-                  disabled={busy === "test" || !channelBound || !notificationEnabled}
+                  disabled={busy === "test" || !channelBound || !notificationEnabled || !userNotificationsEnabled}
                 >
                   Send test message
                 </button>
