@@ -42,7 +42,15 @@ import Pager from "@/components/Pager";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 
-async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string): Promise<{ session_id: string }> {
+const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
+
+function parseMaxLossClosePct(percentText: string): number | null {
+  const value = Number(percentText);
+  if (!Number.isFinite(value) || value <= 0 || value > 100) return null;
+  return value / 100;
+}
+
+async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<{ session_id: string }> {
   const entries = await listAccountStrategies(accountId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
@@ -67,6 +75,7 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
       start_time_ms: session.start_time_ms,
       end_time_ms: session.end_time_ms,
       runtime_id: runtimeId,
+      max_loss_close_pct: maxLossClosePct,
     });
   } catch (err) {
     if (changedActive) {
@@ -457,7 +466,9 @@ export default function SessionDetailPage() {
   const [deliveryHealth, setDeliveryHealth] = useState<SessionDeliveryHealth[]>([]);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
+  const [resumeMaxLossClosePercent, setResumeMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
   const [resuming, setResuming] = useState(false);
+  const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
 
   // Orders stay the default tab. Audit tables load lazily when opened; the
   // headline PnL card has its own lightweight session-wide snapshot query.
@@ -774,14 +785,19 @@ export default function SessionDetailPage() {
       setStopError("Select a runtime before resuming.");
       return;
     }
+    if (resumeMaxLossClosePct === null) {
+      setStopError("Enter a max loss close value from 0.01 to 100.");
+      return;
+    }
     const currentSession = session;
     setStopError(null);
     setStopInfo(null);
     setResuming(true);
     try {
-      const resumed = await resumeWithNewSession(currentSession.account_id, currentSession, resumeRuntimeId);
+      const resumed = await resumeWithNewSession(currentSession.account_id, currentSession, resumeRuntimeId, resumeMaxLossClosePct);
       setResumeDialogOpen(false);
       setResumeRuntimeId("");
+      setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
       navigate(id ? `/accounts/${id}/sessions/${resumed.session_id}` : `/accounts/${currentSession.account_id}/sessions/${resumed.session_id}`);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to resume session");
@@ -977,6 +993,7 @@ export default function SessionDetailPage() {
                 setStopError(null);
                 setStopInfo(null);
                 setResumeRuntimeId("");
+                setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
                 setResumeDialogOpen(true);
               }}
             >
@@ -1415,15 +1432,38 @@ export default function SessionDetailPage() {
         busy={resuming}
         error={stopError}
         confirmLabel="Resume"
+        confirmDisabled={resumeMaxLossClosePct === null}
         onRuntimeChange={setResumeRuntimeId}
         onCancel={() => {
           if (resuming) return;
           setResumeDialogOpen(false);
           setResumeRuntimeId("");
+          setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
           setStopError(null);
         }}
         onConfirm={() => { void handleResumeWithNewSession(); }}
-      />
+      >
+        <div style={{ marginTop: "0.85rem" }}>
+          <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
+            <span>Max loss close (%)</span>
+            <input
+              type="number"
+              min="0.01"
+              max="100"
+              step="0.1"
+              value={resumeMaxLossClosePercent}
+              onChange={(event) => setResumeMaxLossClosePercent(event.target.value)}
+              disabled={resuming}
+              style={{ maxWidth: "10rem" }}
+            />
+          </label>
+          {resumeMaxLossClosePct === null ? (
+            <p className="error" style={{ marginTop: "0.35rem", marginBottom: 0, fontSize: "0.82rem" }}>
+              Enter a value from 0.01 to 100.
+            </p>
+          ) : null}
+        </div>
+      </RuntimeSelectionDialog>
     </div>
   );
 }

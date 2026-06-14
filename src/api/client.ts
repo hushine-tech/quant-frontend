@@ -468,6 +468,7 @@ export type RunStrategyParams = {
   start_time_ms?: number;
   end_time_ms?: number;
   runtime_id?: string;
+  max_loss_close_pct?: number;
 };
 
 export type StrategySession = { session_id: string };
@@ -549,11 +550,15 @@ export type PreviewRunStrategy = {
   order_targets?: StrategyOrderTargetDeclaration[];
   declared_order_targets?: StrategyOrderTargetDeclaration[];
   required_routes?: StrategyRouteDeclaration[];
+  risk_controls?: {
+    max_loss_close_pct: number;
+    max_loss_close_source: string;
+  };
 };
 
 export async function previewRunStrategy(
   accountId: number | string,
-  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string },
+  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<PreviewRunStrategy> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -614,7 +619,7 @@ export async function previewBacktestCoverage(
 
 export async function startDownloadAndRunBacktest(
   accountId: number | string,
-  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string },
+  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<DownloadRunJob> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");

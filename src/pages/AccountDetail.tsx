@@ -81,6 +81,18 @@ function normalizeAccountDetailTab(value: string | null): AccountDetailTab {
 }
 
 const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
+const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
+
+function parseMaxLossClosePct(percentText: string): number | null {
+  const value = Number(percentText);
+  if (!Number.isFinite(value) || value <= 0 || value > 100) return null;
+  return value / 100;
+}
+
+function formatRiskPercent(value: number | undefined): string {
+  if (!Number.isFinite(value ?? NaN) || !value) return `${DEFAULT_MAX_LOSS_CLOSE_PERCENT}%`;
+  return `${((value ?? 0) * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+}
 
 function localDebugInitialBalance(wallet: WalletSnapshot | null): number {
   const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
@@ -115,7 +127,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
   ));
 }
 
-async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string): Promise<{ session_id: string }> {
+async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<{ session_id: string }> {
   const entries = await listAccountStrategies(accountId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
@@ -140,6 +152,7 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
       start_time_ms: session.start_time_ms,
       end_time_ms: session.end_time_ms,
       runtime_id: runtimeId,
+      max_loss_close_pct: maxLossClosePct,
     });
   } catch (err) {
     if (changedActive) {
@@ -662,7 +675,15 @@ function previewRoutes(preview: PreviewRunStrategy): NonNullable<PreviewRunStrat
 // heuristic that looked at every market-data request on the user's account
 // (including streams unrelated to the current strategy), which could show
 // green on the wrong symbol/interval/account.
-function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; runtimeId: string }) {
+function LiveStartReadinessHint({
+  accountId,
+  runtimeId,
+  maxLossClosePct,
+}: {
+  accountId: number;
+  runtimeId: string;
+  maxLossClosePct: number;
+}) {
   const [preview, setPreview] = useState<PreviewRunStrategy | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -677,7 +698,7 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
       try {
         // No start/end — live/demo profile ignores them. Backend picks the
         // declared strategy source from the active-strategy record.
-        const p = await previewRunStrategy(accountId, { runtime_id: runtimeId });
+        const p = await previewRunStrategy(accountId, { runtime_id: runtimeId, max_loss_close_pct: maxLossClosePct });
         if (!cancelled) {
           setPreview(p);
           setErr(null);
@@ -692,7 +713,7 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
     load();
     const id = window.setInterval(load, 15_000);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [accountId, runtimeId]);
+  }, [accountId, runtimeId, maxLossClosePct]);
 
   if (err) {
     return (
@@ -732,6 +753,13 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
           <Link to="/market-data">Details</Link>
         </p>
         <div style={{ display: "grid", gap: "0.35rem", marginTop: "0.5rem", fontSize: "0.82rem" }}>
+          <div>
+            <span className="muted">Max loss close:</span>{" "}
+            {formatRiskPercent(preview.risk_controls?.max_loss_close_pct)}
+            {preview.risk_controls?.max_loss_close_source ? (
+              <span className="muted"> · {preview.risk_controls.max_loss_close_source}</span>
+            ) : null}
+          </div>
           {inputs.length > 0 ? (
             <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
           ) : null}
@@ -753,6 +781,13 @@ function LiveStartReadinessHint({ accountId, runtimeId }: { accountId: number; r
         {preview.failures.length} declared input(s) not ready.
       </p>
       <div style={{ display: "grid", gap: "0.35rem", marginBottom: "0.5rem", fontSize: "0.82rem" }}>
+        <div>
+          <span className="muted">Max loss close:</span>{" "}
+          {formatRiskPercent(preview.risk_controls?.max_loss_close_pct)}
+          {preview.risk_controls?.max_loss_close_source ? (
+            <span className="muted"> · {preview.risk_controls.max_loss_close_source}</span>
+          ) : null}
+        </div>
         {inputs.length > 0 ? (
           <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
         ) : null}
@@ -1186,6 +1221,7 @@ function StrategyPanel({
   const [startDialogOpen, setStartDialogOpen] = useState(false);
   const [startRuntimeId, setStartRuntimeId] = useState("");
   const [startRuntime, setStartRuntime] = useState<Runtime | null>(null);
+  const [maxLossClosePercent, setMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
   const [pendingStart, setPendingStart] = useState<{
     kind: "backtest" | "demo";
     interval: string;
@@ -1201,6 +1237,7 @@ function StrategyPanel({
   const [accountStrats, setAccountStrats] = useState<AccountStrategy[]>([]);
   const [mountErr, setMountErr] = useState<string | null>(null);
   const [selectedMountId, setSelectedMountId] = useState<number | "">("");
+  const maxLossClosePct = parseMaxLossClosePct(maxLossClosePercent);
 
   useEffect(() => {
     return () => {
@@ -1310,6 +1347,10 @@ function StrategyPanel({
     params: { interval: string; startTimeMs?: number; endTimeMs?: number },
     runtimeId: string,
   ) {
+    if (maxLossClosePct === null) {
+      setError("Max loss close must be greater than 0 and no more than 100%.");
+      return;
+    }
     if (!runtimeId) {
       setError("Select a runtime before starting the session.");
       return;
@@ -1324,6 +1365,7 @@ function StrategyPanel({
         start_time_ms: params.startTimeMs,
         end_time_ms: params.endTimeMs,
         runtime_id: runtimeId,
+        max_loss_close_pct: maxLossClosePct,
       });
       setStartDialogOpen(false);
       setPendingStart(null);
@@ -1397,6 +1439,10 @@ function StrategyPanel({
 
   async function handleDownloadDataAndRun() {
     if (!pendingStart || pendingStart.kind !== "backtest" || !pendingStart.startTimeMs || !pendingStart.endTimeMs) return;
+    if (maxLossClosePct === null) {
+      setError("Max loss close must be greater than 0 and no more than 100%.");
+      return;
+    }
     if (!startRuntimeId) {
       setError("Select a runtime before starting the session.");
       return;
@@ -1410,6 +1456,7 @@ function StrategyPanel({
         start_time_ms: pendingStart.startTimeMs,
         end_time_ms: pendingStart.endTimeMs,
         runtime_id: startRuntimeId,
+        max_loss_close_pct: maxLossClosePct,
       });
       handleDownloadJobUpdate(job);
       if (job.status !== "ready" && job.status !== "error") {
@@ -1429,6 +1476,10 @@ function StrategyPanel({
 
   async function handleConfirmStart() {
     if (!pendingStart) return;
+    if (maxLossClosePct === null) {
+      setError("Max loss close must be greater than 0 and no more than 100%.");
+      return;
+    }
     if (pendingStart.kind === "backtest" && !coveragePreview?.complete) {
       setError("Historical data coverage is incomplete. Download missing data before running this backtest.");
       return;
@@ -1760,7 +1811,7 @@ function StrategyPanel({
         busy={running}
         error={error}
         confirmLabel={pendingStart?.kind === "demo" ? "Start Session" : "Run Backtest"}
-        confirmDisabled={pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error"))}
+        confirmDisabled={maxLossClosePct === null || (pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error")))}
         onRuntimeChange={(runtimeId, runtime) => {
           setStartRuntimeId(runtimeId);
           setStartRuntime(runtime ?? null);
@@ -1773,6 +1824,26 @@ function StrategyPanel({
         }}
         onConfirm={() => { void handleConfirmStart(); }}
       >
+        <div style={{ marginTop: "0.85rem" }}>
+          <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
+            <span>Max loss close (%)</span>
+            <input
+              type="number"
+              min="0.01"
+              max="100"
+              step="0.1"
+              value={maxLossClosePercent}
+              onChange={(event) => setMaxLossClosePercent(event.target.value)}
+              disabled={running}
+              style={{ maxWidth: "10rem" }}
+            />
+          </label>
+          {maxLossClosePct === null ? (
+            <p className="error" style={{ marginTop: "0.35rem", marginBottom: 0, fontSize: "0.82rem" }}>
+              Enter a value from 0.01 to 100.
+            </p>
+          ) : null}
+        </div>
         {pendingStart?.kind === "backtest" ? (
           <BacktestCoverageGate
             preview={coveragePreview}
@@ -1788,8 +1859,8 @@ function StrategyPanel({
             }}
             onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
           />
-        ) : pendingStart?.kind === "demo" && startRuntimeId ? (
-          <LiveStartReadinessHint accountId={accountId} runtimeId={startRuntimeId} />
+        ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null ? (
+          <LiveStartReadinessHint accountId={accountId} runtimeId={startRuntimeId} maxLossClosePct={maxLossClosePct} />
         ) : null}
       </RuntimeSelectionDialog>
     </>
@@ -1809,7 +1880,9 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
   const [stopDialogSessionId, setStopDialogSessionId] = useState<string | null>(null);
   const [resumeDialogSession, setResumeDialogSession] = useState<Session | null>(null);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
+  const [resumeMaxLossClosePercent, setResumeMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
   const [resuming, setResuming] = useState(false);
+  const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
 
   useEffect(() => {
     setTableRefresh((v) => v + 1);
@@ -1890,9 +1963,13 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       setStopError("Select a runtime before resuming.");
       return;
     }
+    if (resumeMaxLossClosePct === null) {
+      setStopError("Enter a max loss close value from 0.01 to 100.");
+      return;
+    }
     setResuming(true);
     try {
-      const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId);
+      const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId, resumeMaxLossClosePct);
       setTableRefresh((v) => v + 1);
       setResumeDialogSession(null);
       setResumeRuntimeId("");
@@ -1907,6 +1984,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
   function openResumeDialog(session: Session) {
     setStopError(null);
     setResumeRuntimeId("");
+    setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
     setResumeDialogSession(session);
   }
 
@@ -2000,17 +2078,40 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       busy={resuming}
       error={stopError}
       confirmLabel="Resume"
+      confirmDisabled={resumeMaxLossClosePct === null}
       onRuntimeChange={setResumeRuntimeId}
       onCancel={() => {
         if (resuming) return;
         setResumeDialogSession(null);
         setResumeRuntimeId("");
+        setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
         setStopError(null);
       }}
       onConfirm={() => {
         if (resumeDialogSession) void handleResumeWithNewSession(resumeDialogSession);
       }}
-    />
+    >
+      <div style={{ marginTop: "0.85rem" }}>
+        <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
+          <span>Max loss close (%)</span>
+          <input
+            type="number"
+            min="0.01"
+            max="100"
+            step="0.1"
+            value={resumeMaxLossClosePercent}
+            onChange={(event) => setResumeMaxLossClosePercent(event.target.value)}
+            disabled={resuming}
+            style={{ maxWidth: "10rem" }}
+          />
+        </label>
+        {resumeMaxLossClosePct === null ? (
+          <p className="error" style={{ marginTop: "0.35rem", marginBottom: 0, fontSize: "0.82rem" }}>
+            Enter a value from 0.01 to 100.
+          </p>
+        ) : null}
+      </div>
+    </RuntimeSelectionDialog>
     </>
   );
 }
