@@ -468,6 +468,7 @@ export type RunStrategyParams = {
   start_time_ms?: number;
   end_time_ms?: number;
   runtime_id?: string;
+  max_loss_close_pct?: number;
 };
 
 export type StrategySession = { session_id: string };
@@ -549,11 +550,15 @@ export type PreviewRunStrategy = {
   order_targets?: StrategyOrderTargetDeclaration[];
   declared_order_targets?: StrategyOrderTargetDeclaration[];
   required_routes?: StrategyRouteDeclaration[];
+  risk_controls?: {
+    max_loss_close_pct: number;
+    max_loss_close_source: string;
+  };
 };
 
 export async function previewRunStrategy(
   accountId: number | string,
-  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string },
+  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<PreviewRunStrategy> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -614,7 +619,7 @@ export async function previewBacktestCoverage(
 
 export async function startDownloadAndRunBacktest(
   accountId: number | string,
-  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string },
+  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<DownloadRunJob> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -1257,6 +1262,9 @@ export type OrderIntentEntry = {
   exchange_label?: string;
   position_side?: string;
   session_id?: string;
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
 };
 
 export type OrderEntry = {
@@ -1284,6 +1292,19 @@ export type OrderEntry = {
   strategy_id: number;
   session_id?: string;
   error_message?: string;
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
+  recovery_status?: string;
+  next_check_at?: string;
+  recovery_deadline_at?: string;
+  last_recovery_error?: string;
+  force_closed_at?: string;
+};
+
+export type OrderRiskReason = {
+  code?: string;
+  message?: string;
 };
 
 export type OrderAttemptEntry = {
@@ -1310,6 +1331,11 @@ export type OrderAttemptEntry = {
   session_id?: string;
   error_message?: string;
   recovery_error?: string;
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
+  risk_status?: string;
+  risk_reasons?: OrderRiskReason[];
 };
 
 export type OrderFillEntry = {

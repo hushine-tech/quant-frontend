@@ -25,6 +25,14 @@ export type TreeIntent = {
   market?: number | string;
   market_label?: string;
   position_side?: string | number;
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
+};
+
+export type TreeRiskReason = {
+  code?: string;
+  message?: string;
 };
 
 export type TreeAttempt = {
@@ -40,6 +48,11 @@ export type TreeAttempt = {
   position_side?: string | number;
   error_message?: string;
   recovery_error?: string;
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
+  risk_status?: string;
+  risk_reasons?: TreeRiskReason[];
 };
 
 export type TreeOrder = {
@@ -56,6 +69,14 @@ export type TreeOrder = {
   market_label?: string;
   position_side?: string | number;
   error_message?: string;
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
+  recovery_status?: string;
+  next_check_at?: string;
+  recovery_deadline_at?: string;
+  last_recovery_error?: string;
+  force_closed_at?: string;
 };
 
 export type TreeFill = {
@@ -140,6 +161,40 @@ export function orderBadgeClass(status: string): string {
 
 export function isFillPendingOrder(order: Pick<TreeOrder, "executed_qty" | "error_message">): boolean {
   return order.executed_qty > 0 && Boolean(order.error_message?.trim());
+}
+
+function riskBadgeClass(status: string): string {
+  switch (String(status).toUpperCase()) {
+    case "REJECT": return "status-badge status-badge--failed";
+    case "ALLOW": return "status-badge status-badge--completed";
+    default: return "status-badge status-badge--idle";
+  }
+}
+
+type OrderSemantics = {
+  post_only?: boolean;
+  good_till_date?: string;
+  reduce_only?: boolean;
+};
+
+function OrderSemanticBadges({ item }: { item: OrderSemantics }) {
+  return (
+    <>
+      {item.post_only ? <span className="status-badge status-badge--idle">Post-only</span> : null}
+      {item.reduce_only ? <span className="status-badge status-badge--idle">Reduce-only</span> : null}
+      {item.good_till_date ? (
+        <span className="status-badge status-badge--idle">GTD {formatUTCWithLocal(item.good_till_date)}</span>
+      ) : null}
+    </>
+  );
+}
+
+function riskReasonText(reasons: TreeRiskReason[] | undefined): string | undefined {
+  if (!reasons?.length) return undefined;
+  return reasons
+    .map((reason) => [reason.code, reason.message].filter(Boolean).join(": "))
+    .filter(Boolean)
+    .join("; ");
 }
 
 type RouteFacts = {
@@ -316,6 +371,7 @@ function IntentRow<
         <span className="muted">
           req px {intent.requested_price > 0 ? intent.requested_price.toFixed(2) : "—"}
         </span>
+        <OrderSemanticBadges item={intent} />
         <span className="muted">{routeFactText(intent)}</span>
         {typeof intent.account_id === "number" && intent.account_id > 0 ? (
           <span className="muted">Account {intent.account_id}</span>
@@ -442,6 +498,15 @@ function AttemptRow<
           {attempt.attempt_id}
         </span>
         <span className={orderBadgeClass(attempt.status)}>{attempt.status}</span>
+        <OrderSemanticBadges item={attempt} />
+        {attempt.risk_status ? (
+          <span
+            className={riskBadgeClass(attempt.risk_status)}
+            title={riskReasonText(attempt.risk_reasons)}
+          >
+            Risk {attempt.risk_status}
+          </span>
+        ) : null}
         <span className="muted">
           mark {attempt.mark_price > 0 ? attempt.mark_price.toFixed(2) : "—"}
         </span>
@@ -542,6 +607,12 @@ function OrderRow<
           {order.order_id}
         </span>
         <span className={orderBadgeClass(order.status)}>{order.status}</span>
+        <OrderSemanticBadges item={order} />
+        {order.recovery_status ? (
+          <span className={orderBadgeClass(order.recovery_status)}>
+            {order.recovery_status}
+          </span>
+        ) : null}
         {isFillPendingOrder(order) ? (
           <span className="status-badge status-badge--recovering" title={order.error_message}>
             Fill pending
@@ -560,6 +631,7 @@ function OrderRow<
       </div>
       {open ? (
         <div style={{ marginLeft: TREE_INDENT_PX, marginTop: "0.3rem" }}>
+          <OrderRecoveryMeta order={order} />
           {isFillPendingOrder(order) ? (
             <p className="muted" style={{ color: "#92400e" }}>
               Exchange order is filled, but trade fee/details are still pending recovery.
@@ -569,6 +641,20 @@ function OrderRow<
         </div>
       ) : null}
     </div>
+  );
+}
+
+function OrderRecoveryMeta({ order }: { order: TreeOrder }) {
+  if (!order.next_check_at && !order.recovery_deadline_at && !order.force_closed_at && !order.last_recovery_error) {
+    return null;
+  }
+  return (
+    <p className="muted" style={{ fontSize: "0.8rem", margin: "0 0 0.3rem" }}>
+      {order.next_check_at ? `next ${formatUTCWithLocal(order.next_check_at)}` : ""}
+      {order.recovery_deadline_at ? `${order.next_check_at ? " · " : ""}deadline ${formatUTCWithLocal(order.recovery_deadline_at)}` : ""}
+      {order.force_closed_at ? `${order.next_check_at || order.recovery_deadline_at ? " · " : ""}forced ${formatUTCWithLocal(order.force_closed_at)}` : ""}
+      {order.last_recovery_error ? `${order.next_check_at || order.recovery_deadline_at || order.force_closed_at ? " · " : ""}${order.last_recovery_error}` : ""}
+    </p>
   );
 }
 
