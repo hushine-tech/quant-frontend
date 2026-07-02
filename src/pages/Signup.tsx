@@ -29,7 +29,7 @@ export default function Signup() {
   }
 
   return (
-    <div className="card" style={{ maxWidth: 420 }}>
+    <div className="card auth-card">
       <h1>Create user</h1>
       <p className="muted">Usernames must use letters, numbers, `_` or `-`.</p>
       {err ? <p className="error">{err}</p> : null}

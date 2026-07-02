@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
@@ -10,6 +10,7 @@ import {
   archiveStrategy,
   type Strategy,
 } from "@/api/client";
+import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
 
 type StrategyTab = "strategies" | "create";
 
@@ -18,11 +19,31 @@ const tabs: Array<PageTab<StrategyTab>> = [
   { id: "create", label: "Create Strategy" },
 ];
 
+function normalizeStrategyTab(value: string | null): StrategyTab {
+  return value === "create" ? "create" : "strategies";
+}
+
 export default function StrategyList() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<StrategyTab>("strategies");
+  const [activeTab, setActiveTab] = useState<StrategyTab>(() => normalizeStrategyTab(searchParams.get("tab")));
   const [refreshKey, setRefreshKey] = useState(0);
+  const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
+
+  useEffect(() => {
+    setActiveTab(normalizeStrategyTab(searchParams.get("tab")));
+  }, [searchParams]);
+
+  function changeTab(tab: StrategyTab) {
+    setActiveTab(tab);
+    const next: Record<string, string> = {};
+    if (tab !== "strategies") next.tab = tab;
+    const rawReturnTo = searchParams.get("return_to");
+    if (rawReturnTo) next.return_to = rawReturnTo;
+    setSearchParams(next);
+  }
 
   const load = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
@@ -56,7 +77,7 @@ export default function StrategyList() {
       />
 
       {err ? <p className="error">{err}</p> : null}
-      <PageTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Strategy sections">
+      <PageTabs tabs={tabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Strategy sections">
         {activeTab === "strategies" ? (
           <InfiniteTable<Strategy>
             columns={["Name", "ID", "Version", "Status", "Description", "Created", "Action"]}
@@ -88,8 +109,12 @@ export default function StrategyList() {
           />
         ) : (
           <CreateStrategyForm
-            onCreated={() => {
-              setActiveTab("strategies");
+            onCreated={(strategy) => {
+              if (returnTo) {
+                navigate(appendReturnParam(returnTo, "strategy_id", strategy.strategy_id), { replace: true });
+                return;
+              }
+              changeTab("strategies");
               setRefreshKey((v) => v + 1);
             }}
           />
@@ -101,7 +126,7 @@ export default function StrategyList() {
 
 // ── Create Strategy Form ──────────────────────────────────────────────────────
 
-function CreateStrategyForm({ onCreated }: { onCreated: () => void }) {
+function CreateStrategyForm({ onCreated }: { onCreated: (strategy: Strategy) => void }) {
   const [name, setName] = useState("");
   const [version, setVersion] = useState("1.0.0");
   const [description, setDescription] = useState("");
@@ -117,8 +142,8 @@ function CreateStrategyForm({ onCreated }: { onCreated: () => void }) {
     setSubmitting(true);
     setErr(null);
     try {
-      await createStrategy({ name, version, description, code });
-      onCreated();
+      const strategy = await createStrategy({ name, version, description, code });
+      onCreated(strategy);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Create failed");
       setSubmitting(false);

@@ -38,11 +38,13 @@ import {
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import OrderTree from "@/components/OrderTree";
+import SessionChartPanel from "@/components/SessionChartPanel";
 import Pager from "@/components/Pager";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
+const DEFAULT_SESSION_LEVERAGE = 1;
 
 function parseMaxLossClosePct(percentText: string): number | null {
   const value = Number(percentText);
@@ -50,7 +52,13 @@ function parseMaxLossClosePct(percentText: string): number | null {
   return value / 100;
 }
 
-async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<{ session_id: string }> {
+function parseSessionLeverage(leverageText: string): number | null {
+  const value = Number(leverageText);
+  if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) return null;
+  return value;
+}
+
+async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
   const entries = await listAccountStrategies(accountId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
@@ -76,6 +84,7 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
       end_time_ms: session.end_time_ms,
       runtime_id: runtimeId,
       max_loss_close_pct: maxLossClosePct,
+      leverage,
     });
   } catch (err) {
     if (changedActive) {
@@ -118,12 +127,13 @@ const REASON_NAMES: Record<number, string> = {
 // Shared constant so all three lists stay in lockstep.
 const PAGE_SIZE = 20;
 
-type SessionDetailTab = "snapshots" | "reconciliation" | "orders" | "lifecycle";
+type SessionDetailTab = "chart" | "snapshots" | "reconciliation" | "orders" | "lifecycle";
 
 type SessionPnLSummary = {
   initialValue: number;
   finalValue: number;
   pnl: number;
+  upnl: number | null;
 };
 
 type VenueReconciliationDiff = {
@@ -144,6 +154,7 @@ type ReconciliationRunCounts = {
 };
 
 const sessionDetailTabs: Array<PageTab<SessionDetailTab>> = [
+  { id: "chart", label: "Chart" },
   { id: "snapshots", label: "Snapshots" },
   { id: "reconciliation", label: "Reconciliation" },
   { id: "orders", label: "Orders" },
@@ -401,6 +412,43 @@ function formatRangeEndpoint(ms?: number): string {
   return ms ? formatUTCWithLocal(ms) : "-";
 }
 
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function snapshotUnrealizedPnl(snapshot: Pick<SnapshotEntry, "futures_json"> | null | undefined): number | null {
+  if (!snapshot?.futures_json) return null;
+  try {
+    const futures = JSON.parse(snapshot.futures_json);
+    if (!futures || typeof futures !== "object") return null;
+    const aggregate = finiteNumber(futures.total_unrealized_pnl) ?? finiteNumber(futures.unrealized_pnl);
+    if (aggregate !== null) return aggregate;
+    if (!futures.positions || typeof futures.positions !== "object") return null;
+    let sum = 0;
+    let found = false;
+    for (const position of Object.values(futures.positions)) {
+      if (!position || typeof position !== "object") continue;
+      const value = finiteNumber((position as { unrealized_pnl?: unknown }).unrealized_pnl);
+      if (value === null) continue;
+      sum += value;
+      found = true;
+    }
+    return found ? sum : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatSignedNumber(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
 function parseVenueDiffs(raw: string): VenueReconciliationDiff[] {
   if (!raw) return [];
   try {
@@ -467,12 +515,15 @@ export default function SessionDetailPage() {
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
   const [resumeMaxLossClosePercent, setResumeMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+  const [resumeLeverageText, setResumeLeverageText] = useState(String(DEFAULT_SESSION_LEVERAGE));
   const [resuming, setResuming] = useState(false);
   const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
+  const resumeLeverage = parseSessionLeverage(resumeLeverageText);
 
-  // Orders stay the default tab. Audit tables load lazily when opened; the
+  // Orders stays the default tab. Audit tables and the chart load lazily when opened; the
   // headline PnL card has its own lightweight session-wide snapshot query.
   const [activeTab, setActiveTab] = useState<SessionDetailTab>("orders");
+  const [chartLoaded, setChartLoaded] = useState(false);
   const [snapshotsLoaded, setSnapshotsLoaded] = useState(false);
   const [reconciliationLoaded, setReconciliationLoaded] = useState(false);
   const [lifecycleLoaded, setLifecycleLoaded] = useState(false);
@@ -545,7 +596,12 @@ export default function SessionDetailPage() {
         if (cancelled) return;
         const initialValue = initialSnap?.total_value ?? 0;
         const finalValue = finalSnap?.total_value ?? initialValue;
-        setPnlSummary({ initialValue, finalValue, pnl: finalValue - initialValue });
+        setPnlSummary({
+          initialValue,
+          finalValue,
+          pnl: finalValue - initialValue,
+          upnl: snapshotUnrealizedPnl(finalSnap),
+        });
       })
       .catch(() => { if (!cancelled) setPnlSummary(null); })
       .finally(() => { if (!cancelled) setPnlSummaryLoading(false); });
@@ -556,6 +612,7 @@ export default function SessionDetailPage() {
   // Re-apply default tab state on navigation between sessions.
   useEffect(() => {
     setActiveTab("orders");
+    setChartLoaded(false);
     setSnapshotsLoaded(false);
     setReconciliationLoaded(false);
     setLifecycleLoaded(false);
@@ -568,6 +625,7 @@ export default function SessionDetailPage() {
 
   function changeAuditTab(tab: SessionDetailTab) {
     setActiveTab(tab);
+    if (tab === "chart") setChartLoaded(true);
     if (tab === "snapshots") {
       if (snapshotsLoaded) {
         snapshotsState.reload();
@@ -789,15 +847,20 @@ export default function SessionDetailPage() {
       setStopError("Enter a max loss close value from 0.01 to 100.");
       return;
     }
+    if (resumeLeverage === null) {
+      setStopError("Enter a positive whole-number leverage value.");
+      return;
+    }
     const currentSession = session;
     setStopError(null);
     setStopInfo(null);
     setResuming(true);
     try {
-      const resumed = await resumeWithNewSession(currentSession.account_id, currentSession, resumeRuntimeId, resumeMaxLossClosePct);
+      const resumed = await resumeWithNewSession(currentSession.account_id, currentSession, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
       setResumeDialogOpen(false);
       setResumeRuntimeId("");
       setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+      setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
       navigate(id ? `/accounts/${id}/sessions/${resumed.session_id}` : `/accounts/${currentSession.account_id}/sessions/${resumed.session_id}`);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to resume session");
@@ -813,6 +876,7 @@ export default function SessionDetailPage() {
   const initialValue = pnlSummary?.initialValue ?? 0;
   const finalValue = pnlSummary?.finalValue ?? initialValue;
   const pnl = pnlSummary?.pnl ?? 0;
+  const upnl = pnlSummary?.upnl ?? null;
   // Headline reconciliation tiles read from the session-wide summary, not
   // from the current page of runs (which would silently under-report on any
   // session larger than one page). ``null`` while the summary fetch is in
@@ -862,6 +926,11 @@ export default function SessionDetailPage() {
               )}
             </div>
           </div>
+          {session?.error ? (
+            <p className="error" style={{ flexBasis: "100%", margin: "0.5rem 0 0" }}>
+              {session.error}
+            </p>
+          ) : null}
           {session?.status === "running" ? (
             <>
               <button
@@ -994,6 +1063,7 @@ export default function SessionDetailPage() {
                 setStopInfo(null);
                 setResumeRuntimeId("");
                 setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+                setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
                 setResumeDialogOpen(true);
               }}
             >
@@ -1073,6 +1143,18 @@ export default function SessionDetailPage() {
                 </div>
               </div>
               <div>
+                <div className="muted" style={{ fontSize: "0.8rem" }}>UPnL</div>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "1.2rem",
+                    color: pnlReady && upnl !== null ? (upnl >= 0 ? "#16a34a" : "#dc2626") : undefined,
+                  }}
+                >
+                  {pnlReady ? formatSignedNumber(upnl) : "—"}
+                </div>
+              </div>
+              <div>
                 <div className="muted" style={{ fontSize: "0.8rem" }}>Reconciliation</div>
                 <div style={{ fontWeight: 600, fontSize: "1.2rem" }}>
                   {summaryReady ? reconciliationSummary!.total_runs : "—"}
@@ -1115,6 +1197,14 @@ export default function SessionDetailPage() {
             onChange={changeAuditTab}
             ariaLabel="Session audit sections"
           >
+            {activeTab === "chart" ? (
+              chartLoaded && session ? (
+                <SessionChartPanel session={session} inputs={strategyInputs} />
+              ) : (
+                <p className="muted">Loading chart…</p>
+              )
+            ) : null}
+
             {activeTab === "snapshots" ? (
               snapshotsLoaded ? (
                 <div>
@@ -1145,6 +1235,7 @@ export default function SessionDetailPage() {
                             </span>
                             <span style={{ marginLeft: "0.75rem" }}>TV: {snap.total_value.toFixed(2)}</span>
                             <span style={{ marginLeft: "0.5rem" }}>WB: {snap.wallet_balance.toFixed(2)}</span>
+                            <span style={{ marginLeft: "0.5rem" }}>UPnL: {formatSignedNumber(snapshotUnrealizedPnl(snap))}</span>
                           </span>
                           <span className="muted" style={{ fontSize: "0.85rem" }}>
                             {formatUTCWithLocal(snap.time)}
@@ -1432,36 +1523,54 @@ export default function SessionDetailPage() {
         busy={resuming}
         error={stopError}
         confirmLabel="Resume"
-        confirmDisabled={resumeMaxLossClosePct === null}
+        confirmDisabled={resumeMaxLossClosePct === null || resumeLeverage === null}
         onRuntimeChange={setResumeRuntimeId}
         onCancel={() => {
           if (resuming) return;
           setResumeDialogOpen(false);
           setResumeRuntimeId("");
           setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+          setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
           setStopError(null);
         }}
         onConfirm={() => { void handleResumeWithNewSession(); }}
       >
-        <div style={{ marginTop: "0.85rem" }}>
+        <div style={{ marginTop: "0.85rem", display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))" }}>
           <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
             <span>Max loss close (%)</span>
             <input
               type="number"
               min="0.01"
               max="100"
-              step="0.1"
+              step="any"
               value={resumeMaxLossClosePercent}
               onChange={(event) => setResumeMaxLossClosePercent(event.target.value)}
               disabled={resuming}
               style={{ maxWidth: "10rem" }}
             />
+            {resumeMaxLossClosePct === null ? (
+              <span className="error" style={{ fontSize: "0.82rem" }}>
+                Enter a value from 0.01 to 100.
+              </span>
+            ) : null}
           </label>
-          {resumeMaxLossClosePct === null ? (
-            <p className="error" style={{ marginTop: "0.35rem", marginBottom: 0, fontSize: "0.82rem" }}>
-              Enter a value from 0.01 to 100.
-            </p>
-          ) : null}
+          <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
+            <span>Leverage (x)</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={resumeLeverageText}
+              onChange={(event) => setResumeLeverageText(event.target.value)}
+              disabled={resuming}
+              style={{ maxWidth: "10rem" }}
+            />
+            {resumeLeverage === null ? (
+              <span className="error" style={{ fontSize: "0.82rem" }}>
+                Enter a positive whole number.
+              </span>
+            ) : null}
+          </label>
         </div>
       </RuntimeSelectionDialog>
     </div>

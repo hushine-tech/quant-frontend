@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { listAccountsPage, type Account } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
@@ -7,6 +7,7 @@ import InfiniteTable from "@/components/InfiniteTable";
 import AccountNew from "@/pages/AccountNew";
 import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 import { formatUTCWithLocal } from "@/utils/time";
+import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
 
 type AccountTab = "accounts" | "create";
 
@@ -21,17 +22,27 @@ function normalizeTab(value: string | null): AccountTab {
 
 export default function AccountManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AccountTab>(() => normalizeTab(searchParams.get("tab")));
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
 
   useEffect(() => {
     setActiveTab(normalizeTab(searchParams.get("tab")));
   }, [searchParams]);
 
-  function changeTab(tab: AccountTab) {
+  function changeTab(tab: AccountTab, options: { clearMessages?: boolean } = {}) {
     setActiveTab(tab);
-    setSearchParams(tab === "accounts" ? {} : { tab });
+    if (options.clearMessages ?? true) {
+      setNotice(null);
+    }
+    const next: Record<string, string> = {};
+    if (tab !== "accounts") next.tab = tab;
+    const rawReturnTo = searchParams.get("return_to");
+    if (rawReturnTo) next.return_to = rawReturnTo;
+    setSearchParams(next);
   }
 
   const description = useMemo(() => {
@@ -58,9 +69,10 @@ export default function AccountManagement() {
         onRefresh={activeTab === "accounts" ? () => setRefreshKey((v) => v + 1) : undefined}
       />
       <PageTabs tabs={tabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Account sections">
+        {notice ? <p className="notice notice--success">{notice}</p> : null}
         {activeTab === "accounts" ? (
           <InfiniteTable<Account>
-            columns={["Name", "ID", "Environment", "Created", "Description"]}
+            columns={returnTo ? ["Name", "ID", "Environment", "Created", "Description", "Action"] : ["Name", "ID", "Environment", "Created", "Description"]}
             refreshKey={refreshKey}
             emptyText="No accounts yet."
             loadPage={loadAccounts}
@@ -72,15 +84,30 @@ export default function AccountManagement() {
                 <td>{accountEnvironmentLabel(account.environment)}</td>
                 <td>{account.created_at ? formatUTCWithLocal(account.created_at) : "-"}</td>
                 <td>{account.description?.trim() || "-"}</td>
+                {returnTo ? (
+                  <td>
+                    <button
+                      type="button"
+                      onClick={() => navigate(appendReturnParam(returnTo, "account_id", account.account_id), { replace: true })}
+                    >
+                      Use
+                    </button>
+                  </td>
+                ) : null}
               </>
             )}
           />
         ) : (
           <AccountNew
             embedded
-            onCreated={() => {
+            onCreated={(account) => {
+              if (returnTo) {
+                navigate(appendReturnParam(returnTo, "account_id", account.account_id), { replace: true });
+                return;
+              }
+              setNotice(`Account ${account.account_id} created.`);
               setRefreshKey((v) => v + 1);
-              changeTab("accounts");
+              changeTab("accounts", { clearMessages: false });
             }}
           />
         )}

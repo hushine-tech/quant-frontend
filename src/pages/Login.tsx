@@ -24,7 +24,7 @@ export default function Login() {
   }
 
   return (
-    <div className="card" style={{ maxWidth: 420 }}>
+    <div className="card auth-card">
       <h1>Sign in</h1>
       <p className="muted">Sign in with your username and password.</p>
       {err ? <p className="error">{err}</p> : null}

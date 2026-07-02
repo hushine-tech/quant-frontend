@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
@@ -19,6 +20,7 @@ import {
 import SymbolPicker from "@/components/SymbolPicker";
 import InfiniteTable from "@/components/InfiniteTable";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
+import { safeInternalReturnTo } from "@/utils/returnTo";
 
 const SUPPORTED_EXCHANGES = ["binance"] as const;
 const SUPPORTED_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
@@ -83,11 +85,47 @@ function parseLocalInputMs(raw: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function normalizeMarketDataTab(value: string | null): MarketDataTab {
+  return value === "coverage" || value === "data" || value === "requests" ? value : "live";
+}
+
+function normalizeExchange(value?: string): (typeof SUPPORTED_EXCHANGES)[number] {
+  return SUPPORTED_EXCHANGES.includes(value as (typeof SUPPORTED_EXCHANGES)[number])
+    ? value as (typeof SUPPORTED_EXCHANGES)[number]
+    : "binance";
+}
+
+function normalizeMarket(value?: string): "perpetual_futures" | "spot" {
+  return value === "spot" ? "spot" : "perpetual_futures";
+}
+
+function normalizeInterval(value?: string): string {
+  return SUPPORTED_INTERVALS.includes(value as (typeof SUPPORTED_INTERVALS)[number]) ? value as string : "1m";
+}
+
 export default function MarketDataPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<MarketDataTab>("live");
+  const [activeTab, setActiveTab] = useState<MarketDataTab>(() => normalizeMarketDataTab(searchParams.get("tab")));
   const [refreshKey, setRefreshKey] = useState(0);
+  const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
+
+  useEffect(() => {
+    setActiveTab(normalizeMarketDataTab(searchParams.get("tab")));
+  }, [searchParams]);
+
+  function changeTab(tab: MarketDataTab) {
+    setActiveTab(tab);
+    const next: Record<string, string> = {};
+    if (tab !== "live") next.tab = tab;
+    for (const key of ["return_to", "exchange", "market", "symbol", "interval"]) {
+      const value = searchParams.get(key);
+      if (value) next[key] = value;
+    }
+    setSearchParams(next);
+  }
 
   const loadRequestPage = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
@@ -124,11 +162,16 @@ export default function MarketDataPage() {
         onRefresh={() => setRefreshKey((v) => v + 1)}
       />
 
-      <PageTabs tabs={MARKET_DATA_TABS} activeTab={activeTab} onChange={setActiveTab} ariaLabel="Market data sections">
+      <PageTabs tabs={MARKET_DATA_TABS} activeTab={activeTab} onChange={changeTab} ariaLabel="Market data sections">
         {activeTab === "requests" ? (
           <CreateRequestForm
+            defaultExchange={searchParams.get("exchange") || undefined}
+            defaultMarket={searchParams.get("market") || undefined}
+            defaultSymbol={searchParams.get("symbol") || undefined}
+            defaultInterval={searchParams.get("interval") || undefined}
             onCreated={() => {
               setRefreshKey((v) => v + 1);
+              if (returnTo) navigate(returnTo, { replace: true });
             }}
           />
         ) : null}
@@ -741,17 +784,25 @@ function CoverageGaps({
   );
 }
 
-function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
-  const [exchange, setExchange] = useState<(typeof SUPPORTED_EXCHANGES)[number]>("binance");
-  const [market, setMarket] = useState<"perpetual_futures" | "spot">("perpetual_futures");
-  const [symbol, setSymbol] = useState("");
-  const [interval, setInterval] = useState("1m");
+function CreateRequestForm({
+  defaultExchange,
+  defaultMarket,
+  defaultSymbol,
+  defaultInterval,
+  onCreated,
+}: {
+  defaultExchange?: string;
+  defaultMarket?: string;
+  defaultSymbol?: string;
+  defaultInterval?: string;
+  onCreated: (entry: MarketDataEntry) => void;
+}) {
+  const [exchange, setExchange] = useState<(typeof SUPPORTED_EXCHANGES)[number]>(() => normalizeExchange(defaultExchange));
+  const [market, setMarket] = useState<"perpetual_futures" | "spot">(() => normalizeMarket(defaultMarket));
+  const [symbol, setSymbol] = useState(() => (defaultSymbol || "").trim().toUpperCase());
+  const [interval, setInterval] = useState(() => normalizeInterval(defaultInterval));
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    setSymbol("");
-  }, [market]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -773,10 +824,11 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
     setErr(null);
     setSubmitting(true);
     try {
-      await createMarketDataRequest(payload);
-      onCreated();
+      const entry = await createMarketDataRequest(payload);
+      onCreated(entry);
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Create failed");
+    } finally {
       setSubmitting(false);
     }
   }
@@ -798,7 +850,14 @@ function CreateRequestForm({ onCreated }: { onCreated: () => void }) {
         </FilterField>
 
         <FilterField label="Market">
-          <select name="market" value={market} onChange={(e) => setMarket(e.target.value as "perpetual_futures" | "spot")}>
+          <select
+            name="market"
+            value={market}
+            onChange={(e) => {
+              setMarket(e.target.value as "perpetual_futures" | "spot");
+              setSymbol("");
+            }}
+          >
             <option value="perpetual_futures">Perpetual futures</option>
             <option value="spot">spot</option>
           </select>

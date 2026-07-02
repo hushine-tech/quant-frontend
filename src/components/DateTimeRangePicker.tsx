@@ -39,6 +39,12 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
+function floorToMinute(date: Date): Date {
+  const next = new Date(date);
+  next.setSeconds(0, 0);
+  return next;
+}
+
 function dateKey(date: Date): string {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
@@ -174,10 +180,8 @@ export default function DateTimeRangePicker({
   const months = useMemo(() => [visibleMonth, addMonths(visibleMonth, 1)], [visibleMonth]);
 
   function setPreset(days: number) {
-    const end = new Date();
+    const end = floorToMinute(new Date());
     const start = addDays(end, -days);
-    start.setMilliseconds(0);
-    end.setMilliseconds(0);
     onStartChange(toLocalDateTimeValue(start));
     onEndChange(toLocalDateTimeValue(end));
     setVisibleMonth(startOfMonth(start));

@@ -18,6 +18,7 @@ import {
   LogOut,
   MoreHorizontal,
   PanelLeftClose,
+  Rocket,
   ScrollText,
   UsersRound,
 } from "lucide-react";
@@ -35,10 +36,18 @@ import MarketDataPage from "@/pages/MarketData";
 import NotificationManagement from "@/pages/NotificationManagement";
 import RuntimeManagement, { RuntimeDetailPage } from "@/pages/RuntimeManagement";
 import VenueManagement from "@/pages/VenueManagement";
+import QuickStart from "@/pages/QuickStart";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!getToken()) return <Navigate to="/login" replace />;
   return children;
+}
+
+function AccountNewRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set("tab", "create");
+  return <Navigate to={`/accounts?${params.toString()}`} replace />;
 }
 
 const PRIMARY_NAV_ITEMS = [
@@ -51,6 +60,8 @@ const PRIMARY_NAV_ITEMS = [
   { to: "/orders", label: "Order History", icon: ClipboardList },
   { to: "/notifications", label: "Notification Management", icon: Bell },
 ];
+
+const QUICK_START_NAV_ITEM = { to: "/quick-start", label: "Quick Start", icon: Rocket, featured: true };
 
 type SidebarProps = {
   drawerOpen: boolean;
@@ -84,10 +95,11 @@ function Sidebar({
         </button>
       </div>
       <ul className="sidebar-nav">
-        {PRIMARY_NAV_ITEMS.map((item, index) => {
+        {[QUICK_START_NAV_ITEM, ...PRIMARY_NAV_ITEMS].map((item, index) => {
           const Icon = item.icon;
+          const featured = "featured" in item && item.featured;
           return (
-            <li key={item.to}>
+            <li key={item.to} className={featured ? "sidebar-nav__featured" : undefined}>
               <NavLink
                 to={item.to}
                 ref={index === 0 ? firstLinkRef : undefined}
@@ -149,6 +161,7 @@ function Layout({ children }: { children: React.ReactNode }) {
     return window.localStorage.getItem("hushine.sidebarCollapsed") === "1";
   });
   const location = useLocation();
+  const isAuthRoute = location.pathname === "/login" || location.pathname === "/signup";
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const firstLinkRef = useRef<HTMLAnchorElement>(null!);
 
@@ -195,6 +208,17 @@ function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [drawerOpen]);
 
+  if (isAuthRoute) {
+    return (
+      <div className="app-shell app-shell--auth">
+        <header className="app-header app-header--auth">
+          Quantitative Trading System
+        </header>
+        <main className="content-area content-area--auth">{children}</main>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -237,10 +261,14 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route
+          path="/quick-start"
+          element={<RequireAuth><QuickStart /></RequireAuth>}
+        />
+        <Route
           path="/accounts"
           element={<RequireAuth><AccountManagement /></RequireAuth>}
         />
-        <Route path="/accounts/new" element={<Navigate to="/accounts?tab=create" replace />} />
+        <Route path="/accounts/new" element={<AccountNewRedirect />} />
         <Route
           path="/accounts/:id"
           element={<RequireAuth><AccountDetail /></RequireAuth>}

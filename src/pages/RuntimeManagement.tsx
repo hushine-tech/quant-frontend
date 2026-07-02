@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
+import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
@@ -103,6 +104,7 @@ function normalizeRuntimeTab(value: string | null): RuntimeManagementTab {
 
 export default function RuntimeManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [admissionFailures, setAdmissionFailures] = useState<RuntimeAdmissionFailure[]>([]);
   const [activeSessionCounts, setActiveSessionCounts] = useState<Map<string, number>>(new Map());
   const [activeSessionLinks, setActiveSessionLinks] = useState<Map<string, Session>>(new Map());
@@ -115,6 +117,16 @@ export default function RuntimeManagement() {
   const [resourceProfile, setResourceProfile] = useState("small");
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
+  const selectionMode = Boolean(returnTo);
+  const runtimeRoleFilter = searchParams.get("role") || (selectionMode ? "executor" : undefined);
+  const runtimeEligibleFilter = searchParams.get("eligible") || (selectionMode ? "session_start" : undefined);
+  const runtimeEnvironmentFilter = useMemo(() => {
+    const raw = searchParams.get("environment");
+    if (raw == null || raw === "") return undefined;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }, [searchParams]);
 
   async function load() {
     setLoading(true);
@@ -159,7 +171,13 @@ export default function RuntimeManagement() {
 
   function changeTab(tab: RuntimeManagementTab) {
     setActiveTab(tab);
-    setSearchParams(tab === "runtimes" ? {} : { tab });
+    const next: Record<string, string> = {};
+    if (tab !== "runtimes") next.tab = tab;
+    for (const key of ["return_to", "eligible", "role", "environment"]) {
+      const value = searchParams.get(key);
+      if (value) next[key] = value;
+    }
+    setSearchParams(next);
   }
 
   async function createHosted() {
@@ -171,6 +189,10 @@ export default function RuntimeManagement() {
         name: name.trim() || undefined,
         resource_profile: resourceProfile,
       });
+      if (returnTo) {
+        navigate(appendReturnParam(returnTo, "runtime_id", result.runtime.runtime_id), { replace: true });
+        return;
+      }
       setNotice(result.provisioned ? "Hosted runtime created." : "Hosted runtime is already available.");
       setRefreshKey((v) => v + 1);
       await load();
@@ -203,7 +225,13 @@ export default function RuntimeManagement() {
   const loadRuntimePage = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
     try {
-      const result = await listRuntimes({ limit, offset });
+      const result = await listRuntimes({
+        limit,
+        offset,
+        eligible: runtimeEligibleFilter,
+        role: runtimeRoleFilter,
+        environment: runtimeEnvironmentFilter,
+      });
       return {
         items: result.runtimes,
         next_offset: offset + result.runtimes.length,
@@ -213,7 +241,7 @@ export default function RuntimeManagement() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [runtimeEligibleFilter, runtimeEnvironmentFilter, runtimeRoleFilter]);
 
   return (
     <div>
@@ -230,6 +258,16 @@ export default function RuntimeManagement() {
       {notice ? <p className="muted">{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
       {loading ? <p className="muted">Loading runtimes...</p> : null}
+      {selectionMode ? (
+        <div className="runtime-selection-banner">
+          <span>Select a routeable executor runtime for this session.</span>
+          {activeTab !== "create" ? (
+            <button type="button" onClick={() => changeTab("create")}>
+              Create Runtime
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <PageTabs tabs={runtimeTabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Runtime management sections">
         {activeTab === "runtimes" ? (
@@ -237,7 +275,7 @@ export default function RuntimeManagement() {
             columns={["Name", "Source", "Role", "Status", "Health", "Active sessions", "Started", "Ended", "End reason", "Cleanup", "Heartbeat", "Runtime ID", "Action"]}
             loadPage={loadRuntimePage}
             refreshKey={refreshKey}
-            emptyText="No runtimes found."
+            emptyText={selectionMode ? "No routeable executor runtimes found. Create a runtime to continue." : "No runtimes found."}
             className="runtime-table"
             rowKey={(rt) => rt.runtime_id}
             renderRow={(rt) => {
@@ -266,6 +304,14 @@ export default function RuntimeManagement() {
                   <td>{fmtTime(rt.heartbeat_at)}</td>
                   <td><code>{rt.runtime_id}</code></td>
                   <td>
+                    {returnTo && !runtimeUnavailableReason(rt) ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(appendReturnParam(returnTo, "runtime_id", rt.runtime_id), { replace: true })}
+                      >
+                        Use
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="danger"

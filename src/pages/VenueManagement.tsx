@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Building2 } from "lucide-react";
 import {
   archiveVenue,
@@ -21,15 +21,19 @@ import PageTabs, { type PageTab } from "@/components/PageTabs";
 import SymbolPicker from "@/components/SymbolPicker";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { formatUTCWithLocal } from "@/utils/time";
+import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
 
 type VenueTab = "venues" | "create";
 type SpotRow = { symbol: string; qty: string; price: string; avg: string };
 type FutRow = { symbol: string; direction: string; initial_balance: string; leverage: string; fee_rate: string };
+type VenueCreatedResult = { reusedExisting?: boolean };
 
 const tabs: Array<PageTab<VenueTab>> = [
   { id: "venues", label: "Venues" },
   { id: "create", label: "Create Venue" },
 ];
+
+const duplicateVenueRouteMessage = "venue already exists for account route or api key scope";
 
 function normalizeVenueTab(value: string | null): VenueTab {
   return value === "create" ? "create" : "venues";
@@ -85,8 +89,36 @@ function createEnvironmentCode(environment: CreateVenuePayload["environment"]): 
   return 1;
 }
 
+function createExchangeCode(exchange: CreateVenuePayload["exchange"]): number {
+  return exchange === "okx" ? 2 : 1;
+}
+
+function createMarketCode(market: CreateVenuePayload["market"]): number {
+  if (market === "spot") return 1;
+  if (market === "delivery_futures") return 3;
+  return 2;
+}
+
+function normalizedRouteLabel(value?: string): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function sameRouteValue(actualCode: number | undefined, actualLabel: string | undefined, expectedCode: number, expectedLabel: string): boolean {
+  return actualCode === expectedCode || normalizedRouteLabel(actualLabel) === expectedLabel;
+}
+
+function isActiveVenue(venue: Venue): boolean {
+  return venue.status === 1 || normalizedRouteLabel(venue.status_label) === "active";
+}
+
+function isDuplicateVenueRouteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(duplicateVenueRouteMessage);
+}
+
 export default function VenueManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<VenueTab>(() => normalizeVenueTab(searchParams.get("tab")));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +131,7 @@ export default function VenueManagement() {
   const [venueWalletLoading, setVenueWalletLoading] = useState(false);
   const [bindAccountID, setBindAccountID] = useState("");
   const [binding, setBinding] = useState(false);
+  const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
 
   function changeTab(tab: VenueTab) {
     setActiveTab(tab);
@@ -106,6 +139,10 @@ export default function VenueManagement() {
     if (tab !== "venues") next.tab = tab;
     const accountID = searchParams.get("account_id");
     if (accountID) next.account_id = accountID;
+    const environment = searchParams.get("environment");
+    if (environment) next.environment = environment;
+    const rawReturnTo = searchParams.get("return_to");
+    if (rawReturnTo) next.return_to = rawReturnTo;
     setSearchParams(next);
   }
 
@@ -402,6 +439,14 @@ export default function VenueManagement() {
                         {venue.account_id ? "Rebind" : "Bind"}
                       </button>
                     ) : null}
+                    {returnTo && venue.account_id ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(appendReturnParam(returnTo, "venue_id", venue.venue_id), { replace: true })}
+                      >
+                        Use
+                      </button>
+                    ) : null}
                     {venue.account_id ? (
                       <button type="button" onClick={() => void handleRelease(venue)}>Release</button>
                     ) : null}
@@ -418,8 +463,12 @@ export default function VenueManagement() {
           <CreateVenueForm
             defaultAccountID={accountFilter || ""}
             defaultEnvironment={normalizeCreateEnvironment(searchParams.get("environment"))}
-            onCreated={() => {
-              setNotice("Venue created.");
+            onCreated={(venue, result) => {
+              if (returnTo) {
+                navigate(appendReturnParam(returnTo, "venue_id", venue.venue_id), { replace: true });
+                return;
+              }
+              setNotice(result?.reusedExisting ? "Venue already exists; using existing venue." : "Venue created.");
               setRefreshKey((v) => v + 1);
               changeTab("venues");
             }}
@@ -437,7 +486,7 @@ function CreateVenueForm({
 }: {
   defaultAccountID: string;
   defaultEnvironment: CreateVenuePayload["environment"];
-  onCreated: () => void;
+  onCreated: (venue: Venue, result?: VenueCreatedResult) => void;
 }) {
   const [accountID, setAccountID] = useState(defaultAccountID);
   const [exchange, setExchange] = useState<CreateVenuePayload["exchange"]>("binance");
@@ -457,6 +506,14 @@ function CreateVenueForm({
   const [futInitial, setFutInitial] = useState("0");
   const [futRows, setFutRows] = useState<FutRow[]>([]);
   const [showFutAdd, setShowFutAdd] = useState(false);
+
+  useEffect(() => {
+    setAccountID(defaultAccountID);
+  }, [defaultAccountID]);
+
+  useEffect(() => {
+    setEnvironment(defaultEnvironment);
+  }, [defaultEnvironment]);
 
   const isSpot = market === "spot";
   const requiresCredentials = environment !== "backtest";
@@ -523,6 +580,25 @@ function CreateVenueForm({
     };
   }
 
+  async function findReusableVenue(): Promise<Venue | null> {
+    if (!accountID) return null;
+    const page = await listVenues({
+      account_id: accountID,
+      include_inactive: true,
+      include_unbound: false,
+      limit: 100,
+    });
+    const expectedExchange = createExchangeCode(exchange);
+    const expectedMarket = createMarketCode(market);
+    const expectedEnvironment = createEnvironmentCode(environment);
+    return (page.items ?? []).find((venue) => (
+      isActiveVenue(venue)
+      && sameRouteValue(venue.exchange, venue.exchange_label, expectedExchange, exchange)
+      && sameRouteValue(venue.market, venue.market_label, expectedMarket, market)
+      && sameRouteValue(venue.environment, venue.environment_label, expectedEnvironment, environment)
+    )) ?? null;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (requiresCredentials && (!apiKey.trim() || !apiSecret.trim())) return;
@@ -544,9 +620,23 @@ function CreateVenueForm({
         payload.credential_info = { api_key: apiKey.trim(), api_secret: apiSecret.trim() };
       }
       applyBacktestWalletPayload(payload);
-      await createVenue(payload);
-      onCreated();
+      const venue = await createVenue(payload);
+      onCreated(venue);
     } catch (e) {
+      if (isDuplicateVenueRouteError(e)) {
+        try {
+          const existingVenue = await findReusableVenue();
+          if (existingVenue) {
+            onCreated(existingVenue, { reusedExisting: true });
+            return;
+          }
+        } catch (lookupErr) {
+          const createMessage = e instanceof Error ? e.message : "Create venue failed";
+          const lookupMessage = lookupErr instanceof Error ? lookupErr.message : "lookup existing venue failed";
+          setError(`${createMessage}; ${lookupMessage}`);
+          return;
+        }
+      }
       setError(e instanceof Error ? e.message : "Create venue failed");
     } finally {
       setSubmitting(false);

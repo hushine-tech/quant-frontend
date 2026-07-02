@@ -42,9 +42,8 @@ function dockerRunCommand(role: "executor" | "debugger", name: string): string {
     lines.push("  -v $HOME/hushine-debug-workspace:/workspace \\");
   }
   lines.push(
-    "  -e RUNTIME_INGRESS_MODE=outbound \\",
     "  -e RUNTIME_CREDENTIAL_PATH=/etc/hushine/runtime.cred \\",
-    "  -e CONTROL_PANEL_SERVICE_GRPC_ADDR=<control-panel-host>:50054 \\",
+    "  -e RUNTIME_CHANNEL_GRPC_ADDR=<control-panel-host>:50055 \\",
     `  ${image}`,
   );
   return lines.join("\n");

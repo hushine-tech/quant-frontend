@@ -52,6 +52,7 @@ import SymbolPicker from "@/components/SymbolPicker";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
+import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
 
 function envBannerClass(environment: number): string {
   switch (environment) {
@@ -82,6 +83,7 @@ function normalizeAccountDetailTab(value: string | null): AccountDetailTab {
 
 const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
+const DEFAULT_SESSION_LEVERAGE = 1;
 
 function parseMaxLossClosePct(percentText: string): number | null {
   const value = Number(percentText);
@@ -89,9 +91,20 @@ function parseMaxLossClosePct(percentText: string): number | null {
   return value / 100;
 }
 
+function parseSessionLeverage(leverageText: string): number | null {
+  const value = Number(leverageText);
+  if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) return null;
+  return value;
+}
+
 function formatRiskPercent(value: number | undefined): string {
   if (!Number.isFinite(value ?? NaN) || !value) return `${DEFAULT_MAX_LOSS_CLOSE_PERCENT}%`;
   return `${((value ?? 0) * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+}
+
+function formatLeverage(value: number | undefined): string {
+  if (!Number.isFinite(value ?? NaN) || !value) return `${DEFAULT_SESSION_LEVERAGE}x`;
+  return `${(value ?? DEFAULT_SESSION_LEVERAGE).toFixed(2).replace(/\.?0+$/, "")}x`;
 }
 
 function localDebugInitialBalance(wallet: WalletSnapshot | null): number {
@@ -127,7 +140,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
   ));
 }
 
-async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<{ session_id: string }> {
+async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
   const entries = await listAccountStrategies(accountId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
@@ -153,6 +166,7 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
       end_time_ms: session.end_time_ms,
       runtime_id: runtimeId,
       max_loss_close_pct: maxLossClosePct,
+      leverage,
     });
   } catch (err) {
     if (changedActive) {
@@ -191,6 +205,9 @@ export default function AccountDetail() {
   const [loading, setLoading] = useState(true);
   const [venueWalletLoading, setVenueWalletLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => normalizeAccountDetailTab(searchParams.get("tab")));
+  const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
+  const initialRuntimeId = searchParams.get("runtime_id") || "";
+  const initialStrategyId = searchParams.get("strategy_id") || "";
 
   useEffect(() => {
     if (!id) return;
@@ -286,7 +303,14 @@ export default function AccountDetail() {
           ) : null}
 
           {activeTab === "run" ? (
-            <StrategyPanel accountId={acc.account_id} environment={environment} onSessionsChanged={bumpSessionRefreshTick} />
+            <StrategyPanel
+              accountId={acc.account_id}
+              environment={environment}
+              initialRuntimeId={initialRuntimeId}
+              initialStrategyId={initialStrategyId}
+              returnTo={returnTo}
+              onSessionsChanged={bumpSessionRefreshTick}
+            />
           ) : null}
 
           {activeTab === "debug" ? (
@@ -611,12 +635,38 @@ function AccountVenuesPanel({
 
 // ── Strategy execution panel ─────────────────────────────────────────────────
 
+function accountRunStrategyReturnPath(accountId: number, returnTo?: string | null, runtimeId?: string): string {
+  const params = new URLSearchParams();
+  params.set("tab", "run");
+  if (runtimeId) params.set("runtime_id", runtimeId);
+  if (returnTo) params.set("return_to", returnTo);
+  return `/accounts/${accountId}?${params.toString()}`;
+}
+
 type SessionRecord = {
   sessionId: string;
   statusLabel: string;
   barsProcessed: number;
   error: string;
+  statusNote?: string;
 };
+
+const MAX_STATUS_POLL_ERRORS = 5;
+
+function isRunPanelActiveStatus(status: string): boolean {
+  const normalized = status.toLowerCase();
+  return normalized === "running" || normalized === "stopping";
+}
+
+function sessionRecordFromSession(session: Session): SessionRecord {
+  return {
+    sessionId: session.session_id,
+    statusLabel: session.status || "running",
+    barsProcessed: session.bars_processed || 0,
+    error: session.error || "",
+    statusNote: "",
+  };
+}
 
 function badgeClass(status: string): string {
   switch (status) {
@@ -676,51 +726,29 @@ function previewRoutes(preview: PreviewRunStrategy): NonNullable<PreviewRunStrat
 // (including streams unrelated to the current strategy), which could show
 // green on the wrong symbol/interval/account.
 function LiveStartReadinessHint({
-  accountId,
-  runtimeId,
-  maxLossClosePct,
+  preview,
+  loading,
+  error,
 }: {
-  accountId: number;
-  runtimeId: string;
-  maxLossClosePct: number;
+  preview: PreviewRunStrategy | null;
+  loading: boolean;
+  error: string | null;
 }) {
-  const [preview, setPreview] = useState<PreviewRunStrategy | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      if (!runtimeId) {
-        setPreview(null);
-        setErr(null);
-        return;
-      }
-      try {
-        // No start/end — live/demo profile ignores them. Backend picks the
-        // declared strategy source from the active-strategy record.
-        const p = await previewRunStrategy(accountId, { runtime_id: runtimeId, max_loss_close_pct: maxLossClosePct });
-        if (!cancelled) {
-          setPreview(p);
-          setErr(null);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setPreview(null);
-          setErr(e instanceof Error ? e.message : "Preflight failed");
-        }
-      }
-    }
-    load();
-    const id = window.setInterval(load, 15_000);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [accountId, runtimeId, maxLossClosePct]);
-
-  if (err) {
+  if (loading && !preview && !error) {
+    return (
+      <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #3b82f6" }}>
+        <p style={{ margin: 0, fontSize: "0.9rem" }}>
+          <strong>Checking demo preflight...</strong>
+        </p>
+      </div>
+    );
+  }
+  if (error) {
     return (
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
         <p style={{ margin: 0, fontSize: "0.9rem" }}>
-          <strong>Live start blocked:</strong>{" "}
-          <span className="muted">{err}</span>
+          <strong>Demo start blocked:</strong>{" "}
+          <span className="muted">{error}</span>
         </p>
       </div>
     );
@@ -760,6 +788,13 @@ function LiveStartReadinessHint({
               <span className="muted"> · {preview.risk_controls.max_loss_close_source}</span>
             ) : null}
           </div>
+          <div>
+            <span className="muted">Leverage:</span>{" "}
+            {formatLeverage(preview.risk_controls?.leverage)}
+            {preview.risk_controls?.leverage_source ? (
+              <span className="muted"> · {preview.risk_controls.leverage_source}</span>
+            ) : null}
+          </div>
           {inputs.length > 0 ? (
             <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
           ) : null}
@@ -775,9 +810,9 @@ function LiveStartReadinessHint({
 
   // Not-ok — enumerate failures per declared input.
   return (
-    <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
-      <p style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>
-        <strong>Live start may be blocked:</strong>{" "}
+      <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
+        <p style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>
+        <strong>Demo start blocked:</strong>{" "}
         {preview.failures.length} declared input(s) not ready.
       </p>
       <div style={{ display: "grid", gap: "0.35rem", marginBottom: "0.5rem", fontSize: "0.82rem" }}>
@@ -786,6 +821,13 @@ function LiveStartReadinessHint({
           {formatRiskPercent(preview.risk_controls?.max_loss_close_pct)}
           {preview.risk_controls?.max_loss_close_source ? (
             <span className="muted"> · {preview.risk_controls.max_loss_close_source}</span>
+          ) : null}
+        </div>
+        <div>
+          <span className="muted">Leverage:</span>{" "}
+          {formatLeverage(preview.risk_controls?.leverage)}
+          {preview.risk_controls?.leverage_source ? (
+            <span className="muted"> · {preview.risk_controls.leverage_source}</span>
           ) : null}
         </div>
         {inputs.length > 0 ? (
@@ -974,10 +1016,58 @@ function BacktestCoverageGate({
       ) : null}
 
       {job ? (
-        <p className="muted" style={{ marginTop: "0.75rem" }}>
-          download job: {job.status} · {Math.round((job.progress || 0) * 100)}%
-          {job.error ? ` · ${job.error}` : ""}
-        </p>
+        <div style={{ marginTop: "0.75rem" }}>
+          <p className="muted" style={{ margin: 0 }}>
+            download job: {job.status} · {Math.round((job.progress || 0) * 100)}%
+            {job.updated_at ? ` · last checked ${formatUTCWithLocal(job.updated_at)}` : ""}
+            {job.error ? ` · ${job.error}` : ""}
+          </p>
+          {job.message ? (
+            <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+              {job.message}
+            </p>
+          ) : null}
+          {job.requests?.length ? (
+            <div className="table-scroll" style={{ marginTop: "0.5rem" }}>
+              <table className="compact" style={{ width: "100%", minWidth: "560px" }}>
+                <thead>
+                  <tr>
+                    <th>Request</th>
+                    <th>Status</th>
+                    <th>Range</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {job.requests.map((request) => (
+                    <tr key={request.request_id}>
+                      <td>
+                        #{request.request_id}{" "}
+                        <span className="muted">{request.key.symbol} {request.key.interval}</span>
+                      </td>
+                      <td>
+                        <span className={`status-badge ${request.status === "error" ? "status-badge--failed" : request.status === "ready" ? "status-badge--completed" : "status-badge--running"}`}>
+                          {request.status}
+                        </span>
+                        {request.last_error ? (
+                          <div className="error" style={{ fontSize: "0.78rem" }}>{request.last_error}</div>
+                        ) : null}
+                      </td>
+                      <td className="muted" style={{ fontSize: "0.78rem" }}>
+                        {request.requested_start_at ? formatUTCWithLocal(request.requested_start_at) : "-"}
+                        {" → "}
+                        {request.requested_end_at ? formatUTCWithLocal(request.requested_end_at) : "-"}
+                      </td>
+                      <td className="muted" style={{ fontSize: "0.78rem" }}>
+                        {request.updated_at ? formatUTCWithLocal(request.updated_at) : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem" }}>
@@ -1195,10 +1285,16 @@ cd ~/hushine-debug-workspace
 function StrategyPanel({
   accountId,
   environment,
+  initialRuntimeId = "",
+  initialStrategyId = "",
+  returnTo,
   onSessionsChanged,
 }: {
   accountId: number;
   environment: number;
+  initialRuntimeId?: string;
+  initialStrategyId?: string;
+  returnTo?: string | null;
   onSessionsChanged: () => void;
 }) {
   // Interval is no longer user-selectable: the strategy's declared INPUTS
@@ -1217,11 +1313,15 @@ function StrategyPanel({
   const [activePollSession, setActivePollSession] = useState<SessionRecord | null>(null);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusPollInFlightRef = useRef(false);
+  const statusPollErrorCountRef = useRef(0);
   const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [startDialogOpen, setStartDialogOpen] = useState(false);
-  const [startRuntimeId, setStartRuntimeId] = useState("");
+  const navigate = useNavigate();
+  const [startRuntimeId, setStartRuntimeId] = useState(initialRuntimeId);
   const [startRuntime, setStartRuntime] = useState<Runtime | null>(null);
   const [maxLossClosePercent, setMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+  const [sessionLeverageText, setSessionLeverageText] = useState(String(DEFAULT_SESSION_LEVERAGE));
   const [pendingStart, setPendingStart] = useState<{
     kind: "backtest" | "demo";
     interval: string;
@@ -1232,17 +1332,27 @@ function StrategyPanel({
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [downloadJob, setDownloadJob] = useState<DownloadRunJob | null>(null);
+  const [demoPreview, setDemoPreview] = useState<PreviewRunStrategy | null>(null);
+  const [demoPreviewLoading, setDemoPreviewLoading] = useState(false);
+  const [demoPreviewError, setDemoPreviewError] = useState<string | null>(null);
 
   // Account strategies (mounting panel)
   const [accountStrats, setAccountStrats] = useState<AccountStrategy[]>([]);
   const [mountErr, setMountErr] = useState<string | null>(null);
   const [selectedMountId, setSelectedMountId] = useState<number | "">("");
   const maxLossClosePct = parseMaxLossClosePct(maxLossClosePercent);
+  const sessionLeverage = parseSessionLeverage(sessionLeverageText);
+  const demoStartPreflightReady = pendingStart?.kind !== "demo" || (
+    Boolean(demoPreview?.ok) && !demoPreviewLoading && !demoPreviewError
+  );
+  const activeSessionInRunPanel = Boolean(activePollSession && isRunPanelActiveStatus(activePollSession.statusLabel));
 
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (downloadPollRef.current) clearInterval(downloadPollRef.current);
+      statusPollInFlightRef.current = false;
+      statusPollErrorCountRef.current = 0;
     };
   }, []);
 
@@ -1251,12 +1361,99 @@ function StrategyPanel({
   }, [accountId]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (activeSessionInRunPanel || running) return;
+
+    async function restoreActiveRunPanelSession() {
+      try {
+        const page = await listSessionsPage({ account_id: accountId, environment, runtime_id: startRuntimeId || undefined, limit: 20, offset: 0 });
+        if (cancelled) return;
+        const session = page.items.find((session) => isRunPanelActiveStatus(session.status));
+        if (!session) return;
+        if (!startRuntimeId && session.runtime_id) {
+          setStartRuntimeId(session.runtime_id);
+        }
+        beginSessionPoll(session.session_id, sessionRecordFromSession(session));
+      } catch {
+        // The Sessions tab remains the fallback source of truth; do not block
+        // the run panel if a restore probe fails during page load.
+      }
+    }
+
+    void restoreActiveRunPanelSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, environment, startRuntimeId, activeSessionInRunPanel, running]);
+
+  useEffect(() => {
+    setStartRuntimeId(initialRuntimeId);
+  }, [initialRuntimeId]);
+
+  useEffect(() => {
+    if (!initialStrategyId) return;
+    const parsed = Number(initialStrategyId);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      setSelectedMountId(parsed);
+    }
+  }, [initialStrategyId]);
+
+  useEffect(() => {
     setCoveragePreview(null);
     setCoverageError(null);
     setDownloadJob(null);
     if (!pendingStart || pendingStart.kind !== "backtest" || !startRuntimeId) return;
     void loadBacktestCoverage(pendingStart, startRuntimeId);
   }, [pendingStart, startRuntimeId, startRuntime]);
+
+  useEffect(() => {
+    setDemoPreview(null);
+    setDemoPreviewError(null);
+    setDemoPreviewLoading(false);
+    if (
+      !startDialogOpen ||
+      pendingStart?.kind !== "demo" ||
+      !startRuntimeId ||
+      maxLossClosePct === null ||
+      sessionLeverage === null
+    ) {
+      return;
+    }
+
+    const preflightMaxLossClosePct = maxLossClosePct;
+    const preflightLeverage = sessionLeverage;
+    let cancelled = false;
+    let timer: number | null = null;
+    async function loadDemoPreflight() {
+      setDemoPreviewLoading(true);
+      try {
+        const preview = await previewRunStrategy(accountId, {
+          runtime_id: startRuntimeId,
+          max_loss_close_pct: preflightMaxLossClosePct,
+          leverage: preflightLeverage,
+        });
+        if (!cancelled) {
+          setDemoPreview(preview);
+          setDemoPreviewError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDemoPreview(null);
+          setDemoPreviewError(err instanceof Error ? err.message : "Demo preflight failed");
+        }
+      } finally {
+        if (!cancelled) {
+          setDemoPreviewLoading(false);
+          timer = window.setTimeout(loadDemoPreflight, 15_000);
+        }
+      }
+    }
+    void loadDemoPreflight();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [accountId, startDialogOpen, pendingStart?.kind, startRuntimeId, maxLossClosePct, sessionLeverage]);
 
   async function loadAccountStrats() {
     try {
@@ -1272,6 +1469,11 @@ function StrategyPanel({
     setMountErr(null);
     try {
       await mountStrategy(accountId, selectedMountId);
+      if (returnTo) {
+        await activateStrategy(accountId, selectedMountId);
+        navigate(appendReturnParam(returnTo, "strategy_id", selectedMountId), { replace: true });
+        return;
+      }
       await loadAccountStrats();
       setSelectedMountId("");
     } catch (e) {
@@ -1293,10 +1495,19 @@ function StrategyPanel({
     setMountErr(null);
     try {
       await activateStrategy(accountId, sid);
+      if (returnTo) {
+        navigate(appendReturnParam(returnTo, "strategy_id", sid), { replace: true });
+        return;
+      }
       await loadAccountStrats();
     } catch (e) {
       setMountErr(e instanceof Error ? e.message : "Activate failed");
     }
+  }
+
+  function handleUseActiveStrategy(sid: number) {
+    if (!returnTo) return;
+    navigate(appendReturnParam(returnTo, "strategy_id", sid), { replace: true });
   }
 
   async function handleDeactivate(sid: number) {
@@ -1309,19 +1520,32 @@ function StrategyPanel({
     }
   }
 
-  function beginSessionPoll(sessionId: string) {
+  function beginSessionPoll(sessionId: string, initial?: SessionRecord) {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    statusPollInFlightRef.current = false;
+    statusPollErrorCountRef.current = 0;
     onSessionsChanged();
-    setActivePollSession({ sessionId, statusLabel: "running", barsProcessed: 0, error: "" });
+    setActivePollSession(initial ?? { sessionId, statusLabel: "running", barsProcessed: 0, error: "", statusNote: "" });
 
-    pollRef.current = setInterval(async () => {
+    async function pollSession() {
+      if (statusPollInFlightRef.current) return;
+      statusPollInFlightRef.current = true;
       try {
         const st = await getStrategyStatus(sessionId);
+        statusPollErrorCountRef.current = 0;
         setActivePollSession((prev) =>
-          prev ? { ...prev, statusLabel: st.status, barsProcessed: st.bars_processed, error: st.error } : prev
+          prev
+            ? {
+                ...prev,
+                statusLabel: st.status,
+                barsProcessed: st.bars_processed,
+                error: st.error,
+                statusNote: "",
+              }
+            : prev
         );
         if (st.status !== "running" && st.status !== "stopping") {
           if (pollRef.current) clearInterval(pollRef.current);
@@ -1331,15 +1555,27 @@ function StrategyPanel({
           onSessionsChanged();
         }
       } catch (pollErr) {
+        statusPollErrorCountRef.current += 1;
+        const message = pollErr instanceof Error ? pollErr.message : "Poll failed";
+        if (statusPollErrorCountRef.current < MAX_STATUS_POLL_ERRORS) {
+          return;
+        }
         setActivePollSession((prev) =>
-          prev ? { ...prev, statusLabel: "failed", error: pollErr instanceof Error ? pollErr.message : "Poll failed" } : prev
+          prev
+            ? {
+                ...prev,
+                statusNote: `Status updates are delayed; still polling. Last error: ${message}`,
+              }
+            : prev
         );
-        if (pollRef.current) clearInterval(pollRef.current);
-        pollRef.current = null;
-        setRunning(false);
-        setActivePollSession(null);
-        onSessionsChanged();
+      } finally {
+        statusPollInFlightRef.current = false;
       }
+    }
+
+    void pollSession();
+    pollRef.current = setInterval(() => {
+      void pollSession();
     }, 2000);
   }
 
@@ -1349,6 +1585,10 @@ function StrategyPanel({
   ) {
     if (maxLossClosePct === null) {
       setError("Max loss close must be greater than 0 and no more than 100%.");
+      return;
+    }
+    if (sessionLeverage === null) {
+      setError("Leverage must be a positive whole number.");
       return;
     }
     if (!runtimeId) {
@@ -1366,10 +1606,12 @@ function StrategyPanel({
         end_time_ms: params.endTimeMs,
         runtime_id: runtimeId,
         max_loss_close_pct: maxLossClosePct,
+        leverage: sessionLeverage,
       });
       setStartDialogOpen(false);
       setPendingStart(null);
       beginSessionPoll(sess.session_id);
+      setRunning(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start");
       setRunning(false);
@@ -1415,6 +1657,7 @@ function StrategyPanel({
       setDownloadJob(null);
       setCoveragePreview(null);
       beginSessionPoll(job.session_id);
+      setRunning(false);
       return;
     }
     if (job.status === "error") {
@@ -1443,6 +1686,10 @@ function StrategyPanel({
       setError("Max loss close must be greater than 0 and no more than 100%.");
       return;
     }
+    if (sessionLeverage === null) {
+      setError("Leverage must be a positive whole number.");
+      return;
+    }
     if (!startRuntimeId) {
       setError("Select a runtime before starting the session.");
       return;
@@ -1457,6 +1704,7 @@ function StrategyPanel({
         end_time_ms: pendingStart.endTimeMs,
         runtime_id: startRuntimeId,
         max_loss_close_pct: maxLossClosePct,
+        leverage: sessionLeverage,
       });
       handleDownloadJobUpdate(job);
       if (job.status !== "ready" && job.status !== "error") {
@@ -1480,12 +1728,20 @@ function StrategyPanel({
       setError("Max loss close must be greater than 0 and no more than 100%.");
       return;
     }
+    if (sessionLeverage === null) {
+      setError("Leverage must be a positive whole number.");
+      return;
+    }
     if (pendingStart.kind === "backtest" && !coveragePreview?.complete) {
       setError("Historical data coverage is incomplete. Download missing data before running this backtest.");
       return;
     }
     if (pendingStart.kind === "backtest" && !activeStrat) {
       setError("Activate a strategy before running a backtest.");
+      return;
+    }
+    if (pendingStart.kind === "demo" && !demoStartPreflightReady) {
+      setError(demoPreviewError || "Demo preflight is not ready yet.");
       return;
     }
     await startStrategyRun(pendingStart, startRuntimeId);
@@ -1610,9 +1866,16 @@ function StrategyPanel({
                     </button>
                   </>
                 ) : (
-                  <button style={{ fontSize: "0.8rem" }} onClick={() => handleDeactivate(as.strategy.strategy_id)}>
-                    Deactivate
-                  </button>
+                  <>
+                    {returnTo ? (
+                      <button style={{ fontSize: "0.8rem" }} onClick={() => handleUseActiveStrategy(as.strategy.strategy_id)}>
+                        Use
+                      </button>
+                    ) : null}
+                    <button style={{ fontSize: "0.8rem" }} onClick={() => handleDeactivate(as.strategy.strategy_id)}>
+                      Deactivate
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -1620,7 +1883,7 @@ function StrategyPanel({
         )}
         {mountErr ? <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{mountErr}</p> : null}
 
-        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
             <AsyncSelect<Strategy>
               value={selectedMountId === "" ? "" : String(selectedMountId)}
               placeholder="Mount a strategy"
@@ -1641,6 +1904,12 @@ function StrategyPanel({
               }}
             />
             <button onClick={handleMount} disabled={!selectedMountId}>Mount</button>
+            <Link
+              className="button-link"
+              to={`/strategies?tab=create&return_to=${encodeURIComponent(accountRunStrategyReturnPath(accountId, returnTo, startRuntimeId))}`}
+            >
+              Create Strategy in Strategy Management
+            </Link>
           </div>
       </div>
 
@@ -1684,6 +1953,9 @@ function StrategyPanel({
           </div>
           {activePollSession.error ? (
             <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{activePollSession.error}</p>
+          ) : null}
+          {activePollSession.statusNote ? (
+            <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{activePollSession.statusNote}</p>
           ) : null}
           {stopError ? (
             <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{stopError}</p>
@@ -1735,8 +2007,8 @@ function StrategyPanel({
           {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}
 
           <p style={{ marginTop: "0.75rem" }}>
-            <button type="submit" className="primary" disabled={running || !startTime || !endTime || !startRuntimeId || !activeStrat}>
-              {running ? "Running…" : "Run backtest"}
+            <button type="submit" className="primary" disabled={running || activeSessionInRunPanel || !startTime || !endTime || !startRuntimeId || !activeStrat}>
+              {running ? "Starting…" : activeSessionInRunPanel ? "Session running" : "Run backtest"}
             </button>
           </p>
         </form>
@@ -1776,10 +2048,10 @@ function StrategyPanel({
           <button
             type="button"
             className="primary"
-            disabled={running || !activeStrat || !startRuntimeId}
+            disabled={running || activeSessionInRunPanel || !activeStrat || !startRuntimeId}
             onClick={() => { void handleLiveStart(); }}
           >
-            {running ? "Starting…" : "Start Demo Session"}
+            {running ? "Starting…" : activeSessionInRunPanel ? "Session running" : "Start Demo Session"}
           </button>
         </p>
       </div>
@@ -1811,7 +2083,12 @@ function StrategyPanel({
         busy={running}
         error={error}
         confirmLabel={pendingStart?.kind === "demo" ? "Start Session" : "Run Backtest"}
-        confirmDisabled={maxLossClosePct === null || (pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error")))}
+        confirmDisabled={
+          maxLossClosePct === null ||
+          sessionLeverage === null ||
+          (pendingStart?.kind === "demo" && !demoStartPreflightReady) ||
+          (pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error")))
+        }
         onRuntimeChange={(runtimeId, runtime) => {
           setStartRuntimeId(runtimeId);
           setStartRuntime(runtime ?? null);
@@ -1824,25 +2101,42 @@ function StrategyPanel({
         }}
         onConfirm={() => { void handleConfirmStart(); }}
       >
-        <div style={{ marginTop: "0.85rem" }}>
+        <div style={{ marginTop: "0.85rem", display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))" }}>
           <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
             <span>Max loss close (%)</span>
             <input
               type="number"
               min="0.01"
               max="100"
-              step="0.1"
+              step="any"
               value={maxLossClosePercent}
               onChange={(event) => setMaxLossClosePercent(event.target.value)}
               disabled={running}
               style={{ maxWidth: "10rem" }}
             />
+            {maxLossClosePct === null ? (
+              <span className="error" style={{ fontSize: "0.82rem" }}>
+                Enter a value from 0.01 to 100.
+              </span>
+            ) : null}
           </label>
-          {maxLossClosePct === null ? (
-            <p className="error" style={{ marginTop: "0.35rem", marginBottom: 0, fontSize: "0.82rem" }}>
-              Enter a value from 0.01 to 100.
-            </p>
-          ) : null}
+          <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
+            <span>Leverage (x)</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={sessionLeverageText}
+              onChange={(event) => setSessionLeverageText(event.target.value)}
+              disabled={running}
+              style={{ maxWidth: "10rem" }}
+            />
+            {sessionLeverage === null ? (
+              <span className="error" style={{ fontSize: "0.82rem" }}>
+                Enter a positive whole number.
+              </span>
+            ) : null}
+          </label>
         </div>
         {pendingStart?.kind === "backtest" ? (
           <BacktestCoverageGate
@@ -1859,8 +2153,8 @@ function StrategyPanel({
             }}
             onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
           />
-        ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null ? (
-          <LiveStartReadinessHint accountId={accountId} runtimeId={startRuntimeId} maxLossClosePct={maxLossClosePct} />
+        ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null && sessionLeverage !== null ? (
+          <LiveStartReadinessHint preview={demoPreview} loading={demoPreviewLoading} error={demoPreviewError} />
         ) : null}
       </RuntimeSelectionDialog>
     </>
@@ -1881,8 +2175,10 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
   const [resumeDialogSession, setResumeDialogSession] = useState<Session | null>(null);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
   const [resumeMaxLossClosePercent, setResumeMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+  const [resumeLeverageText, setResumeLeverageText] = useState(String(DEFAULT_SESSION_LEVERAGE));
   const [resuming, setResuming] = useState(false);
   const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
+  const resumeLeverage = parseSessionLeverage(resumeLeverageText);
 
   useEffect(() => {
     setTableRefresh((v) => v + 1);
@@ -1967,12 +2263,18 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       setStopError("Enter a max loss close value from 0.01 to 100.");
       return;
     }
+    if (resumeLeverage === null) {
+      setStopError("Enter a positive whole-number leverage value.");
+      return;
+    }
     setResuming(true);
     try {
-      const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId, resumeMaxLossClosePct);
+      const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
       setTableRefresh((v) => v + 1);
       setResumeDialogSession(null);
       setResumeRuntimeId("");
+      setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+      setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
       navigate(`/accounts/${accountId}/sessions/${resumed.session_id}`);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to resume session");
@@ -1985,6 +2287,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
     setStopError(null);
     setResumeRuntimeId("");
     setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+    setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
     setResumeDialogSession(session);
   }
 
@@ -2078,38 +2381,56 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       busy={resuming}
       error={stopError}
       confirmLabel="Resume"
-      confirmDisabled={resumeMaxLossClosePct === null}
+      confirmDisabled={resumeMaxLossClosePct === null || resumeLeverage === null}
       onRuntimeChange={setResumeRuntimeId}
       onCancel={() => {
         if (resuming) return;
         setResumeDialogSession(null);
         setResumeRuntimeId("");
         setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
+        setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
         setStopError(null);
       }}
       onConfirm={() => {
         if (resumeDialogSession) void handleResumeWithNewSession(resumeDialogSession);
       }}
     >
-      <div style={{ marginTop: "0.85rem" }}>
+      <div style={{ marginTop: "0.85rem", display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))" }}>
         <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
           <span>Max loss close (%)</span>
           <input
             type="number"
             min="0.01"
             max="100"
-            step="0.1"
+            step="any"
             value={resumeMaxLossClosePercent}
             onChange={(event) => setResumeMaxLossClosePercent(event.target.value)}
             disabled={resuming}
             style={{ maxWidth: "10rem" }}
           />
+          {resumeMaxLossClosePct === null ? (
+            <span className="error" style={{ fontSize: "0.82rem" }}>
+              Enter a value from 0.01 to 100.
+            </span>
+          ) : null}
         </label>
-        {resumeMaxLossClosePct === null ? (
-          <p className="error" style={{ marginTop: "0.35rem", marginBottom: 0, fontSize: "0.82rem" }}>
-            Enter a value from 0.01 to 100.
-          </p>
-        ) : null}
+        <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
+          <span>Leverage (x)</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={resumeLeverageText}
+            onChange={(event) => setResumeLeverageText(event.target.value)}
+            disabled={resuming}
+            style={{ maxWidth: "10rem" }}
+          />
+          {resumeLeverage === null ? (
+            <span className="error" style={{ fontSize: "0.82rem" }}>
+              Enter a positive whole number.
+            </span>
+          ) : null}
+        </label>
       </div>
     </RuntimeSelectionDialog>
     </>

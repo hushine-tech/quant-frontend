@@ -12,6 +12,12 @@ assert.equal(
   "Session detail status label should be English",
 );
 
+assert.match(
+  source,
+  /\{session\?\.error\s*\?\s*\(\s*<p className="error"/,
+  "Session detail should render session.error for running debug sessions as well as terminal sessions",
+);
+
 assert.equal(
   source.includes("当前状态"),
   false,

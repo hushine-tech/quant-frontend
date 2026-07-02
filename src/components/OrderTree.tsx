@@ -28,6 +28,9 @@ export type TreeIntent = {
   post_only?: boolean;
   good_till_date?: string;
   reduce_only?: boolean;
+  status?: string;
+  reject_code?: string;
+  reject_message?: string;
 };
 
 export type TreeRiskReason = {
@@ -192,9 +195,67 @@ function OrderSemanticBadges({ item }: { item: OrderSemantics }) {
 function riskReasonText(reasons: TreeRiskReason[] | undefined): string | undefined {
   if (!reasons?.length) return undefined;
   return reasons
-    .map((reason) => [reason.code, reason.message].filter(Boolean).join(": "))
+    .map(formatRiskReason)
     .filter(Boolean)
-    .join("; ");
+    .join("；");
+}
+
+function formatRiskReason(reason: TreeRiskReason): string {
+  const code = String(reason.code || "").trim();
+  const message = String(reason.message || "").trim();
+  if (!code && !message) return "";
+
+  if (code === "MIN_NOTIONAL_VIOLATION") {
+    const match = message.match(/notional\s+([0-9.]+)\s+is below min_notional\s+([0-9.]+)/i);
+    if (match) {
+      return `Minimum notional must be at least ${match[2]} USDT; current order notional is ${match[1]} USDT (${code})`;
+    }
+    return `Minimum notional is too low${message ? `: ${message}` : ""}${code ? ` (${code})` : ""}`;
+  }
+
+  if (code === "MIN_QTY_VIOLATION") {
+    const match = message.match(/qty\s+([0-9.]+)\s+is below min_qty\s+([0-9.]+)/i);
+    if (match) {
+      return `Minimum order quantity must be at least ${match[2]}; current quantity is ${match[1]} (${code})`;
+    }
+  }
+
+  if (code === "STEP_SIZE_VIOLATION") {
+    const match = message.match(/qty\s+([0-9.]+)\s+is not aligned to step_size\s+([0-9.]+)/i);
+    if (match) {
+      return `Order quantity must align to step size ${match[2]}; current quantity is ${match[1]} (${code})`;
+    }
+  }
+
+  if (code === "RISK_METADATA_MISSING") {
+    return "Futures risk metadata is missing, so leverage, minimum quantity, and minimum notional rules cannot be verified (RISK_METADATA_MISSING)";
+  }
+
+  if (code === "ROUTE_PENDING_EXECUTION") {
+    return "This route has pending execution; the order was blocked to avoid duplicate execution (ROUTE_PENDING_EXECUTION)";
+  }
+
+  if (code && message && message !== code) return `${message} (${code})`;
+  return code || message;
+}
+
+function attemptFailureReasonText(attempt: TreeAttempt): string | undefined {
+  return riskReasonText(attempt.risk_reasons)
+    || cleanFailureText(attempt.recovery_error)
+    || cleanFailureText(attempt.error_message);
+}
+
+function intentFailureReasonText(intent: TreeIntent): string | undefined {
+  if (!intent.reject_code && !intent.reject_message) return undefined;
+  return formatRiskReason({
+    code: intent.reject_code,
+    message: intent.reject_message,
+  });
+}
+
+function cleanFailureText(value: string | undefined): string | undefined {
+  const text = String(value || "").trim();
+  return text || undefined;
 }
 
 type RouteFacts = {
@@ -339,6 +400,7 @@ function IntentRow<
   fetchFills: FillFetcher<F>;
 }) {
   const [open, setOpen] = useState(false);
+  const failureReason = intentFailureReasonText(intent);
   return (
     <div style={{ borderBottom: "1px solid #f1f5f9", padding: "0.4rem 0" }}>
       <div
@@ -387,6 +449,18 @@ function IntentRow<
           ) : (
             <span className="muted">Session {intent.session_id.slice(0, 10)}…</span>
           )
+        ) : null}
+        {failureReason ? (
+          <span
+            style={{
+              color: "#b91c1c",
+              fontWeight: 600,
+              flexBasis: "100%",
+              marginLeft: "1.6rem",
+            }}
+          >
+            Failure reason: {failureReason}
+          </span>
         ) : null}
         <span className="muted" style={{ marginLeft: "auto", fontSize: "0.85rem" }}>
           {formatUTCWithLocal(intent.time)}
@@ -470,6 +544,7 @@ function AttemptRow<
   fetchFills: FillFetcher<F>;
 }) {
   const [open, setOpen] = useState(false);
+  const failureReason = attemptFailureReasonText(attempt);
   return (
     <div style={{ borderBottom: "1px dashed #e2e8f0", padding: "0.3rem 0" }}>
       <div
@@ -511,9 +586,16 @@ function AttemptRow<
           mark {attempt.mark_price > 0 ? attempt.mark_price.toFixed(2) : "—"}
         </span>
         <span className="muted">{routeFactText(attempt)}</span>
-        {attempt.recovery_error || attempt.error_message ? (
-          <span style={{ color: "#dc2626" }}>
-            {attempt.recovery_error || attempt.error_message}
+        {failureReason ? (
+          <span
+            style={{
+              color: "#b91c1c",
+              fontWeight: 600,
+              flexBasis: "100%",
+              marginLeft: "1.6rem",
+            }}
+          >
+            Failure reason: {failureReason}
           </span>
         ) : null}
         <span className="muted" style={{ marginLeft: "auto", fontSize: "0.8rem" }}>

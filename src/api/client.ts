@@ -6,6 +6,29 @@ export type Account = {
   created_at: string;
 };
 
+const COVERAGE_PREVIEW_TIMEOUT_MS = 20_000;
+const SESSION_STATUS_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export type AuthUser = {
   id: number;
   username: string;
@@ -469,6 +492,7 @@ export type RunStrategyParams = {
   end_time_ms?: number;
   runtime_id?: string;
   max_loss_close_pct?: number;
+  leverage?: number;
 };
 
 export type StrategySession = { session_id: string };
@@ -477,6 +501,8 @@ export type StrategyStatus = {
   status: string;         // "running" | "finished" | "failed" | "stopped" ("completed" = legacy)
   bars_processed: number;
   error: string;
+  status_stale?: boolean;
+  status_refresh_error?: string;
 };
 
 export async function runStrategy(
@@ -500,9 +526,14 @@ export async function runStrategy(
 export async function getStrategyStatus(sessionId: string): Promise<StrategyStatus> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
-  const res = await fetch(`${apiBase()}/api/strategy-sessions/${sessionId}`, {
-    headers: { Authorization: `Bearer ${t}` },
-  });
+  const res = await fetchWithTimeout(
+    `${apiBase()}/api/strategy-sessions/${sessionId}`,
+    {
+      headers: { Authorization: `Bearer ${t}` },
+    },
+    SESSION_STATUS_TIMEOUT_MS,
+    "Session status timed out. Check runtime connectivity and try again.",
+  );
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as StrategyStatus;
 }
@@ -553,12 +584,14 @@ export type PreviewRunStrategy = {
   risk_controls?: {
     max_loss_close_pct: number;
     max_loss_close_source: string;
+    leverage: number;
+    leverage_source: string;
   };
 };
 
 export async function previewRunStrategy(
   accountId: number | string,
-  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
+  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number; leverage?: number },
 ): Promise<PreviewRunStrategy> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -593,6 +626,8 @@ export type DownloadRunJob = {
   job_id: string;
   status: "pending" | "running" | "ready" | "error" | string;
   progress: number;
+  message?: string;
+  requests?: MarketDataRequest[];
   session_id?: string;
   error?: string;
   created_at: string;
@@ -605,21 +640,21 @@ export async function previewBacktestCoverage(
 ): Promise<BacktestCoveragePreview> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
-  const res = await fetch(`${apiBase()}/api/accounts/${accountId}/strategy/coverage-preview`, {
+  const res = await fetchWithTimeout(`${apiBase()}/api/accounts/${accountId}/strategy/coverage-preview`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(params),
-  });
+  }, COVERAGE_PREVIEW_TIMEOUT_MS, "Coverage preview timed out. Check runtime connectivity and try again.");
   if (!res.ok) throw new Error(await parseErr(res));
   return (await res.json()) as BacktestCoveragePreview;
 }
 
 export async function startDownloadAndRunBacktest(
   accountId: number | string,
-  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
+  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number; leverage?: number },
 ): Promise<DownloadRunJob> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -910,6 +945,9 @@ export type SessionOrderIntent = {
   exchange_label?: string;
   position_side?: string;
   session_id?: string;
+  status?: string;
+  reject_code?: string;
+  reject_message?: string;
 };
 
 export type SessionOrder = {
@@ -959,6 +997,8 @@ export type SessionOrderAttempt = {
   strategy_id: number;
   error_message?: string;
   recovery_error?: string;
+  risk_status?: string;
+  risk_reasons?: OrderRiskReason[];
 };
 
 export type SessionOrderFill = {
@@ -1262,6 +1302,9 @@ export type OrderIntentEntry = {
   exchange_label?: string;
   position_side?: string;
   session_id?: string;
+  status?: string;
+  reject_code?: string;
+  reject_message?: string;
   post_only?: boolean;
   good_till_date?: string;
   reduce_only?: boolean;

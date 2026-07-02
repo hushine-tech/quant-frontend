@@ -10,6 +10,8 @@ const client = readFileSync(join(here, "../src/api/client.ts"), "utf8");
 
 for (const token of [
   "previewBacktestCoverage",
+  "COVERAGE_PREVIEW_TIMEOUT_MS",
+  "AbortController",
   "Download data and run backtest",
   "Direct run is disabled until the full range is available.",
   "confirmDisabled",

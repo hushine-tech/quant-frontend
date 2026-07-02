@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { X } from "lucide-react";
 import RuntimeSelector from "@/components/RuntimeSelector";
 import { type Runtime } from "@/api/client";
 
@@ -42,9 +43,21 @@ export default function RuntimeSelectionDialog({
   return (
     <div className="dialog-backdrop" role="presentation">
       <div className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="runtime-selection-title">
-        <h3 id="runtime-selection-title" style={{ marginTop: 0, marginBottom: "0.5rem" }}>
-          {title}
-        </h3>
+        <div className="dialog-header">
+          <h3 id="runtime-selection-title" style={{ margin: 0 }}>
+            {title}
+          </h3>
+          <button
+            type="button"
+            className="dialog-close-button"
+            onClick={onCancel}
+            disabled={busy}
+            aria-label="Close dialog"
+            title="Close"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
         {description ? <p className="muted" style={{ marginTop: 0 }}>{description}</p> : null}
         <RuntimeSelector
           value={runtimeId}

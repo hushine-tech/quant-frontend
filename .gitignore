@@ -5,6 +5,9 @@ dist
 *.local
 /logs
 /.run.pid
+/.frontend.pid
+preview.log
+vite-preview.out
 .pytest_cache/
 .claude/
 .cursor/
