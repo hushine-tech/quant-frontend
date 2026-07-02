@@ -43,8 +43,9 @@ assert.deepEqual([...navOrder].sort((a, b) => a - b), navOrder, "Primary nav sho
 
 assert.equal(files.api.includes("description?: string"), true, "Account API type should expose optional description");
 assert.equal(files.accountNew.includes("Description"), true, "Create Account should include a description field");
-assert.equal(files.accountNew.includes("Initial venue"), true, "Create Account should model backtest/demo/live as an initial venue decision");
+assert.equal(files.accountNew.includes("Account environment"), true, "Create Account should choose only the account environment");
 for (const token of [
+  "Create simulated Binance",
   "Spot wallet",
   "Futures wallet",
   "body.spot",
@@ -108,9 +109,11 @@ assert.equal(files.venueManagement.includes("Synthetic"), true, "Venue managemen
 assert.equal(files.accountDetail.includes("Synthetic"), true, "Account detail should label synthetic backtest keys");
 
 for (const token of [
-  'type SessionDetailTab = "snapshots" | "reconciliation" | "orders"',
+  'type SessionDetailTab = "chart" | "snapshots" | "reconciliation" | "orders" | "lifecycle"',
   "SessionDetailTab",
   "PageTabs",
+  "Chart",
+  "Lifecycle Events",
 ]) {
   assert.equal(files.sessionDetail.includes(token), true, `Session detail should use tabs: ${token}`);
 }
@@ -125,7 +128,6 @@ for (const [name, content] of [
 }
 assert.equal(files.asyncSelectPagination.includes("collectFilteredPage"), true, "AsyncSelect client-side filtering should use a cross-page pagination helper");
 for (const [name, content] of [
-  ["Create Account", files.accountNew],
   ["Venue Management", files.venueManagement],
   ["Account Detail", files.accountDetail],
   ["Session Management", files.sessionManagement],
