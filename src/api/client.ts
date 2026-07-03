@@ -917,6 +917,76 @@ export async function getSession(sessionId: string): Promise<Session> {
   return (await res.json()) as Session;
 }
 
+export type StrategyIndicatorType = "line" | "histogram" | "marker" | string;
+
+export type StrategyIndicatorDefinition = {
+  session_id: string;
+  strategy_id: number;
+  stream_key: string;
+  indicator_key: string;
+  name: string;
+  type: StrategyIndicatorType;
+  pane: string;
+  color: string;
+  unit: string;
+  description: string;
+  config_json: string;
+};
+
+export type StrategyIndicatorChunk = {
+  session_id: string;
+  stream_key: string;
+  indicator_key: string;
+  chunk_index: number;
+  start_time_ms: number;
+  end_time_ms: number;
+  interval_ms: number;
+  count: number;
+  values_json: string;
+};
+
+export type StrategyIndicatorDefinitionList = {
+  items: StrategyIndicatorDefinition[];
+};
+
+export type StrategyIndicatorChunkList = {
+  items: StrategyIndicatorChunk[];
+};
+
+export async function getSessionIndicators(
+  sessionId: string,
+  streamKey?: string,
+): Promise<StrategyIndicatorDefinitionList> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const u = new URL(`${apiBase()}/api/sessions/${sessionId}/indicators`);
+  if (streamKey) u.searchParams.set("stream_key", streamKey);
+  const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as StrategyIndicatorDefinitionList;
+}
+
+export async function getSessionIndicatorChunks(
+  sessionId: string,
+  params: {
+    stream_key: string;
+    keys?: string[];
+    start_time_ms: number;
+    end_time_ms: number;
+  },
+): Promise<StrategyIndicatorChunkList> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const u = new URL(`${apiBase()}/api/sessions/${sessionId}/indicators/chunks`);
+  u.searchParams.set("stream_key", params.stream_key);
+  if (params.keys?.length) u.searchParams.set("keys", params.keys.join(","));
+  u.searchParams.set("start_time_ms", String(params.start_time_ms));
+  u.searchParams.set("end_time_ms", String(params.end_time_ms));
+  const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
+  if (!res.ok) throw new Error(await parseErr(res));
+  return (await res.json()) as StrategyIndicatorChunkList;
+}
+
 export type SnapshotEntry = {
   time: string;
   account_id: number;

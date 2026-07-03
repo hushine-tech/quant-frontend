@@ -19,6 +19,8 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import {
+  getSessionIndicatorChunks,
+  getSessionIndicators,
   getSessionFills,
   getSessionLifecycleEvents,
   queryMarketDataKlines,
@@ -26,6 +28,8 @@ import {
   type MarketDataKline,
   type OrderLifecycleEvent,
   type Session,
+  type StrategyIndicatorChunk,
+  type StrategyIndicatorDefinition,
   type SessionOrderFill,
   type StrategyInputDeclaration,
 } from "@/api/client";
@@ -53,6 +57,14 @@ const RSI_LABELS: Record<RSIPeriod, string> = {
   12: "RSI12",
   24: "RSI24",
 };
+const CUSTOM_INDICATOR_FALLBACK_COLORS = [
+  "#0f766e",
+  "#9333ea",
+  "#ea580c",
+  "#0284c7",
+  "#be123c",
+  "#4d7c0f",
+];
 
 type ChartInput = StrategyInputDeclaration & {
   label: string;
@@ -64,6 +76,11 @@ type ChartState = {
   rows: MarketDataKline[];
   fills: SessionOrderFill[];
   lifecycleEvents: OrderLifecycleEvent[];
+  customIndicators: {
+    definitions: StrategyIndicatorDefinition[];
+    chunks: StrategyIndicatorChunk[];
+    error: string;
+  };
 };
 
 type HoverCandle = {
@@ -78,6 +95,13 @@ type HoverCandle = {
 };
 
 type ChartSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Histogram"> | ISeriesApi<"Line">;
+
+type CustomIndicatorSeries = ISeriesApi<"Histogram"> | ISeriesApi<"Line">;
+
+type CustomIndicatorSeriesRef = {
+  series: CustomIndicatorSeries;
+  signature: string;
+};
 
 type ChartViewport = {
   logicalRange: LogicalRange | null;
@@ -160,6 +184,251 @@ function chartInputsFromStrategy(inputs: StrategyInputDeclaration[]): ChartInput
     }));
 }
 
+function normalizeMarketForStreamKey(market: string): string {
+  const raw = String(market || "").trim().toLowerCase();
+  if (raw === "futures" || raw === "usdm_futures") return "perpetual_futures";
+  return raw;
+}
+
+function chartStreamKey(input: ChartInput): string {
+  return [
+    String(input.exchange || "binance").trim().toLowerCase(),
+    normalizeMarketForStreamKey(input.market),
+    String(input.symbol || "").trim().toUpperCase(),
+    String(input.interval || "").trim(),
+  ].join(":");
+}
+
+function customIndicatorKey(definition: StrategyIndicatorDefinition): string {
+  return definition.indicator_key.trim();
+}
+
+function customIndicatorLabel(definition: StrategyIndicatorDefinition): string {
+  return definition.name || definition.indicator_key;
+}
+
+function customIndicatorFallbackColor(index: number): string {
+  return CUSTOM_INDICATOR_FALLBACK_COLORS[index % CUSTOM_INDICATOR_FALLBACK_COLORS.length];
+}
+
+function parseIndicatorConfig(definition: StrategyIndicatorDefinition): Record<string, unknown> {
+  if (!definition.config_json) return {};
+  try {
+    const parsed = JSON.parse(definition.config_json) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringConfig(config: Record<string, unknown>, key: string): string {
+  const value = config[key];
+  return typeof value === "string" ? value : "";
+}
+
+function numberConfig(config: Record<string, unknown>, key: string): number | null {
+  const value = config[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function lineWidthConfig(config: Record<string, unknown>): 1 | 2 | 3 | 4 {
+  const raw = Math.max(1, Math.min(4, Math.round(numberConfig(config, "line_width") ?? 1)));
+  if (raw === 2 || raw === 3 || raw === 4) return raw;
+  return 1;
+}
+
+function parseIndicatorValues(raw: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) return { values: parsed };
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function valueAtOffset(chunk: StrategyIndicatorChunk, offset: number): UTCTimestamp {
+  const intervalMs = chunk.interval_ms > 0 ? chunk.interval_ms : 60_000;
+  return toTimestamp(chunk.start_time_ms + (offset * intervalMs));
+}
+
+function expandCustomIndicatorChunks(
+  definition: StrategyIndicatorDefinition,
+  chunks: StrategyIndicatorChunk[],
+  fallbackColor: string,
+): Array<LineData<UTCTimestamp> | HistogramData<UTCTimestamp>> {
+  const config = parseIndicatorConfig(definition);
+  const positiveColor = definition.color || stringConfig(config, "positive_color") || fallbackColor;
+  const negativeColor = stringConfig(config, "negative_color") || "rgba(220, 38, 38, 0.55)";
+  const rows: Array<LineData<UTCTimestamp> | HistogramData<UTCTimestamp>> = [];
+  const relevantChunks = chunks
+    .filter((chunk) => chunk.indicator_key === definition.indicator_key)
+    .sort((a, b) => a.start_time_ms - b.start_time_ms || a.chunk_index - b.chunk_index);
+  for (const chunk of relevantChunks) {
+    const payload = parseIndicatorValues(chunk.values_json);
+    const values = Array.isArray(payload.values) ? payload.values : [];
+    values.forEach((raw, offset) => {
+      if (raw === null || raw === undefined) return;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return;
+      if (definition.type === "histogram") {
+        rows.push({
+          time: valueAtOffset(chunk, offset),
+          value,
+          color: value >= 0 ? positiveColor : negativeColor,
+        });
+      } else {
+        rows.push({
+          time: valueAtOffset(chunk, offset),
+          value,
+        });
+      }
+    });
+  }
+  return rows;
+}
+
+function validMarkerPosition(value: unknown): "aboveBar" | "belowBar" | "inBar" {
+  return value === "belowBar" || value === "inBar" ? value : "aboveBar";
+}
+
+function validMarkerShape(value: unknown): "circle" | "square" | "arrowUp" | "arrowDown" {
+  if (value === "square" || value === "arrowUp" || value === "arrowDown") return value;
+  return "circle";
+}
+
+function buildCustomIndicatorMarkers(
+  definitions: StrategyIndicatorDefinition[],
+  chunks: StrategyIndicatorChunk[],
+  visibility: Record<string, boolean>,
+): SeriesMarker<Time>[] {
+  const markers: SeriesMarker<Time>[] = [];
+  definitions.forEach((definition, index) => {
+    if (definition.type !== "marker") return;
+    const key = customIndicatorKey(definition);
+    if (visibility[key] === false) return;
+    const config = parseIndicatorConfig(definition);
+    const fallbackColor = definition.color || customIndicatorFallbackColor(index);
+    const relevantChunks = chunks
+      .filter((chunk) => chunk.indicator_key === definition.indicator_key)
+      .sort((a, b) => a.start_time_ms - b.start_time_ms || a.chunk_index - b.chunk_index);
+    for (const chunk of relevantChunks) {
+      const payload = parseIndicatorValues(chunk.values_json);
+      const payloadMarkers = Array.isArray(payload.markers) ? payload.markers : [];
+      for (const raw of payloadMarkers) {
+        if (!raw || typeof raw !== "object") continue;
+        const item = raw as Record<string, unknown>;
+        const offset = Number(item.offset);
+        if (!Number.isFinite(offset) || offset < 0) continue;
+        const text = typeof item.text === "string" && item.text.trim()
+          ? item.text.trim()
+          : customIndicatorLabel(definition);
+        markers.push({
+          time: valueAtOffset(chunk, offset),
+          position: validMarkerPosition(item.position || config.position),
+          shape: validMarkerShape(item.shape || config.shape),
+          color: typeof item.color === "string" && item.color.trim() ? item.color.trim() : fallbackColor,
+          text,
+        } satisfies SeriesMarker<Time>);
+      }
+    }
+  });
+  return markers;
+}
+
+function customIndicatorSeriesSignature(definition: StrategyIndicatorDefinition, fallbackColor: string): string {
+  return [
+    definition.type,
+    definition.pane,
+    definition.color || fallbackColor,
+    definition.name,
+    definition.config_json,
+  ].join("|");
+}
+
+function customIndicatorPaneName(definition: StrategyIndicatorDefinition): string {
+  const pane = String(definition.pane || "strategy").trim().toLowerCase();
+  if (pane === "price" || pane === "main") return "price";
+  return pane || "strategy";
+}
+
+function syncCustomIndicatorSeries(
+  chart: IChartApi,
+  definitions: StrategyIndicatorDefinition[],
+  visibility: Record<string, boolean>,
+  customIndicatorSeriesRefs: Map<string, CustomIndicatorSeriesRef>,
+  firstCustomPaneIndex: number,
+) {
+  const wanted = new Map<string, { definition: StrategyIndicatorDefinition; fallbackColor: string; signature: string }>();
+  definitions.forEach((definition, index) => {
+    const key = customIndicatorKey(definition);
+    if (!key || visibility[key] === false) return;
+    if (definition.type !== "line" && definition.type !== "histogram") return;
+    const fallbackColor = customIndicatorFallbackColor(index);
+    wanted.set(key, {
+      definition,
+      fallbackColor,
+      signature: customIndicatorSeriesSignature(definition, fallbackColor),
+    });
+  });
+
+  for (const [key, ref] of customIndicatorSeriesRefs) {
+    const next = wanted.get(key);
+    if (!next || next.signature !== ref.signature) {
+      chart.removeSeries(ref.series);
+      customIndicatorSeriesRefs.delete(key);
+    }
+  }
+
+  const paneIndexes = new Map<string, number>();
+  let nextPaneIndex = firstCustomPaneIndex;
+  for (const item of wanted.values()) {
+    const paneName = customIndicatorPaneName(item.definition);
+    if (paneName !== "price" && !paneIndexes.has(paneName)) {
+      paneIndexes.set(paneName, nextPaneIndex);
+      nextPaneIndex += 1;
+    }
+  }
+
+  for (const [key, item] of wanted) {
+    if (customIndicatorSeriesRefs.has(key)) continue;
+    const config = parseIndicatorConfig(item.definition);
+    const paneName = customIndicatorPaneName(item.definition);
+    const paneIndex = paneName === "price" ? 0 : paneIndexes.get(paneName) ?? firstCustomPaneIndex;
+    const color = item.definition.color || item.fallbackColor;
+    if (item.definition.type === "histogram") {
+      const series = chart.addSeries(HistogramSeries, {
+        title: customIndicatorLabel(item.definition),
+        color,
+        priceScaleId: paneIndex === 0 ? "right" : "",
+      }, paneIndex);
+      customIndicatorSeriesRefs.set(key, { series, signature: item.signature });
+    } else {
+      const series = chart.addSeries(LineSeries, {
+        title: customIndicatorLabel(item.definition),
+        color,
+        lineWidth: lineWidthConfig(config),
+        priceLineVisible: false,
+        priceScaleId: paneIndex === 0 ? "right" : "",
+      }, paneIndex);
+      customIndicatorSeriesRefs.set(key, { series, signature: item.signature });
+    }
+  }
+
+  const panes = chart.panes();
+  for (const paneIndex of paneIndexes.values()) {
+    panes[paneIndex]?.setStretchFactor(1.05);
+  }
+}
+
 function dedupeRows(rows: MarketDataKline[]): MarketDataKline[] {
   const byTime = new Map<string, MarketDataKline>();
   for (const row of rows) byTime.set(row.open_time, row);
@@ -213,6 +482,39 @@ async function fetchAllLifecycleEvents(sessionId: string): Promise<OrderLifecycl
     afterEventId = page.next_event_id;
   }
   return rows;
+}
+
+async function fetchCustomIndicators(
+  sessionId: string,
+  input: ChartInput,
+  startMs: number,
+  endMs: number,
+): Promise<ChartState["customIndicators"]> {
+  const streamKey = chartStreamKey(input);
+  try {
+    const definitionsResp = await getSessionIndicators(sessionId, streamKey);
+    const definitions = definitionsResp.items ?? [];
+    if (definitions.length === 0) {
+      return { definitions: [], chunks: [], error: "" };
+    }
+    const chunksResp = await getSessionIndicatorChunks(sessionId, {
+      stream_key: streamKey,
+      keys: definitions.map((definition) => definition.indicator_key),
+      start_time_ms: startMs,
+      end_time_ms: endMs,
+    });
+    return {
+      definitions,
+      chunks: chunksResp.items ?? [],
+      error: "",
+    };
+  } catch (err) {
+    return {
+      definitions: [],
+      chunks: [],
+      error: err instanceof Error ? err.message : "Failed to load custom indicators",
+    };
+  }
 }
 
 function klineRangeForSession(session: Session, input: ChartInput): { startMs: number; endMs: number; visibleStartMs: number } {
@@ -363,6 +665,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
   });
   const [showFills, setShowFills] = useState(true);
   const [showLifecycle, setShowLifecycle] = useState(true);
+  const [showCustomIndicators, setShowCustomIndicators] = useState<Record<string, boolean>>({});
   const [hoverCandle, setHoverCandle] = useState<HoverCandle | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -373,12 +676,18 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
   const macdLineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdSignalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const rsiSeriesRefs = useRef<Map<RSIPeriod, ISeriesApi<"Line">>>(new Map());
+  const customIndicatorSeriesRefs = useRef<Map<string, CustomIndicatorSeriesRef>>(new Map());
+  const firstCustomPaneIndexRef = useRef(1);
   const rowsByTimeRef = useRef<Map<number, MarketDataKline>>(new Map());
   const initialVisibleRangeAppliedRef = useRef(false);
   const width = useElementWidth(containerRef);
   const selectedInput = chartInputs[Math.min(selectedIndex, Math.max(chartInputs.length - 1, 0))];
   const showRSI = RSI_PERIODS.some((period) => showRSIPeriods[period]);
   const rsiStateKey = RSI_PERIODS.map((period) => `${period}:${showRSIPeriods[period] ? "1" : "0"}`).join("|");
+  const customDefinitions = chartState?.customIndicators.definitions ?? [];
+  const customIndicatorVisibilityKey = customDefinitions
+    .map((definition) => `${customIndicatorKey(definition)}:${showCustomIndicators[customIndicatorKey(definition)] === false ? "0" : "1"}`)
+    .join("|");
   const inputSignature = useMemo(() => (
     chartInputs
       .map((input) => `${input.exchange}-${input.market}-${input.kind}-${input.symbol}-${input.interval}`)
@@ -411,12 +720,13 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
     setLoading(true);
     setError(null);
     try {
-      const [rows, fills, lifecycleEvents] = await Promise.all([
+      const [rows, fills, lifecycleEvents, customIndicators] = await Promise.all([
         fetchKlines(selectedInput, startMs, endMs),
         fetchAllFills(session.session_id),
         fetchAllLifecycleEvents(session.session_id),
+        fetchCustomIndicators(session.session_id, selectedInput, startMs, endMs),
       ]);
-      setChartState({ rows, fills, lifecycleEvents });
+      setChartState({ rows, fills, lifecycleEvents, customIndicators });
     } catch (err) {
       setChartState(null);
       setError(err instanceof Error ? err.message : "Failed to load session chart");
@@ -432,6 +742,22 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (customDefinitions.length === 0) return;
+    setShowCustomIndicators((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const definition of customDefinitions) {
+        const key = customIndicatorKey(definition);
+        if (key && next[key] === undefined) {
+          next[key] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [customDefinitions.map((definition) => customIndicatorKey(definition)).join("|")]);
 
   useEffect(() => {
     if (isSessionTerminal(session)) return undefined;
@@ -532,6 +858,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
 
     if (showRSI) {
       const rsiPaneIndex = nextPaneIndex;
+      nextPaneIndex += 1;
       for (const period of RSI_PERIODS) {
         if (!showRSIPeriods[period]) continue;
         rsiSeriesRefs.current.set(period, chart.addSeries(LineSeries, {
@@ -543,6 +870,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       }
     }
 
+    firstCustomPaneIndexRef.current = nextPaneIndex;
     applyPaneStretchFactors(chart, { volume: showVolume, macd: showMACD, rsi: showRSI });
     return () => {
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
@@ -555,6 +883,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       macdLineSeriesRef.current = null;
       macdSignalSeriesRef.current = null;
       rsiSeriesRefs.current.clear();
+      customIndicatorSeriesRefs.current.clear();
       initialVisibleRangeAppliedRef.current = false;
     };
   }, [hasMeasuredWidth, selectedInputKey, showMACD, showRSI, showVolume, rsiStateKey]);
@@ -570,6 +899,16 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
     const markers = markersRef.current;
     if (!chart || !candleSeries || !markers || !selectedInput || !chartState || chartState.rows.length === 0) return;
 
+    const previousViewport = initialVisibleRangeAppliedRef.current
+      ? captureChartViewport(chart)
+      : null;
+    syncCustomIndicatorSeries(
+      chart,
+      chartState.customIndicators.definitions,
+      showCustomIndicators,
+      customIndicatorSeriesRefs.current,
+      firstCustomPaneIndexRef.current,
+    );
     const activeSeries = collectChartSeries([
       candleSeries,
       volumeSeriesRef.current,
@@ -577,10 +916,8 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       macdLineSeriesRef.current,
       macdSignalSeriesRef.current,
       ...rsiSeriesRefs.current.values(),
+      ...[...customIndicatorSeriesRefs.current.values()].map((item) => item.series),
     ]);
-    const previousViewport = initialVisibleRangeAppliedRef.current
-      ? captureChartViewport(chart)
-      : null;
     const rowsByTime = new Map<number, MarketDataKline>();
     for (const row of chartState.rows) rowsByTime.set(Number(toTimestamp(row.open_time)), row);
     rowsByTimeRef.current = rowsByTime;
@@ -606,6 +943,11 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       ...buildSessionBoundaryMarkers(session, stepMs),
       ...buildFillMarkers(chartState.fills, stepMs, showFills),
       ...buildLifecycleMarkers(chartState.lifecycleEvents, stepMs, showLifecycle),
+      ...buildCustomIndicatorMarkers(
+        chartState.customIndicators.definitions,
+        chartState.customIndicators.chunks,
+        showCustomIndicators,
+      ),
     ].sort((a, b) => Number(a.time) - Number(b.time)));
 
     if (volumeSeriesRef.current) {
@@ -651,6 +993,23 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       series.setData(rsiData);
     }
 
+    chartState.customIndicators.definitions.forEach((definition, index) => {
+      const key = customIndicatorKey(definition);
+      if (showCustomIndicators[key] === false) return;
+      const ref = customIndicatorSeriesRefs.current.get(key);
+      if (!ref) return;
+      const data = expandCustomIndicatorChunks(
+        definition,
+        chartState.customIndicators.chunks,
+        customIndicatorFallbackColor(index),
+      );
+      if (definition.type === "histogram") {
+        (ref.series as ISeriesApi<"Histogram">).setData(data as HistogramData<UTCTimestamp>[]);
+      } else {
+        (ref.series as ISeriesApi<"Line">).setData(data as LineData<UTCTimestamp>[]);
+      }
+    });
+
     const { visibleStartMs } = klineRangeForSession(session, selectedInput);
     if (!initialVisibleRangeAppliedRef.current) {
       chart.timeScale().setVisibleRange({
@@ -661,7 +1020,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
     } else if (previousViewport) {
       restoreChartViewportAfterDataUpdate(chart, previousViewport, activeSeries);
     }
-  }, [chartState, selectedInputKey, sessionBoundaryKey, showFills, showLifecycle, showMACD, showRSI, showVolume, rsiStateKey]);
+  }, [chartState, selectedInputKey, sessionBoundaryKey, showCustomIndicators, showFills, showLifecycle, showMACD, showRSI, showVolume, rsiStateKey, customIndicatorVisibilityKey]);
 
   if (chartInputs.length === 0) {
     return <p className="muted">No chartable market input found for this session.</p>;
@@ -699,6 +1058,23 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
           ))}
           <label><input type="checkbox" checked={showFills} onChange={(event) => setShowFills(event.target.checked)} /> Fills</label>
           <label><input type="checkbox" checked={showLifecycle} onChange={(event) => setShowLifecycle(event.target.checked)} /> Events</label>
+          {customDefinitions.map((definition) => {
+            const key = customIndicatorKey(definition);
+            return (
+              <label key={key} className="custom-indicator">
+                <input
+                  type="checkbox"
+                  checked={showCustomIndicators[key] !== false}
+                  onChange={(event) => {
+                    setShowCustomIndicators((current) => ({
+                      ...current,
+                      [key]: event.target.checked,
+                    }));
+                  }}
+                /> {customIndicatorLabel(definition)}
+              </label>
+            );
+          })}
         </div>
         <button type="button" onClick={() => { void load(); }} disabled={loading}>
           Refresh
@@ -718,6 +1094,16 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
             <span key={period}><i style={{ background: RSI_COLORS[period] }} />{RSI_LABELS[period]}</span>
           ) : null
         ))}
+        {customDefinitions.map((definition, index) => {
+          const key = customIndicatorKey(definition);
+          if (showCustomIndicators[key] === false) return null;
+          return (
+            <span key={key} className="custom-indicator">
+              <i style={{ background: definition.color || customIndicatorFallbackColor(index) }} />
+              {customIndicatorLabel(definition)}
+            </span>
+          );
+        })}
       </div>
 
       <div className={`session-chart__ohlcv ${hoverCandle?.direction === "down" ? "is-down" : "is-up"}`} aria-live="polite">
@@ -736,6 +1122,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       </div>
 
       {error ? <p className="error">{error}</p> : null}
+      {chartState?.customIndicators.error ? <p className="muted">{chartState.customIndicators.error}</p> : null}
       {showInitialLoading ? <p className="muted">Loading chart…</p> : null}
       {!loading && chartState?.rows.length === 0 ? <p className="muted">No market data in this range.</p> : null}
 
