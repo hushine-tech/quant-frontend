@@ -1,6 +1,6 @@
 # quant-frontend
 
-React (Vite + TypeScript) portal UI: sign in against **quant-handler**, then list / create / view trading accounts. Charting is isolated under `src/features/charts/` for a future **TradingView** embed.
+React 19 + Vite portal for Hushine. The application authenticates through quant-handler and exposes Quick Start, Portfolio, Venue, Strategy, Market Data, Runtime, Session, Order, Notification, and Profile workflows. Session charts are implemented with `lightweight-charts` under the current session-detail components.
 
 ## Configuration
 
@@ -28,11 +28,11 @@ FRONTEND_API_BASE_URL=http://api.example.com:8090 make build
 
 1. TimescaleDB + backend services, including **core-service** and **control-panel-service**.
 2. **quant-handler** with `QUANT_HANDLER_JWT_SECRET`, `CORE_SERVICE_GRPC_ADDR`, `CONTROL_PANEL_SERVICE_GRPC_ADDR`, and CORS allowing the Vite origin (`http://localhost:5173` by default on handler).
-3. This app: `npm run dev`, open the printed URL, sign up or log in with a user account, manage accounts/runtime/market-data flows.
+3. This app: `npm run dev`, open the printed URL, sign up or log in with a user account, and manage Portfolio, Venue, runtime, and market-data flows.
 
-## Manual UI check (wallet wizard)
+## Manual UI check (Portfolio/Venue flow)
 
-After logging in: create a **backtest** account using spot free balance and/or symbol search (adds assets and futures legs). Open **View** and confirm the environment banner color, **total value**, and the two-column spot vs futures summary match expectations. Live/testnet accounts still use exchange-backed wallet reads; the create wizard for spot/futures is limited to backtest in the UI.
+After logging in, create a backtest Portfolio, then create a backtest Venue and bind it to that Portfolio. Open Portfolio Detail and confirm the bound Venue and venue-backed wallet snapshot match the configured backtest balances.
 
 ## Responsive layout
 
