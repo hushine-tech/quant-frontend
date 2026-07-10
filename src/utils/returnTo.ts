@@ -28,6 +28,16 @@ export function appendReturnParam(returnTo: string, key: string, value: string |
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+export function isQuickStartReturnTo(returnTo: string | null | undefined): boolean {
+  if (!returnTo) return false;
+  try {
+    const url = new URL(returnTo, window.location.origin);
+    return url.origin === window.location.origin && url.pathname === "/quick-start";
+  } catch {
+    return false;
+  }
+}
+
 export function currentInternalPath(): string {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }

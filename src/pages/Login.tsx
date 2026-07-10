@@ -15,7 +15,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(username, password);
-      nav("/accounts", { replace: true });
+      nav("/portfolios", { replace: true });
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Login failed");
     } finally {
@@ -52,7 +52,7 @@ export default function Login() {
         </p>
       </form>
       <p className="muted" style={{ marginTop: "1rem" }}>
-        No account yet? <Link to="/signup">Create one</Link>
+        No portfolio yet? <Link to="/signup">Create one</Link>
       </p>
     </div>
   );

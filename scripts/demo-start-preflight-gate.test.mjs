@@ -4,12 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8");
+const source = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
 
 assert.equal(
   source.includes("const demoStartPreflightReady ="),
   true,
-  "AccountDetail should track whether demo start preflight has passed",
+  "PortfolioDetail should track whether demo start preflight has passed",
 );
 
 assert.equal(
@@ -21,11 +21,11 @@ assert.equal(
 assert.equal(
   source.includes('pendingStart?.kind !== "demo"'),
   true,
-  "AccountDetail should run demo preflight only for the demo start dialog",
+  "PortfolioDetail should run demo preflight only for the demo start dialog",
 );
 
 assert.equal(
-  /previewRunStrategy\(accountId,\s*\{[\s\S]*runtime_id: startRuntimeId/.test(source),
+  /previewRunStrategy\(portfolioId,\s*\{[\s\S]*runtime_id: startRuntimeId/.test(source),
   true,
   "Demo preflight should call PreviewRunStrategy with the selected runtime",
 );

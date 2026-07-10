@@ -9,7 +9,7 @@ const css = readFileSync(join(here, "../src/index.css"), "utf8");
 const pkg = JSON.parse(readFileSync(join(here, "../package.json"), "utf8"));
 
 const labels = [
-  "Account Management",
+  "Portfolio Management",
   "Strategy Management",
   "Market Data",
   "Runtime Management",

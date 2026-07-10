@@ -4,40 +4,40 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8");
+const source = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
 
 assert.equal(
   source.includes("isSessionTerminal"),
   true,
-  "Account detail sessions should reuse the shared terminal-session predicate",
+  "Portfolio detail sessions should reuse the shared terminal-session predicate",
 );
 
 assert.equal(
   source.includes("const shouldPollSessions = loadedSessions.some((session) => !isSessionTerminal(session))"),
   true,
-  "Account detail sessions should poll only when at least one session is non-terminal",
+  "Portfolio detail sessions should poll only when at least one session is non-terminal",
 );
 
 assert.equal(
   source.includes("if (!shouldPollSessions) return;"),
   true,
-  "Account detail sessions should not start a polling interval for terminal-only lists",
+  "Portfolio detail sessions should not start a polling interval for terminal-only lists",
 );
 
 assert.equal(
   source.includes("const statusPollInFlightRef = useRef(false);"),
   true,
-  "Account detail run-session polling should track an in-flight request",
+  "Portfolio detail run-session polling should track an in-flight request",
 );
 
 assert.equal(
   source.includes("function isRunPanelActiveStatus(status: string): boolean") &&
     source.includes("const activeSessionInRunPanel = Boolean(activePollSession && isRunPanelActiveStatus(activePollSession.statusLabel));") &&
     source.includes("restoreActiveRunPanelSession") &&
-    source.includes("listSessionsPage({ account_id: accountId, environment, runtime_id: startRuntimeId || undefined, limit: 20, offset: 0 })") &&
+    source.includes("listSessionsPage({ portfolio_id: portfolioId, environment, runtime_id: startRuntimeId || undefined, limit: 20, offset: 0 })") &&
     source.includes("page.items.find((session) => isRunPanelActiveStatus(session.status))"),
   true,
-  "Account detail should restore an active run-panel session after page reload",
+  "Portfolio detail should restore an active run-panel session after page reload",
 );
 
 assert.equal(
@@ -45,7 +45,7 @@ assert.equal(
     source.includes("statusPollInFlightRef.current = true;") &&
     source.includes("statusPollInFlightRef.current = false;"),
   true,
-  "Account detail run-session polling should skip overlapping status requests",
+  "Portfolio detail run-session polling should skip overlapping status requests",
 );
 
 assert.equal(
@@ -54,13 +54,13 @@ assert.equal(
     source.includes("Status updates are delayed; still polling.") &&
     source.includes("statusPollErrorCountRef.current < MAX_STATUS_POLL_ERRORS"),
   true,
-  "Account detail run-session polling should tolerate transient status failures without treating them as session errors",
+  "Portfolio detail run-session polling should tolerate transient status failures without treating them as session errors",
 );
 
 assert.equal(
   source.includes("Status refresh failed; retrying"),
   false,
-  "Account detail should not surface transient status-poll failures as red retry errors",
+  "Portfolio detail should not surface transient status-poll failures as red retry errors",
 );
 
 const pollErrorCatch = source.match(/catch \(pollErr\) \{[\s\S]*?\n      \} finally \{/)?.[0] ?? "";
@@ -70,7 +70,7 @@ assert.equal(
     !pollErrorCatch.includes("setActivePollSession(null)") &&
     pollErrorCatch.includes("statusNote:"),
   true,
-  "Account detail should keep polling after repeated status refresh failures instead of marking the session failed",
+  "Portfolio detail should keep polling after repeated status refresh failures instead of marking the session failed",
 );
 
 const clientSource = readFileSync(join(here, "../src/api/client.ts"), "utf8");

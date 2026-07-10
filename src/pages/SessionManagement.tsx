@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  listAccountsPage,
+  listPortfoliosPage,
   listRuntimes,
   listSessionsPage,
   listStrategiesPage,
-  type Account,
+  type Portfolio,
   type Runtime,
   type Session,
   type Strategy,
@@ -15,7 +15,7 @@ import { FilterField, FilterPanel } from "@/components/FilterControls";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
-import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { formatUTCWithLocal } from "@/utils/time";
 
@@ -32,7 +32,7 @@ function parseLocalDateTime(value: string): number | undefined {
 export default function SessionManagement() {
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [accountFilter, setAccountFilter] = useState("");
+  const [portfolioFilter, setPortfolioFilter] = useState("");
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState("");
   const [environmentFilter, setEnvironmentFilter] = useState("");
@@ -42,7 +42,7 @@ export default function SessionManagement() {
   const [startedBeforeFilter, setStartedBeforeFilter] = useState("");
 
   const filterKey = useMemo(() => JSON.stringify({
-    accountFilter,
+    portfolioFilter,
     runtimeFilter,
     strategyFilter,
     environmentFilter,
@@ -51,7 +51,7 @@ export default function SessionManagement() {
     startedAfterFilter,
     startedBeforeFilter,
     refreshKey,
-  }), [accountFilter, environmentFilter, refreshKey, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
+  }), [portfolioFilter, environmentFilter, refreshKey, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
 
   const loadSessions = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
@@ -59,7 +59,7 @@ export default function SessionManagement() {
       return await listSessionsPage({
         offset,
         limit,
-        account_id: accountFilter || undefined,
+        portfolio_id: portfolioFilter || undefined,
         runtime_id: runtimeFilter || undefined,
         strategy_id: strategyFilter || undefined,
         environment: environmentFilter || undefined,
@@ -71,34 +71,34 @@ export default function SessionManagement() {
     } finally {
       setLoading(false);
     }
-  }, [accountFilter, environmentFilter, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
+  }, [portfolioFilter, environmentFilter, runtimeFilter, sessionIdFilter, startedAfterFilter, startedBeforeFilter, statusFilter, strategyFilter]);
 
   return (
     <div>
       <PageHeader
         title="Session Management"
-        description="Search all strategy sessions. Runtime operations remain under Account Management."
+        description="Search all strategy sessions. Runtime operations remain under Portfolio Management."
         loading={loading}
         onRefresh={() => setRefreshKey((v) => v + 1)}
       />
       <div className="card">
         <FilterPanel>
-          <FilterField label="Account" wide>
-            <AsyncSelect<Account>
-              value={accountFilter}
-              placeholder="All accounts"
-              onChange={setAccountFilter}
+          <FilterField label="Portfolio" wide>
+            <AsyncSelect<Portfolio>
+              value={portfolioFilter}
+              placeholder="All portfolios"
+              onChange={setPortfolioFilter}
               loadPage={async (offset, limit, query) => {
                 const normalizedQuery = query.trim().toLowerCase();
-                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                return collectFilteredPage<Portfolio, AsyncSelectOption<Portfolio>>({
                   offset,
                   limit,
-                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
-                  matches: (a) => !normalizedQuery || a.name.toLowerCase().includes(normalizedQuery) || String(a.account_id).includes(normalizedQuery),
+                  loadSourcePage: (sourceOffset, sourceLimit) => listPortfoliosPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (a) => !normalizedQuery || a.name.toLowerCase().includes(normalizedQuery) || String(a.portfolio_id).includes(normalizedQuery),
                   map: (a) => ({
-                    value: String(a.account_id),
-                    label: a.name || String(a.account_id),
-                    detail: `#${a.account_id}`,
+                    value: String(a.portfolio_id),
+                    label: a.name || String(a.portfolio_id),
+                    detail: `#${a.portfolio_id}`,
                     item: a,
                   }),
                 });
@@ -183,22 +183,22 @@ export default function SessionManagement() {
         </FilterPanel>
 
         <InfiniteTable<Session>
-          columns={["Session", "Account", "Strategy", "Runtime", "Environment", "Type", "Status", "Started", "Completed", "Bars", "Error"]}
+          columns={["Session", "Portfolio", "Strategy", "Runtime", "Environment", "Type", "Status", "Started", "Completed", "Bars", "Error"]}
           loadPage={loadSessions}
           refreshKey={filterKey}
           emptyText="No sessions found."
           rowKey={(session) => session.session_id}
           renderRow={(session) => (
             <>
-              <td><Link to={`/accounts/${session.account_id}/sessions/${session.session_id}`}>{session.session_id.slice(0, 12)}...</Link></td>
-              <td><Link to={`/accounts/${session.account_id}`}>{session.account_id}</Link></td>
+              <td><Link to={`/portfolios/${session.portfolio_id}/sessions/${session.session_id}`}>{session.session_id.slice(0, 12)}...</Link></td>
+              <td><Link to={`/portfolios/${session.portfolio_id}`}>{session.portfolio_id}</Link></td>
               <td>{session.strategy_id || "-"}</td>
               <td>
                 {session.runtime_id ? (
                   <Link to={`/runtimes/${encodeURIComponent(session.runtime_id)}`}>{session.runtime_name || session.runtime_id}</Link>
                 ) : "-"}
               </td>
-              <td>{accountEnvironmentLabel(session.environment)}</td>
+              <td>{portfolioEnvironmentLabel(session.environment)}</td>
               <td>{session.session_type || "-"}</td>
               <td><span className="status-badge status-badge--idle">{session.status}</span></td>
               <td>{fmtTime(session.started_at)}</td>

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const files = [
-  "../src/pages/AccountDetail.tsx",
+  "../src/pages/PortfolioDetail.tsx",
   "../src/pages/SessionDetailPage.tsx",
 ];
 const defaultMaxLossClosePercent = 30;

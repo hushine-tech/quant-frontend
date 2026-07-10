@@ -5,14 +5,14 @@ import Pager from "@/components/Pager";
 import type { Page } from "@/api/client";
 
 // Row shapes used by the tree. Both the global Order History page and the
-// Session Detail page have richer types (with account_id / session_id); those
+// Session Detail page have richer types (with portfolio_id / session_id); those
 // extra fields are simply ignored here. Keeping the shapes minimal lets the
 // component accept either fetcher source via structural subtyping.
 
 export type TreeIntent = {
   time: string;
   intent_id: string;
-  account_id?: number;
+  portfolio_id?: number;
   session_id?: string;
   strategy_id?: number;
   symbol: string;
@@ -136,7 +136,7 @@ export type OrderTreeProps<
   fetchAttempts: AttemptFetcher<A>;
   fetchOrder: OrderFetcher<O>;
   fetchFills: FillFetcher<F>;
-  /** Bumped by the parent (e.g. account/strategy filter changes) to reset the top-level pager. */
+  /** Bumped by the parent (e.g. portfolio/strategy filter changes) to reset the top-level pager. */
   resetKey?: string | number;
   /** Optional empty-state message override for the top-level intents list. */
   emptyMessage?: string;
@@ -435,13 +435,13 @@ function IntentRow<
         </span>
         <OrderSemanticBadges item={intent} />
         <span className="muted">{routeFactText(intent)}</span>
-        {typeof intent.account_id === "number" && intent.account_id > 0 ? (
-          <span className="muted">Account {intent.account_id}</span>
+        {typeof intent.portfolio_id === "number" && intent.portfolio_id > 0 ? (
+          <span className="muted">Portfolio {intent.portfolio_id}</span>
         ) : null}
         {intent.session_id ? (
-          typeof intent.account_id === "number" && intent.account_id > 0 ? (
+          typeof intent.portfolio_id === "number" && intent.portfolio_id > 0 ? (
             <Link
-              to={`/accounts/${intent.account_id}/sessions/${intent.session_id}`}
+              to={`/portfolios/${intent.portfolio_id}/sessions/${intent.session_id}`}
               onClick={(e) => e.stopPropagation()}
             >
               Session {intent.session_id.slice(0, 10)}…

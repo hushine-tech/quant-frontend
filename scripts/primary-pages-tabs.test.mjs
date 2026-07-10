@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 
 const files = {
-  account: readFileSync(join(here, "../src/pages/AccountManagement.tsx"), "utf8"),
+  portfolio: readFileSync(join(here, "../src/pages/PortfolioManagement.tsx"), "utf8"),
   strategy: readFileSync(join(here, "../src/pages/StrategyList.tsx"), "utf8"),
   marketData: readFileSync(join(here, "../src/pages/MarketData.tsx"), "utf8"),
   runtime: readFileSync(join(here, "../src/pages/RuntimeManagement.tsx"), "utf8"),
@@ -34,10 +34,10 @@ for (const token of [
 }
 
 for (const token of [
-  "Accounts",
-  "Create Account",
+  "Portfolios",
+  "Create Portfolio",
 ]) {
-  assert.equal(files.account.includes(token), true, `Account Management should include ${token}`);
+  assert.equal(files.portfolio.includes(token), true, `Portfolio Management should include ${token}`);
 }
 
 for (const token of [

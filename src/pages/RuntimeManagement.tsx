@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
-import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
+import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
+import QuickStartActionButton from "@/components/QuickStartActionButton";
 import RuntimeInstallInstructions from "@/components/RuntimeInstallInstructions";
 import { FilterField, FilterPanel } from "@/components/FilterControls";
 import { RuntimeCredentialsPanel } from "@/pages/RuntimeCredentials";
@@ -12,7 +13,7 @@ import {
   cancelRuntime,
   ensureHostedRuntime,
   getRuntime,
-  listAccountsPage,
+  listPortfoliosPage,
   prepareDebugWorkspace,
   isRuntimeTerminal,
   listSessionDeliveryHealth,
@@ -20,7 +21,7 @@ import {
   listRuntimes,
   listSessionsPage,
   runtimeUnavailableReason,
-  type Account,
+  type Portfolio,
   type Runtime,
   type RuntimeAdmissionFailure,
   type Session,
@@ -118,6 +119,7 @@ export default function RuntimeManagement() {
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
+  const quickStartMode = isQuickStartReturnTo(returnTo);
   const selectionMode = Boolean(returnTo);
   const runtimeRoleFilter = searchParams.get("role") || (selectionMode ? "executor" : undefined);
   const runtimeEligibleFilter = searchParams.get("eligible") || (selectionMode ? "session_start" : undefined);
@@ -291,7 +293,7 @@ export default function RuntimeManagement() {
                   <td>
                     {activeCount > 0 ? (
                       activeSession ? (
-                        <Link to={`/accounts/${activeSession.account_id}/sessions/${activeSession.session_id}`}>{activeCount}</Link>
+                        <Link to={`/portfolios/${activeSession.portfolio_id}/sessions/${activeSession.session_id}`}>{activeCount}</Link>
                       ) : (
                         <Link to={`/runtimes/${encodeURIComponent(rt.runtime_id)}`}>{activeCount}</Link>
                       )
@@ -305,12 +307,16 @@ export default function RuntimeManagement() {
                   <td><code>{rt.runtime_id}</code></td>
                   <td>
                     {returnTo && !runtimeUnavailableReason(rt) ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(appendReturnParam(returnTo, "runtime_id", rt.runtime_id), { replace: true })}
-                      >
-                        Use
-                      </button>
+                      quickStartMode ? (
+                        <QuickStartActionButton onClick={() => navigate(appendReturnParam(returnTo, "runtime_id", rt.runtime_id), { replace: true })} />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => navigate(appendReturnParam(returnTo, "runtime_id", rt.runtime_id), { replace: true })}
+                        >
+                          Use
+                        </button>
+                      )
                     ) : null}
                     <button
                       type="button"
@@ -428,7 +434,7 @@ export default function RuntimeManagement() {
 export function RuntimeDetailPage() {
   const { runtimeId } = useParams<{ runtimeId: string }>();
   const [runtime, setRuntime] = useState<Runtime | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [deliveryHealth, setDeliveryHealth] = useState<SessionDeliveryHealth[]>([]);
   const [loading, setLoading] = useState(true);
@@ -447,9 +453,9 @@ export function RuntimeDetailPage() {
       setLoading(true);
       setError(null);
       try {
-        const [rt, accountList] = await Promise.all([
+        const [rt, portfolioList] = await Promise.all([
           getRuntime(rid),
-          listAccountsPage({ limit: 200 }).then((page) => page.items),
+          listPortfoliosPage({ limit: 200 }).then((page) => page.items),
         ]);
         const [sessionLists, deliveryResult] = await Promise.all([
           listSessionsPage({ runtime_id: rid, limit: 200 }).then((page) => page.items).catch(() => []),
@@ -457,7 +463,7 @@ export function RuntimeDetailPage() {
         ]);
         if (cancelled) return;
         setRuntime(rt);
-        setAccounts(accountList);
+        setPortfolios(portfolioList);
         setSessions(sessionLists.filter((s) => s.runtime_id === rt.runtime_id));
         setDeliveryHealth(deliveryResult.items);
       } catch (e) {
@@ -470,7 +476,7 @@ export function RuntimeDetailPage() {
     return () => { cancelled = true; };
   }, [runtimeId]);
 
-  const accountById = useMemo(() => new Map(accounts.map((a) => [a.account_id, a])), [accounts]);
+  const portfolioById = useMemo(() => new Map(portfolios.map((a) => [a.portfolio_id, a])), [portfolios]);
   const activeSessionCount = useMemo(
     () => sessions.filter((s) => isActiveSessionStatus(s.status)).length,
     [sessions],
@@ -659,7 +665,7 @@ export function RuntimeDetailPage() {
                       <tr>
                         <th>Session</th>
                         <th>Type</th>
-                        <th>Account</th>
+                        <th>Portfolio</th>
                         <th>Status</th>
                         <th>Strategy</th>
                         <th>Started</th>
@@ -669,14 +675,14 @@ export function RuntimeDetailPage() {
                       {sessions.map((s) => (
                         <tr key={s.session_id}>
                           <td>
-                            <Link to={`/accounts/${s.account_id}/sessions/${s.session_id}`}>
+                            <Link to={`/portfolios/${s.portfolio_id}/sessions/${s.session_id}`}>
                               {s.session_id.slice(0, 12)}...
                             </Link>
                           </td>
                           <td>{s.session_type || "-"}</td>
                           <td>
-                            <Link to={`/accounts/${s.account_id}`}>
-                              {accountById.get(s.account_id)?.name || s.account_id}
+                            <Link to={`/portfolios/${s.portfolio_id}`}>
+                              {portfolioById.get(s.portfolio_id)?.name || s.portfolio_id}
                             </Link>
                           </td>
                           <td><span className="status-badge status-badge--idle">{s.status}</span></td>
@@ -714,7 +720,7 @@ export function RuntimeDetailPage() {
                           <tr key={item.subscription.subscription_id}>
                             <td>
                               {linkedSession ? (
-                                <Link to={`/accounts/${linkedSession.account_id}/sessions/${linkedSession.session_id}`}>
+                                <Link to={`/portfolios/${linkedSession.portfolio_id}/sessions/${linkedSession.session_id}`}>
                                   {item.subscription.session_id.slice(0, 12)}...
                                 </Link>
                               ) : (

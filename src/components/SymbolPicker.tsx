@@ -15,7 +15,7 @@ type Props = {
    * result buttons omit the "+" prefix, and the result list auto-collapses
    * after picking or when the user clicks outside the picker.
    * When NOT set, the picker stays in its original "add-to-list" mode where
-   * the result list is always expanded (AccountNew uses this).
+   * the result list is always expanded (PortfolioNew uses this).
    */
   selected?: string;
 };
@@ -30,7 +30,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   const [err, setErr] = useState<string | null>(null);
   // Single-select: result list visibility is controlled; opens on focus,
   // closes on pick / outside click / Escape.
-  // Add-to-list: always expanded, matching the legacy behavior AccountNew expects.
+  // Add-to-list: always expanded, matching the legacy behavior PortfolioNew expects.
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -64,7 +64,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   }, [q, market, disabled]);
 
   // Outside-click + Escape handlers — single-select only, skip otherwise
-  // to leave AccountNew's always-open behavior untouched.
+  // to leave PortfolioNew's always-open behavior untouched.
   useEffect(() => {
     if (!singleSelect || !open) return;
     function onMouseDown(e: MouseEvent) {

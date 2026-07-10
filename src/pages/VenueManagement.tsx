@@ -6,10 +6,10 @@ import {
   bindVenue,
   createVenue,
   getVenueWallet,
-  listAccountsPage,
+  listPortfoliosPage,
   listVenues,
   releaseVenue,
-  type Account,
+  type Portfolio,
   type CreateVenuePayload,
   type Venue,
   type VenueWallet,
@@ -18,10 +18,11 @@ import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import InfiniteTable from "@/components/InfiniteTable";
 import PageHeader from "@/components/PageHeader";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import QuickStartActionButton from "@/components/QuickStartActionButton";
 import SymbolPicker from "@/components/SymbolPicker";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { formatUTCWithLocal } from "@/utils/time";
-import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
+import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
 
 type VenueTab = "venues" | "create";
 type SpotRow = { symbol: string; qty: string; price: string; avg: string };
@@ -33,7 +34,7 @@ const tabs: Array<PageTab<VenueTab>> = [
   { id: "create", label: "Create Venue" },
 ];
 
-const duplicateVenueRouteMessage = "venue already exists for account route or api key scope";
+const duplicateVenueRouteMessage = "venue already exists for portfolio route or api key scope";
 
 function normalizeVenueTab(value: string | null): VenueTab {
   return value === "create" ? "create" : "venues";
@@ -59,7 +60,7 @@ function venueKeyLabel(value?: string): string {
   return isSyntheticBacktestKey(value) ? `Synthetic ${masked}` : masked;
 }
 
-function accountEnvLabel(value?: number): string {
+function portfolioEnvLabel(value?: number): string {
   switch (value) {
     case 1:
       return "demo";
@@ -72,8 +73,8 @@ function accountEnvLabel(value?: number): string {
   }
 }
 
-function accountEnvCode(account: Account): number {
-  return typeof account.environment === "number" ? account.environment : 0;
+function portfolioEnvCode(portfolio: Portfolio): number {
+  return typeof portfolio.environment === "number" ? portfolio.environment : 0;
 }
 
 function normalizeCreateEnvironment(value: string | null): CreateVenuePayload["environment"] {
@@ -129,16 +130,17 @@ export default function VenueManagement() {
   const [venueWallet, setVenueWallet] = useState<VenueWallet | null>(null);
   const [venueWalletError, setVenueWalletError] = useState<string | null>(null);
   const [venueWalletLoading, setVenueWalletLoading] = useState(false);
-  const [bindAccountID, setBindAccountID] = useState("");
+  const [bindPortfolioID, setBindPortfolioID] = useState("");
   const [binding, setBinding] = useState(false);
   const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
+  const quickStartMode = isQuickStartReturnTo(returnTo);
 
   function changeTab(tab: VenueTab) {
     setActiveTab(tab);
     const next: Record<string, string> = {};
     if (tab !== "venues") next.tab = tab;
-    const accountID = searchParams.get("account_id");
-    if (accountID) next.account_id = accountID;
+    const portfolioID = searchParams.get("portfolio_id");
+    if (portfolioID) next.portfolio_id = portfolioID;
     const environment = searchParams.get("environment");
     if (environment) next.environment = environment;
     const rawReturnTo = searchParams.get("return_to");
@@ -146,7 +148,7 @@ export default function VenueManagement() {
     setSearchParams(next);
   }
 
-  const accountFilter = searchParams.get("account_id") || undefined;
+  const portfolioFilter = searchParams.get("portfolio_id") || undefined;
 
   const loadVenues = useCallback(async (offset: number, limit: number) => {
     setLoading(true);
@@ -156,8 +158,8 @@ export default function VenueManagement() {
         offset,
         limit,
         include_inactive: true,
-        include_unbound: accountFilter ? false : true,
-        account_id: accountFilter,
+        include_unbound: portfolioFilter ? false : true,
+        portfolio_id: portfolioFilter,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load venues failed");
@@ -165,7 +167,7 @@ export default function VenueManagement() {
     } finally {
       setLoading(false);
     }
-  }, [accountFilter]);
+  }, [portfolioFilter]);
 
   async function handleRelease(venue: Venue) {
     setError(null);
@@ -212,17 +214,17 @@ export default function VenueManagement() {
 
   async function handleBindSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!bindTargetVenue || !bindAccountID) return;
+    if (!bindTargetVenue || !bindPortfolioID) return;
     setError(null);
     setNotice(null);
     setBinding(true);
     try {
-      const nextAccountID = Number(bindAccountID);
-      await bindVenue(bindTargetVenue.venue_id, nextAccountID, `bound from venue management`);
-      setNotice(bindTargetVenue.account_id && bindTargetVenue.account_id !== nextAccountID ? "Venue rebound." : "Venue bound.");
+      const nextPortfolioID = Number(bindPortfolioID);
+      await bindVenue(bindTargetVenue.venue_id, nextPortfolioID, `bound from venue management`);
+      setNotice(bindTargetVenue.portfolio_id && bindTargetVenue.portfolio_id !== nextPortfolioID ? "Venue rebound." : "Venue bound.");
       setViewTargetVenue(null);
       setBindTargetVenue(null);
-      setBindAccountID("");
+      setBindPortfolioID("");
       setRefreshKey((v) => v + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Bind venue failed");
@@ -233,8 +235,8 @@ export default function VenueManagement() {
 
   const description = useMemo(() => {
     return activeTab === "venues"
-      ? "Manage exchange venues, credentials, and account bindings."
-      : "Create a concrete exchange venue and bind it to an account.";
+      ? "Manage exchange venues, credentials, and portfolio bindings."
+      : "Create a concrete exchange venue and bind it to an portfolio.";
   }, [activeTab]);
 
   return (
@@ -261,9 +263,9 @@ export default function VenueManagement() {
           </div>
           <div className="strategy-new-form__row-2" style={{ marginTop: "0.75rem" }}>
             <div>
-              <p className="muted" style={{ marginBottom: "0.25rem" }}>Bound account</p>
-              {viewTargetVenue.account_id ? (
-                <Link to={`/accounts/${viewTargetVenue.account_id}?tab=venues`}>Account {viewTargetVenue.account_id}</Link>
+              <p className="muted" style={{ marginBottom: "0.25rem" }}>Bound portfolio</p>
+              {viewTargetVenue.portfolio_id ? (
+                <Link to={`/portfolios/${viewTargetVenue.portfolio_id}?tab=venues`}>Portfolio {viewTargetVenue.portfolio_id}</Link>
               ) : (
                 <p style={{ margin: 0 }}>Unbound</p>
               )}
@@ -319,16 +321,16 @@ export default function VenueManagement() {
                 type="button"
                 onClick={() => {
                   setBindTargetVenue(viewTargetVenue);
-                  setBindAccountID(viewTargetVenue.account_id ? String(viewTargetVenue.account_id) : "");
+                  setBindPortfolioID(viewTargetVenue.portfolio_id ? String(viewTargetVenue.portfolio_id) : "");
                   setError(null);
                   setNotice(null);
                 }}
               >
-                {viewTargetVenue.account_id ? "Rebind account" : "Bind account"}
+                {viewTargetVenue.portfolio_id ? "Rebind portfolio" : "Bind portfolio"}
               </button>
             ) : null}
-            {viewTargetVenue.account_id ? (
-              <button type="button" onClick={() => void handleRelease(viewTargetVenue)}>Release account</button>
+            {viewTargetVenue.portfolio_id ? (
+              <button type="button" onClick={() => void handleRelease(viewTargetVenue)}>Release portfolio</button>
             ) : null}
           </p>
         </div>
@@ -337,47 +339,47 @@ export default function VenueManagement() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <form onSubmit={handleBindSubmit}>
             <h2 className="section-title" style={{ marginBottom: "0.5rem" }}>
-              {bindTargetVenue.account_id ? "Rebind venue" : "Bind venue"}
+              {bindTargetVenue.portfolio_id ? "Rebind venue" : "Bind venue"}
             </h2>
             <p className="muted">
               {bindTargetVenue.display_name || `venue-${bindTargetVenue.venue_id}`} · {label(bindTargetVenue.exchange_label, bindTargetVenue.exchange)} · {label(bindTargetVenue.market_label, bindTargetVenue.market)} · {label(bindTargetVenue.environment_label, bindTargetVenue.environment)}
             </p>
-            <label>Target account</label>
-            <AsyncSelect<Account>
-              value={bindAccountID}
-              placeholder="Select target account"
-              onChange={setBindAccountID}
+            <label>Target portfolio</label>
+            <AsyncSelect<Portfolio>
+              value={bindPortfolioID}
+              placeholder="Select target portfolio"
+              onChange={setBindPortfolioID}
               loadPage={async (offset, limit, query) => {
                 const normalizedQuery = query.trim().toLowerCase();
-                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                return collectFilteredPage<Portfolio, AsyncSelectOption<Portfolio>>({
                   offset,
                   limit,
-                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
-                  matches: (account) => accountEnvCode(account) === bindTargetVenue.environment
+                  loadSourcePage: (sourceOffset, sourceLimit) => listPortfoliosPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (portfolio) => portfolioEnvCode(portfolio) === bindTargetVenue.environment
                     && (!normalizedQuery
-                    || account.name.toLowerCase().includes(normalizedQuery)
-                    || String(account.account_id).includes(normalizedQuery)),
-                  map: (account) => ({
-                    value: String(account.account_id),
-                    label: account.name || String(account.account_id),
-                    detail: `#${account.account_id} · ${accountEnvLabel(accountEnvCode(account))}`,
-                    item: account,
+                    || portfolio.name.toLowerCase().includes(normalizedQuery)
+                    || String(portfolio.portfolio_id).includes(normalizedQuery)),
+                  map: (portfolio) => ({
+                    value: String(portfolio.portfolio_id),
+                    label: portfolio.name || String(portfolio.portfolio_id),
+                    detail: `#${portfolio.portfolio_id} · ${portfolioEnvLabel(portfolioEnvCode(portfolio))}`,
+                    item: portfolio,
                   }),
                 });
               }}
-              searchPlaceholder="Search account name or ID"
+              searchPlaceholder="Search portfolio name or ID"
               allowClear={false}
             />
-            {bindTargetVenue.account_id ? (
+            {bindTargetVenue.portfolio_id ? (
               <p className="muted">
-                Current account: {bindTargetVenue.account_id}. Rebinding hands the venue off to the selected account in one backend transaction.
+                Current portfolio: {bindTargetVenue.portfolio_id}. Rebinding hands the venue off to the selected portfolio in one backend transaction.
               </p>
             ) : null}
             <p style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
-              <button type="submit" className="primary" disabled={binding || !bindAccountID}>
-                {binding ? "Binding..." : bindTargetVenue.account_id ? "Rebind venue" : "Bind venue"}
+              <button type="submit" className="primary" disabled={binding || !bindPortfolioID}>
+                {binding ? "Binding..." : bindTargetVenue.portfolio_id ? "Rebind venue" : "Bind venue"}
               </button>
-              <button type="button" onClick={() => { setBindTargetVenue(null); setBindAccountID(""); }} disabled={binding}>Cancel</button>
+              <button type="button" onClick={() => { setBindTargetVenue(null); setBindPortfolioID(""); }} disabled={binding}>Cancel</button>
             </p>
           </form>
         </div>
@@ -385,8 +387,8 @@ export default function VenueManagement() {
       <PageTabs tabs={tabs} activeTab={activeTab} onChange={changeTab} ariaLabel="Venue sections">
         {activeTab === "venues" ? (
           <InfiniteTable<Venue>
-            columns={["Name", "Account", "Exchange", "Market", "Environment", "Status", "API Key", "Created", "Action"]}
-            refreshKey={`${refreshKey}:${accountFilter || ""}`}
+            columns={["Name", "Portfolio", "Exchange", "Market", "Environment", "Status", "API Key", "Created", "Action"]}
+            refreshKey={`${refreshKey}:${portfolioFilter || ""}`}
             emptyText="No venues yet."
             loadPage={loadVenues}
             rowKey={(venue) => String(venue.venue_id)}
@@ -412,7 +414,7 @@ export default function VenueManagement() {
                   <div className="muted"><code>{venue.venue_id}</code></div>
                 </td>
                 <td>
-                  {venue.account_id ? <Link to={`/accounts/${venue.account_id}?tab=venues`}>{venue.account_id}</Link> : "-"}
+                  {venue.portfolio_id ? <Link to={`/portfolios/${venue.portfolio_id}?tab=venues`}>{venue.portfolio_id}</Link> : "-"}
                 </td>
                 <td>{label(venue.exchange_label, venue.exchange)}</td>
                 <td>{label(venue.market_label, venue.market)}</td>
@@ -431,23 +433,27 @@ export default function VenueManagement() {
                         type="button"
                         onClick={() => {
                           setBindTargetVenue(venue);
-                          setBindAccountID(venue.account_id ? String(venue.account_id) : "");
+                          setBindPortfolioID(venue.portfolio_id ? String(venue.portfolio_id) : "");
                           setError(null);
                           setNotice(null);
                         }}
                       >
-                        {venue.account_id ? "Rebind" : "Bind"}
+                        {venue.portfolio_id ? "Rebind" : "Bind"}
                       </button>
                     ) : null}
-                    {returnTo && venue.account_id ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(appendReturnParam(returnTo, "venue_id", venue.venue_id), { replace: true })}
-                      >
-                        Use
-                      </button>
+                    {returnTo && venue.portfolio_id ? (
+                      quickStartMode ? (
+                        <QuickStartActionButton onClick={() => navigate(appendReturnParam(returnTo, "venue_id", venue.venue_id), { replace: true })} />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => navigate(appendReturnParam(returnTo, "venue_id", venue.venue_id), { replace: true })}
+                        >
+                          Use
+                        </button>
+                      )
                     ) : null}
-                    {venue.account_id ? (
+                    {venue.portfolio_id ? (
                       <button type="button" onClick={() => void handleRelease(venue)}>Release</button>
                     ) : null}
                     <button type="button" onClick={() => openVenueDetail(venue)}>View</button>
@@ -461,7 +467,7 @@ export default function VenueManagement() {
           />
         ) : (
           <CreateVenueForm
-            defaultAccountID={accountFilter || ""}
+            defaultPortfolioID={portfolioFilter || ""}
             defaultEnvironment={normalizeCreateEnvironment(searchParams.get("environment"))}
             onCreated={(venue, result) => {
               if (returnTo) {
@@ -480,15 +486,15 @@ export default function VenueManagement() {
 }
 
 function CreateVenueForm({
-  defaultAccountID,
+  defaultPortfolioID,
   defaultEnvironment,
   onCreated,
 }: {
-  defaultAccountID: string;
+  defaultPortfolioID: string;
   defaultEnvironment: CreateVenuePayload["environment"];
   onCreated: (venue: Venue, result?: VenueCreatedResult) => void;
 }) {
-  const [accountID, setAccountID] = useState(defaultAccountID);
+  const [portfolioID, setPortfolioID] = useState(defaultPortfolioID);
   const [exchange, setExchange] = useState<CreateVenuePayload["exchange"]>("binance");
   const [market, setMarket] = useState<CreateVenuePayload["market"]>("perpetual_futures");
   const [environment, setEnvironment] = useState<CreateVenuePayload["environment"]>(defaultEnvironment);
@@ -508,8 +514,8 @@ function CreateVenueForm({
   const [showFutAdd, setShowFutAdd] = useState(false);
 
   useEffect(() => {
-    setAccountID(defaultAccountID);
-  }, [defaultAccountID]);
+    setPortfolioID(defaultPortfolioID);
+  }, [defaultPortfolioID]);
 
   useEffect(() => {
     setEnvironment(defaultEnvironment);
@@ -581,9 +587,9 @@ function CreateVenueForm({
   }
 
   async function findReusableVenue(): Promise<Venue | null> {
-    if (!accountID) return null;
+    if (!portfolioID) return null;
     const page = await listVenues({
-      account_id: accountID,
+      portfolio_id: portfolioID,
       include_inactive: true,
       include_unbound: false,
       limit: 100,
@@ -606,7 +612,7 @@ function CreateVenueForm({
     setError(null);
     try {
       const payload: CreateVenuePayload = {
-        account_id: accountID ? Number(accountID) : undefined,
+        portfolio_id: portfolioID ? Number(portfolioID) : undefined,
         exchange,
         market,
         environment,
@@ -652,31 +658,31 @@ function CreateVenueForm({
       <form className="strategy-new-form" onSubmit={handleSubmit}>
         <div className="strategy-new-form__row-2">
           <label className="field">
-            <span>Bind account</span>
-            <AsyncSelect<Account>
-              value={accountID}
+            <span>Bind portfolio</span>
+            <AsyncSelect<Portfolio>
+              value={portfolioID}
               placeholder="Leave unbound"
-              onChange={setAccountID}
+              onChange={setPortfolioID}
               loadPage={async (offset, limit, query) => {
                 const normalizedQuery = query.trim().toLowerCase();
                 const envCode = createEnvironmentCode(environment);
-                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                return collectFilteredPage<Portfolio, AsyncSelectOption<Portfolio>>({
                   offset,
                   limit,
-                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
-                  matches: (account) => accountEnvCode(account) === envCode
+                  loadSourcePage: (sourceOffset, sourceLimit) => listPortfoliosPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (portfolio) => portfolioEnvCode(portfolio) === envCode
                     && (!normalizedQuery
-                    || account.name.toLowerCase().includes(normalizedQuery)
-                    || String(account.account_id).includes(normalizedQuery)),
-                  map: (account) => ({
-                    value: String(account.account_id),
-                    label: account.name || String(account.account_id),
-                    detail: `#${account.account_id} · ${accountEnvLabel(accountEnvCode(account))}`,
-                    item: account,
+                    || portfolio.name.toLowerCase().includes(normalizedQuery)
+                    || String(portfolio.portfolio_id).includes(normalizedQuery)),
+                  map: (portfolio) => ({
+                    value: String(portfolio.portfolio_id),
+                    label: portfolio.name || String(portfolio.portfolio_id),
+                    detail: `#${portfolio.portfolio_id} · ${portfolioEnvLabel(portfolioEnvCode(portfolio))}`,
+                    item: portfolio,
                   }),
                 });
               }}
-              searchPlaceholder="Search account name or ID"
+              searchPlaceholder="Search portfolio name or ID"
             />
           </label>
           <label className="field">

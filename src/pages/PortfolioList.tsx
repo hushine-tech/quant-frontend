@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listAccounts, type Account } from "@/api/client";
-import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { listPortfolios, type Portfolio } from "@/api/client";
+import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 
-export default function AccountList() {
-  const [rows, setRows] = useState<Account[] | null>(null);
+export default function PortfolioList() {
+  const [rows, setRows] = useState<Portfolio[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -14,7 +14,7 @@ export default function AccountList() {
       setLoading(true);
       setErr(null);
       try {
-        const data = await listAccounts();
+        const data = await listPortfolios();
         if (!cancelled) setRows(data);
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Failed to load");
@@ -29,14 +29,14 @@ export default function AccountList() {
 
   return (
     <div>
-      <h1>Accounts</h1>
+      <h1>Portfolios</h1>
       <p className="muted">
-        <Link to="/accounts/new">Create account</Link>
+        <Link to="/portfolios/new">Create portfolio</Link>
       </p>
       {loading ? <p className="muted">Loading…</p> : null}
       {err ? <p className="error">{err}</p> : null}
       {!loading && !err && rows && rows.length === 0 ? (
-        <p className="muted">No accounts yet.</p>
+        <p className="muted">No portfolios yet.</p>
       ) : null}
       {!loading && rows && rows.length > 0 ? (
         <div className="card" style={{ padding: 0 }}>
@@ -51,14 +51,14 @@ export default function AccountList() {
             </thead>
             <tbody>
               {rows.map((a) => (
-                <tr key={a.account_id}>
+                <tr key={a.portfolio_id}>
                   <td>
-                    <Link to={`/accounts/${a.account_id}`}>{a.name}</Link>
+                    <Link to={`/portfolios/${a.portfolio_id}`}>{a.name}</Link>
                   </td>
                   <td className="muted" style={{ fontSize: "0.85rem" }}>
-                    {a.account_id}
+                    {a.portfolio_id}
                   </td>
-                  <td>{accountEnvironmentLabel(a.environment)}</td>
+                  <td>{portfolioEnvironmentLabel(a.environment)}</td>
                   <td>{a.description?.trim() || "-"}</td>
                 </tr>
               ))}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
-import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import {
   getSession,
   getSessionAttempts,
@@ -17,7 +17,7 @@ import {
   activateStrategy,
   deactivateStrategy,
   finishSession,
-  listAccountStrategies,
+  listPortfolioStrategies,
   listSessions,
   mountStrategy,
   runStrategy,
@@ -58,8 +58,8 @@ function parseSessionLeverage(leverageText: string): number | null {
   return value;
 }
 
-async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
-  const entries = await listAccountStrategies(accountId);
+async function resumeWithNewSession(portfolioId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
+  const entries = await listPortfolioStrategies(portfolioId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
   if (!targetStrategyId || targetStrategyId <= 0) {
@@ -71,13 +71,13 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
 
   try {
     if (!targetEntry) {
-      await mountStrategy(accountId, targetStrategyId);
+      await mountStrategy(portfolioId, targetStrategyId);
       mountedForResume = true;
     }
     if (changedActive || !targetEntry?.active) {
-      await activateStrategy(accountId, targetStrategyId);
+      await activateStrategy(portfolioId, targetStrategyId);
     }
-    return await runStrategy(accountId, {
+    return await runStrategy(portfolioId, {
       strategy_path: "",
       interval: session.interval || "1m",
       start_time_ms: session.start_time_ms,
@@ -90,19 +90,19 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
     if (changedActive) {
       try {
         if (currentActiveId !== null) {
-          await activateStrategy(accountId, currentActiveId);
+          await activateStrategy(portfolioId, currentActiveId);
         } else {
-          await deactivateStrategy(accountId, targetStrategyId);
+          await deactivateStrategy(portfolioId, targetStrategyId);
         }
         if (mountedForResume) {
-          await unmountStrategy(accountId, targetStrategyId);
+          await unmountStrategy(portfolioId, targetStrategyId);
         }
       } catch {
         // Best-effort rollback only; preserve original error.
       }
     } else if (mountedForResume) {
       try {
-        await unmountStrategy(accountId, targetStrategyId);
+        await unmountStrategy(portfolioId, targetStrategyId);
       } catch {
         // Best-effort rollback only; preserve original error.
       }
@@ -170,7 +170,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
   const baseStartedAt = sessionStartedAtMs(session);
   return !allSessions.some((other) => (
     other.session_id !== session.session_id
-    && other.account_id === session.account_id
+    && other.portfolio_id === session.portfolio_id
     && other.strategy_id === session.strategy_id
     && other.environment === session.environment
     && other.interval === session.interval
@@ -217,7 +217,7 @@ function usePagedList<T>(
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset offset when the session / account changes. We intentionally do NOT
+  // Reset offset when the session / portfolio changes. We intentionally do NOT
   // depend on ``offset`` here — the separate effect below handles offset changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setOffset(0); }, deps);
@@ -482,7 +482,7 @@ function venueScopeLabel(venue: VenueReconciliationDiff): string {
   const venueID = venue.venue_id ?? "-";
   const exchange = enumLabel(EXCHANGE_LABELS, venue.exchange, "exchange");
   const market = enumLabel(MARKET_LABELS, venue.market, "market");
-  const environment = accountEnvironmentLabel(venue.environment);
+  const environment = portfolioEnvironmentLabel(venue.environment);
   return `Venue ${venueID} · ${exchange} / ${market} / ${environment}`;
 }
 
@@ -510,7 +510,7 @@ export default function SessionDetailPage() {
   const [stopping, setStopping] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
-  const [accountSessions, setAccountSessions] = useState<Session[]>([]);
+  const [portfolioSessions, setPortfolioSessions] = useState<Session[]>([]);
   const [deliveryHealth, setDeliveryHealth] = useState<SessionDeliveryHealth[]>([]);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
@@ -737,21 +737,21 @@ export default function SessionDetailPage() {
   }, [session?.strategy_id]);
 
   useEffect(() => {
-    const accountId = session?.account_id;
-    if (typeof accountId !== "number" || accountId <= 0) return;
-    const resolvedAccountId: number = accountId;
+    const portfolioId = session?.portfolio_id;
+    if (typeof portfolioId !== "number" || portfolioId <= 0) return;
+    const resolvedPortfolioId: number = portfolioId;
     let cancelled = false;
     async function loadSessions() {
       try {
-        const items = await listSessions(resolvedAccountId, 0, 100);
-        if (!cancelled) setAccountSessions(items);
+        const items = await listSessions(resolvedPortfolioId, 0, 100);
+        if (!cancelled) setPortfolioSessions(items);
       } catch {
-        if (!cancelled) setAccountSessions([]);
+        if (!cancelled) setPortfolioSessions([]);
       }
     }
     void loadSessions();
     return () => { cancelled = true; };
-  }, [session?.account_id]);
+  }, [session?.portfolio_id]);
 
   useEffect(() => {
     if (!stableSessionId || !session?.runtime_id) {
@@ -811,7 +811,7 @@ export default function SessionDetailPage() {
         return;
       }
       setStopDialogOpen(false);
-      setStopInfo(result.status ? `Stop-and-close request accepted. Current status: ${result.status}.` : "Session stop-and-close request accepted. The account is exiting to a flat state.");
+      setStopInfo(result.status ? `Stop-and-close request accepted. Current status: ${result.status}.` : "Session stop-and-close request accepted. The portfolio is exiting to a flat state.");
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to stop and close session");
     } finally {
@@ -856,12 +856,12 @@ export default function SessionDetailPage() {
     setStopInfo(null);
     setResuming(true);
     try {
-      const resumed = await resumeWithNewSession(currentSession.account_id, currentSession, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
+      const resumed = await resumeWithNewSession(currentSession.portfolio_id, currentSession, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
       setResumeDialogOpen(false);
       setResumeRuntimeId("");
       setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
       setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
-      navigate(id ? `/accounts/${id}/sessions/${resumed.session_id}` : `/accounts/${currentSession.account_id}/sessions/${resumed.session_id}`);
+      navigate(id ? `/portfolios/${id}/sessions/${resumed.session_id}` : `/portfolios/${currentSession.portfolio_id}/sessions/${resumed.session_id}`);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to resume session");
     } finally {
@@ -891,7 +891,7 @@ export default function SessionDetailPage() {
   return (
     <div>
       <p className="muted" style={{ marginBottom: "0.75rem" }}>
-        <Link to={id ? `/accounts/${id}` : "/accounts"}>← Back to account</Link>
+        <Link to={id ? `/portfolios/${id}` : "/portfolios"}>← Back to portfolio</Link>
       </p>
 
       <h2 className="section-title" style={{ marginTop: 0 }}>
@@ -1054,7 +1054,7 @@ export default function SessionDetailPage() {
         ) : null}
         {stopError ? <p className="error" style={{ marginTop: "0.75rem", marginBottom: 0 }}>{stopError}</p> : null}
         {stopInfo ? <p className="muted" style={{ marginTop: "0.75rem", marginBottom: 0 }}>{stopInfo}</p> : null}
-        {session && canResumeSession(session, accountSessions) ? (
+        {session && canResumeSession(session, portfolioSessions) ? (
           <div style={{ marginTop: "0.75rem" }}>
             <button
               type="button"

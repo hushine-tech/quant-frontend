@@ -12,7 +12,7 @@ export default function ChartsPlaceholder() {
         TradingView integration will plug in here. For now this page is a placeholder.
       </p>
       <p>
-        <Link to="/accounts">Accounts</Link>
+        <Link to="/portfolios">Portfolios</Link>
       </p>
     </div>
   );

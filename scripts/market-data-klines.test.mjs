@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const marketData = readFileSync(join(here, "../src/pages/MarketData.tsx"), "utf8");
-const accountDetail = readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8");
+const portfolioDetail = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
 const client = readFileSync(join(here, "../src/api/client.ts"), "utf8");
 
 for (const token of [
@@ -31,5 +31,5 @@ for (const token of [
   "Sample Klines",
   "queryMarketDataKlines",
 ]) {
-  assert.equal(accountDetail.includes(token) || client.includes(token), true, `Backtest start dialog should include ${token}`);
+  assert.equal(portfolioDetail.includes(token) || client.includes(token), true, `Backtest start dialog should include ${token}`);
 }

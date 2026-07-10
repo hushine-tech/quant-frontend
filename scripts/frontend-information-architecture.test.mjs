@@ -7,9 +7,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const files = {
   app: readFileSync(join(here, "../src/App.tsx"), "utf8"),
-  accountList: readFileSync(join(here, "../src/pages/AccountManagement.tsx"), "utf8"),
-  accountNew: readFileSync(join(here, "../src/pages/AccountNew.tsx"), "utf8"),
-  accountDetail: readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8"),
+  portfolioList: readFileSync(join(here, "../src/pages/PortfolioManagement.tsx"), "utf8"),
+  portfolioNew: readFileSync(join(here, "../src/pages/PortfolioNew.tsx"), "utf8"),
+  portfolioDetail: readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8"),
   strategyList: readFileSync(join(here, "../src/pages/StrategyList.tsx"), "utf8"),
   runtime: readFileSync(join(here, "../src/pages/RuntimeManagement.tsx"), "utf8"),
   runtimeCredentials: readFileSync(join(here, "../src/pages/RuntimeCredentials.tsx"), "utf8"),
@@ -27,10 +27,10 @@ const files = {
   asyncSelectPagination: readFileSync(join(here, "../src/utils/asyncSelectPagination.ts"), "utf8"),
 };
 
-assert.equal(files.app.includes("UsersRound"), true, "Account nav should use a multi-user icon");
+assert.equal(files.app.includes("UsersRound"), true, "Portfolio nav should use a multi-user icon");
 
 const navOrder = [
-  "Account Management",
+  "Portfolio Management",
   "Strategy Management",
   "Market Data",
   "Runtime Management",
@@ -41,23 +41,23 @@ const navOrder = [
 assert.equal(navOrder.every((idx) => idx >= 0), true, "All primary nav labels must exist");
 assert.deepEqual([...navOrder].sort((a, b) => a - b), navOrder, "Primary nav should follow the product workflow order");
 
-assert.equal(files.api.includes("description?: string"), true, "Account API type should expose optional description");
-assert.equal(files.accountNew.includes("Description"), true, "Create Account should include a description field");
-assert.equal(files.accountNew.includes("Account environment"), true, "Create Account should choose only the account environment");
+assert.equal(files.api.includes("description?: string"), true, "Portfolio API type should expose optional description");
+assert.equal(files.portfolioNew.includes("Description"), true, "Create Portfolio should include a description field");
+assert.equal(files.portfolioNew.includes("Portfolio environment"), true, "Create Portfolio should choose only the portfolio environment");
 for (const token of [
   "Create simulated Binance",
   "Spot wallet",
   "Futures wallet",
   "body.spot",
   "body.futures",
-  "Account stores the environment",
+  "Portfolio stores the environment",
 ]) {
-  assert.equal(files.accountNew.includes(token), false, `Create Account must not configure account-level wallet or venue semantics: ${token}`);
+  assert.equal(files.portfolioNew.includes(token), false, `Create Portfolio must not configure portfolio-level wallet or venue semantics: ${token}`);
 }
-assert.equal(files.accountList.includes("accountEnvironmentLabel"), true, "Account list should render readable environment labels");
-assert.equal(files.accountList.includes('"Description"'), true, "Account list should show Description column");
-assert.equal(files.accountList.includes("<th>Action</th>"), false, "Account list should not show an Action column");
-assert.equal(files.accountList.includes(">View</Link>"), false, "Account list should not use a separate View link");
+assert.equal(files.portfolioList.includes("portfolioEnvironmentLabel"), true, "Portfolio list should render readable environment labels");
+assert.equal(files.portfolioList.includes('"Description"'), true, "Portfolio list should show Description column");
+assert.equal(files.portfolioList.includes("<th>Action</th>"), false, "Portfolio list should not show an Action column");
+assert.equal(files.portfolioList.includes(">View</Link>"), false, "Portfolio list should not use a separate View link");
 
 assert.equal(files.strategyList.includes(">View</Link>"), false, "Strategy list should not use a separate View link");
 
@@ -82,31 +82,31 @@ for (const token of ["Start container", "Run inside container", "hushine-debug r
   assert.equal(files.runtimeInstallInstructions.includes(token), true, `Runtime install instructions should include ${token}`);
 }
 
-assert.equal(files.orderTree.includes("account_id?: number"), true, "Order tree should accept account id metadata");
+assert.equal(files.orderTree.includes("portfolio_id?: number"), true, "Order tree should accept portfolio id metadata");
 assert.equal(files.orderTree.includes("session_id?: string"), true, "Order tree should accept session id metadata");
-assert.equal(files.orderTree.includes("/accounts/${intent.account_id}/sessions/${intent.session_id}"), true, "Order rows should link to source session");
+assert.equal(files.orderTree.includes("/portfolios/${intent.portfolio_id}/sessions/${intent.session_id}"), true, "Order rows should link to source session");
 
 for (const token of [
-  'type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues"',
+  'type PortfolioDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues"',
   "Portfolio",
   "Run Strategy",
   "Local Debug",
   "Sessions",
   "Venues",
 ]) {
-  assert.equal(files.accountDetail.includes(token), true, `Account detail should include ${token}`);
+  assert.equal(files.portfolioDetail.includes(token), true, `Portfolio detail should include ${token}`);
 }
-assert.equal(files.accountDetail.includes("SessionPanel accountId"), true, "Account detail should keep session inspection as a tab panel");
-assert.equal(files.accountDetail.includes("View reconciliation"), false, "Account detail should not keep the old reconciliation shortcut panel");
+assert.equal(files.portfolioDetail.includes("SessionPanel portfolioId"), true, "Portfolio detail should keep session inspection as a tab panel");
+assert.equal(files.portfolioDetail.includes("View reconciliation"), false, "Portfolio detail should not keep the old reconciliation shortcut panel");
 assert.equal(files.venueManagement.includes("credential_info: requiresCredentials ?"), false, "Venue create payload must not send empty credential_info for backtest venues");
 assert.equal(files.venueManagement.includes("api_key: requiresCredentials ?"), false, "Venue create payload must not send empty api_key for backtest venues");
-assert.equal(files.venueManagement.includes('environment === "backtest" && !accountID'), false, "Venue create form must allow unbound backtest venues");
+assert.equal(files.venueManagement.includes('environment === "backtest" && !portfolioID'), false, "Venue create form must allow unbound backtest venues");
 assert.equal(files.venueManagement.includes('placeholder="Leave unbound"'), true, "Venue create form should present venue binding as optional");
 assert.equal(files.venueManagement.includes("applyBacktestWalletPayload"), true, "Venue create form must attach backtest wallet bootstrap to venue payload");
 assert.equal(files.venueManagement.includes("Spot wallet"), true, "Venue create form must expose backtest spot wallet bootstrap");
 assert.equal(files.venueManagement.includes("Futures wallet"), true, "Venue create form must expose backtest futures wallet bootstrap");
 assert.equal(files.venueManagement.includes("Synthetic"), true, "Venue management should label synthetic backtest keys");
-assert.equal(files.accountDetail.includes("Synthetic"), true, "Account detail should label synthetic backtest keys");
+assert.equal(files.portfolioDetail.includes("Synthetic"), true, "Portfolio detail should label synthetic backtest keys");
 
 for (const token of [
   'type SessionDetailTab = "chart" | "snapshots" | "reconciliation" | "orders" | "lifecycle"',
@@ -129,7 +129,7 @@ for (const [name, content] of [
 assert.equal(files.asyncSelectPagination.includes("collectFilteredPage"), true, "AsyncSelect client-side filtering should use a cross-page pagination helper");
 for (const [name, content] of [
   ["Venue Management", files.venueManagement],
-  ["Account Detail", files.accountDetail],
+  ["Portfolio Detail", files.portfolioDetail],
   ["Session Management", files.sessionManagement],
   ["Order History", files.orderHistory],
   ["Runtime Selector", files.runtimeSelector],
@@ -138,7 +138,7 @@ for (const [name, content] of [
 }
 
 for (const [name, content] of [
-  ["Account Management", files.accountList],
+  ["Portfolio Management", files.portfolioList],
   ["Strategy Management", files.strategyList],
   ["Runtime Management", files.runtime],
   ["Runtime Credentials", files.runtimeCredentials],
@@ -149,7 +149,7 @@ for (const [name, content] of [
 }
 
 for (const token of [
-  "listAccountsPage",
+  "listPortfoliosPage",
   "listStrategiesPage",
   "listSessionsPage",
   "listRuntimeCredentialsPage",

@@ -2,16 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import {
-  getAccount,
-  getAccountPortfolioSnapshot,
+  getPortfolio,
+  getPortfolioPortfolioSnapshot,
   runStrategy,
   bindVenue,
   getStrategyStatus,
   getDownloadAndRunJob,
   listVenues,
   listStrategiesPage,
-  listAccountStrategies,
-  listAccountVenues,
+  listPortfolioStrategies,
+  listPortfolioVenues,
   releaseVenue,
   mountStrategy,
   unmountStrategy,
@@ -27,11 +27,11 @@ import {
   queryMarketDataKlines,
   runtimeRoleForSessionEnvironment,
   isSessionTerminal,
-  type Account,
+  type Portfolio,
   type WalletSnapshot,
-  type AccountVenueWallets,
+  type PortfolioVenueWallets,
   type Strategy,
-  type AccountStrategy,
+  type PortfolioStrategy,
   type Venue,
   type Session,
   type BacktestCoveragePreview,
@@ -48,11 +48,12 @@ import { FilterField, FilterPanel } from "@/components/FilterControls";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
+import QuickStartActionButton from "@/components/QuickStartActionButton";
 import SymbolPicker from "@/components/SymbolPicker";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
-import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
-import { appendReturnParam, safeInternalReturnTo } from "@/utils/returnTo";
+import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
 
 function envBannerClass(environment: number): string {
   switch (environment) {
@@ -67,9 +68,9 @@ function envBannerClass(environment: number): string {
   }
 }
 
-type AccountDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues";
+type PortfolioDetailTab = "portfolio" | "run" | "debug" | "sessions" | "venues";
 
-const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
+const portfolioDetailTabs: Array<PageTab<PortfolioDetailTab>> = [
   { id: "portfolio", label: "Portfolio" },
   { id: "run", label: "Run Strategy" },
   { id: "debug", label: "Local Debug" },
@@ -77,7 +78,7 @@ const accountDetailTabs: Array<PageTab<AccountDetailTab>> = [
   { id: "venues", label: "Venues" },
 ];
 
-function normalizeAccountDetailTab(value: string | null): AccountDetailTab {
+function normalizePortfolioDetailTab(value: string | null): PortfolioDetailTab {
   return value === "run" || value === "debug" || value === "sessions" || value === "venues" ? value : "portfolio";
 }
 
@@ -130,7 +131,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
   const baseStartedAt = sessionStartedAtMs(session)
   return !allSessions.some((other) => (
     other.session_id !== session.session_id
-    && other.account_id === session.account_id
+    && other.portfolio_id === session.portfolio_id
     && other.strategy_id === session.strategy_id
     && other.environment === session.environment
     && other.interval === session.interval
@@ -140,8 +141,8 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
   ));
 }
 
-async function resumeWithNewSession(accountId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
-  const entries = await listAccountStrategies(accountId);
+async function resumeWithNewSession(portfolioId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
+  const entries = await listPortfolioStrategies(portfolioId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
   if (!targetStrategyId || targetStrategyId <= 0) {
@@ -153,13 +154,13 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
 
   try {
     if (!targetEntry) {
-      await mountStrategy(accountId, targetStrategyId);
+      await mountStrategy(portfolioId, targetStrategyId);
       mountedForResume = true;
     }
     if (changedActive || !targetEntry?.active) {
-      await activateStrategy(accountId, targetStrategyId);
+      await activateStrategy(portfolioId, targetStrategyId);
     }
-    return await runStrategy(accountId, {
+    return await runStrategy(portfolioId, {
       strategy_path: "",
       interval: session.interval || "1m",
       start_time_ms: session.start_time_ms,
@@ -172,19 +173,19 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
     if (changedActive) {
       try {
         if (currentActiveId !== null) {
-          await activateStrategy(accountId, currentActiveId);
+          await activateStrategy(portfolioId, currentActiveId);
         } else {
-          await deactivateStrategy(accountId, targetStrategyId);
+          await deactivateStrategy(portfolioId, targetStrategyId);
         }
         if (mountedForResume) {
-          await unmountStrategy(accountId, targetStrategyId);
+          await unmountStrategy(portfolioId, targetStrategyId);
         }
       } catch {
         // Best-effort rollback only; preserve the original error.
       }
     } else if (mountedForResume) {
       try {
-        await unmountStrategy(accountId, targetStrategyId);
+        await unmountStrategy(portfolioId, targetStrategyId);
       } catch {
         // Best-effort rollback only; preserve the original error.
       }
@@ -193,18 +194,18 @@ async function resumeWithNewSession(accountId: number, session: Session, runtime
   }
 }
 
-export default function AccountDetail() {
+export default function PortfolioDetail() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [acc, setAcc] = useState<Account | null>(null);
-  const [venueWallets, setVenueWallets] = useState<AccountVenueWallets | null>(null);
+  const [acc, setAcc] = useState<Portfolio | null>(null);
+  const [venueWallets, setVenueWallets] = useState<PortfolioVenueWallets | null>(null);
   const [sessionRefreshTick, setSessionRefreshTick] = useState(0);
   const [venueMutationTick, setVenueMutationTick] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [venueWalletErr, setVenueWalletErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [venueWalletLoading, setVenueWalletLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => normalizeAccountDetailTab(searchParams.get("tab")));
+  const [activeTab, setActiveTab] = useState<PortfolioDetailTab>(() => normalizePortfolioDetailTab(searchParams.get("tab")));
   const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
   const initialRuntimeId = searchParams.get("runtime_id") || "";
   const initialStrategyId = searchParams.get("strategy_id") || "";
@@ -216,7 +217,7 @@ export default function AccountDetail() {
       setLoading(true);
       setErr(null);
       try {
-        const a = await getAccount(id);
+        const a = await getPortfolio(id);
         if (!cancelled) setAcc(a);
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Load failed");
@@ -235,7 +236,7 @@ export default function AccountDetail() {
       setVenueWallets(null);
       setVenueWalletLoading(true);
       try {
-        const summary = await getAccountPortfolioSnapshot(id);
+        const summary = await getPortfolioPortfolioSnapshot(id);
         if (!cancelled) setVenueWallets(summary);
       } catch (e) {
         if (!cancelled) setVenueWalletErr(e instanceof Error ? e.message : "Venue wallet load failed");
@@ -256,7 +257,7 @@ export default function AccountDetail() {
     setVenueMutationTick((v) => v + 1);
   }
 
-  function changeAccountTab(tab: AccountDetailTab) {
+  function changePortfolioTab(tab: PortfolioDetailTab) {
     setActiveTab(tab);
     const next = new URLSearchParams(searchParams);
     if (tab === "portfolio") {
@@ -270,41 +271,41 @@ export default function AccountDetail() {
   return (
     <div>
       <p className="muted" style={{ marginBottom: "0.75rem" }}>
-        <Link to="/accounts">← Back to list</Link>
+        <Link to="/portfolios">← Back to list</Link>
       </p>
       {loading ? <p className="muted">Loading…</p> : null}
       {err ? <p className="error">{err}</p> : null}
       {!loading && acc ? (
         <>
         <div className={envBannerClass(environment)} role="status">
-          {accountEnvironmentLabel(environment)}
+          {portfolioEnvironmentLabel(environment)}
         </div>
         <div className="card" style={{ marginBottom: "1rem" }}>
           <p><strong style={{ fontSize: "1.1rem" }}>{acc.name}</strong></p>
           {acc.description?.trim() ? <p className="muted">{acc.description.trim()}</p> : null}
           <p className="muted">
-            ID: {acc.account_id} · Environment: {accountEnvironmentLabel(environment)} · Created: {formatUTCWithLocal(acc.created_at)}
+            ID: {acc.portfolio_id} · Environment: {portfolioEnvironmentLabel(environment)} · Created: {formatUTCWithLocal(acc.created_at)}
           </p>
         </div>
         <PageTabs
-          tabs={accountDetailTabs}
+          tabs={portfolioDetailTabs}
           activeTab={activeTab}
-          onChange={changeAccountTab}
-          ariaLabel="Account detail sections"
+          onChange={changePortfolioTab}
+          ariaLabel="Portfolio detail sections"
         >
           {activeTab === "portfolio" ? (
             <>
               {venueWalletLoading ? <p className="muted">Loading venue wallets...</p> : null}
               {venueWalletErr ? <p className="error">{venueWalletErr}</p> : null}
               {!venueWalletLoading && venueWallets ? (
-                <AccountVenuePortfolio account={acc} summary={venueWallets} />
+                <PortfolioVenuePortfolio portfolio={acc} summary={venueWallets} />
               ) : null}
             </>
           ) : null}
 
           {activeTab === "run" ? (
             <StrategyPanel
-              accountId={acc.account_id}
+              portfolioId={acc.portfolio_id}
               environment={environment}
               initialRuntimeId={initialRuntimeId}
               initialStrategyId={initialStrategyId}
@@ -314,15 +315,15 @@ export default function AccountDetail() {
           ) : null}
 
           {activeTab === "debug" ? (
-            <LocalDebugPackagePanel account={acc} wallet={portfolioWallet} />
+            <LocalDebugPackagePanel portfolio={acc} wallet={portfolioWallet} />
           ) : null}
 
           {activeTab === "sessions" ? (
-            <SessionPanel accountId={acc.account_id} refreshTick={sessionRefreshTick} />
+            <SessionPanel portfolioId={acc.portfolio_id} refreshTick={sessionRefreshTick} />
           ) : null}
 
           {activeTab === "venues" ? (
-            <AccountVenuesPanel account={acc} environment={environment} onChanged={bumpVenueMutationTick} />
+            <PortfolioVenuesPanel portfolio={acc} environment={environment} onChanged={bumpVenueMutationTick} />
           ) : null}
         </PageTabs>
         </>
@@ -331,7 +332,7 @@ export default function AccountDetail() {
   );
 }
 
-function walletFromPortfolioSnapshot(summary: AccountVenueWallets | null): WalletSnapshot | null {
+function walletFromPortfolioSnapshot(summary: PortfolioVenueWallets | null): WalletSnapshot | null {
   return summary?.wallet ?? summary?.items.find((item) => item.wallet)?.wallet ?? null;
 }
 
@@ -343,14 +344,14 @@ function formatUSDT(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(4)} USDT` : "-";
 }
 
-function AccountVenuePortfolio({ account, summary }: { account: Account; summary: AccountVenueWallets }) {
+function PortfolioVenuePortfolio({ portfolio, summary }: { portfolio: Portfolio; summary: PortfolioVenueWallets }) {
   const hasVenues = summary.items.length > 0;
   return (
     <>
       <div className="card">
         <div className="portfolio-grid">
           <div className="portfolio-panel">
-            <div className="portfolio-panel__title">Account aggregate</div>
+            <div className="portfolio-panel__title">Portfolio aggregate</div>
             <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
               Sum of successfully loaded exchange venue wallets. Failed venues are excluded and shown below.
             </p>
@@ -382,14 +383,14 @@ function AccountVenuePortfolio({ account, summary }: { account: Account; summary
           <div className="portfolio-panel portfolio-panel--secondary">
             <div className="portfolio-panel__title">Bound venues</div>
             <p className="muted" style={{ fontSize: "0.75rem", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
-              This account can route strategies only through bound venues with matching environment and market.
+              This portfolio can route strategies only through bound venues with matching environment and market.
             </p>
             <div>
               <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.15rem" }}>
-                Account
+                Portfolio
               </div>
               <div style={{ fontSize: "1.05rem", fontWeight: 600, lineHeight: 1.2 }}>
-                {account.name} <span className="muted">#{account.account_id}</span>
+                {portfolio.name} <span className="muted">#{portfolio.portfolio_id}</span>
               </div>
             </div>
             <div className="portfolio-metric">
@@ -404,7 +405,7 @@ function AccountVenuePortfolio({ account, summary }: { account: Account; summary
         </div>
         {!hasVenues ? (
           <p className="muted" style={{ marginBottom: 0 }}>
-            No active venues are bound to this account. Open the Venues tab to bind one.
+            No active venues are bound to this portfolio. Open the Venues tab to bind one.
           </p>
         ) : null}
       </div>
@@ -472,16 +473,16 @@ function venueAPIKeyLabel(value?: string): string {
   return isSyntheticBacktestKey(value) ? `Synthetic ${masked}` : masked;
 }
 
-function AccountVenuesPanel({
-  account,
+function PortfolioVenuesPanel({
+  portfolio,
   environment,
   onChanged,
 }: {
-  account: Account;
+  portfolio: Portfolio;
   environment: number;
   onChanged: () => void;
 }) {
-  const accountId = account.account_id;
+  const portfolioId = portfolio.portfolio_id;
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -490,17 +491,17 @@ function AccountVenuesPanel({
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [binding, setBinding] = useState(false);
 
-  async function loadAccountVenues(offset: number, limit: number) {
+  async function loadPortfolioVenues(offset: number, limit: number) {
     setLoading(true);
     setError(null);
     try {
-      return await listAccountVenues(accountId, {
+      return await listPortfolioVenues(portfolioId, {
         include_inactive: true,
         offset,
         limit,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Load account venues failed");
+      setError(e instanceof Error ? e.message : "Load portfolio venues failed");
       throw e;
     } finally {
       setLoading(false);
@@ -514,12 +515,12 @@ function AccountVenuesPanel({
     setNotice(null);
     setBinding(true);
     try {
-      if (selectedVenue.account_id === accountId) {
-        setNotice("Venue is already bound to this account.");
+      if (selectedVenue.portfolio_id === portfolioId) {
+        setNotice("Venue is already bound to this portfolio.");
         return;
       }
-      await bindVenue(selectedVenue.venue_id, accountId, `bound from account ${accountId}`);
-      setNotice(selectedVenue.account_id ? "Venue rebound to this account." : "Venue bound to this account.");
+      await bindVenue(selectedVenue.venue_id, portfolioId, `bound from portfolio ${portfolioId}`);
+      setNotice(selectedVenue.portfolio_id ? "Venue rebound to this portfolio." : "Venue bound to this portfolio.");
       setSelectedVenueID("");
       setSelectedVenue(null);
       setRefreshKey((v) => v + 1);
@@ -535,8 +536,8 @@ function AccountVenuesPanel({
     setError(null);
     setNotice(null);
     try {
-      await releaseVenue(venue.venue_id, `released from account ${accountId}`);
-      setNotice("Venue released from this account.");
+      await releaseVenue(venue.venue_id, `released from portfolio ${portfolioId}`);
+      setNotice("Venue released from this portfolio.");
       setRefreshKey((v) => v + 1);
       onChanged();
     } catch (e) {
@@ -549,18 +550,18 @@ function AccountVenuesPanel({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.75rem" }}>
         <div>
           <h2 className="section-title" style={{ marginBottom: "0.25rem" }}>Venues</h2>
-          <p className="muted" style={{ margin: 0 }}>Exchange venues bound to this account.</p>
+          <p className="muted" style={{ margin: 0 }}>Exchange venues bound to this portfolio.</p>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>Refresh</button>
-          <Link to={`/venues?account_id=${accountId}&tab=create&environment=${String(accountEnvironmentLabel(environment)).toLowerCase()}`}>Create venue</Link>
+          <Link to={`/venues?portfolio_id=${portfolioId}&tab=create&environment=${String(portfolioEnvironmentLabel(environment)).toLowerCase()}`}>Create venue</Link>
         </div>
       </div>
       <div className="card" style={{ marginBottom: "1rem" }}>
         <form onSubmit={handleBindVenue}>
           <h3 className="section-title" style={{ marginBottom: "0.5rem" }}>Bind venue</h3>
           <p className="muted" style={{ marginTop: 0 }}>
-            Select an active {accountEnvironmentLabel(environment)} venue. If it is bound to another account, it will be handed off to this account.
+            Select an active {portfolioEnvironmentLabel(environment)} venue. If it is bound to another portfolio, it will be handed off to this portfolio.
           </p>
           <label>Venue</label>
           <AsyncSelect<Venue>
@@ -584,17 +585,17 @@ function AccountVenuesPanel({
                 map: (venue) => ({
                   value: String(venue.venue_id),
                   label: venue.display_name || `venue-${venue.venue_id}`,
-                  detail: `${venue.exchange_label || venue.exchange} · ${venue.market_label || venue.market} · ${venue.account_id ? `account ${venue.account_id}` : "unbound"}`,
+                  detail: `${venue.exchange_label || venue.exchange} · ${venue.market_label || venue.market} · ${venue.portfolio_id ? `portfolio ${venue.portfolio_id}` : "unbound"}`,
                   item: venue,
                 }),
               });
             }}
             searchPlaceholder="Search venue name, ID, or API key"
-            allowClear
+            allowClear={false}
           />
           <p style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
             <button type="submit" className="primary" disabled={binding || !selectedVenueID}>
-              {binding ? "Binding..." : selectedVenue?.account_id && selectedVenue.account_id !== accountId ? "Rebind to this account" : "Bind to this account"}
+              {binding ? "Binding..." : selectedVenue?.portfolio_id && selectedVenue.portfolio_id !== portfolioId ? "Rebind to this portfolio" : "Bind to this portfolio"}
             </button>
           </p>
         </form>
@@ -603,9 +604,9 @@ function AccountVenuesPanel({
       {notice ? <p className="success">{notice}</p> : null}
       <InfiniteTable<Venue>
         columns={["Name", "Exchange", "Market", "Environment", "Status", "API Key", "Updated", "Action"]}
-        loadPage={loadAccountVenues}
-        refreshKey={`${accountId}-${refreshKey}`}
-        emptyText="No venues bound to this account."
+        loadPage={loadPortfolioVenues}
+        refreshKey={`${portfolioId}-${refreshKey}`}
+        emptyText="No venues bound to this portfolio."
         rowKey={(venue) => String(venue.venue_id)}
         renderRow={(venue) => (
           <>
@@ -635,12 +636,12 @@ function AccountVenuesPanel({
 
 // ── Strategy execution panel ─────────────────────────────────────────────────
 
-function accountRunStrategyReturnPath(accountId: number, returnTo?: string | null, runtimeId?: string): string {
+function portfolioRunStrategyReturnPath(portfolioId: number, returnTo?: string | null, runtimeId?: string): string {
   const params = new URLSearchParams();
   params.set("tab", "run");
   if (runtimeId) params.set("runtime_id", runtimeId);
   if (returnTo) params.set("return_to", returnTo);
-  return `/accounts/${accountId}?${params.toString()}`;
+  return `/portfolios/${portfolioId}?${params.toString()}`;
 }
 
 type SessionRecord = {
@@ -722,9 +723,9 @@ function previewRoutes(preview: PreviewRunStrategy): NonNullable<PreviewRunStrat
 // Asks strategy-service's PreviewRunStrategy — the same evaluator the real
 // start uses — so the hint is byte-for-byte consistent with what the user
 // will see when they click "Start Demo Session". This replaced an earlier
-// heuristic that looked at every market-data request on the user's account
+// heuristic that looked at every market-data request on the user's portfolio
 // (including streams unrelated to the current strategy), which could show
-// green on the wrong symbol/interval/account.
+// green on the wrong symbol/interval/portfolio.
 function LiveStartReadinessHint({
   preview,
   loading,
@@ -765,7 +766,7 @@ function LiveStartReadinessHint({
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #ef4444" }}>
         <p style={{ margin: 0, fontSize: "0.9rem" }}>
           <strong>Runtime profile unsupported:</strong>{" "}
-          profile <code>{preview.profile || "unknown"}</code> is not wired up for this account environment.
+          profile <code>{preview.profile || "unknown"}</code> is not wired up for this portfolio environment.
           {preview.failures.length > 0 ? ` ${preview.failures[0].reason}` : ""}
         </p>
       </div>
@@ -1132,14 +1133,14 @@ function downloadSafeName(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return slug || "account";
+  return slug || "portfolio";
 }
 
 function LocalDebugPackagePanel({
-  account,
+  portfolio,
   wallet,
 }: {
-  account: Account;
+  portfolio: Portfolio;
   wallet: WalletSnapshot | null;
 }) {
   const defaultSymbol = localDebugDefaultSymbol(wallet);
@@ -1180,16 +1181,16 @@ function LocalDebugPackagePanel({
     setError(null);
     setNotice(null);
     try {
-      const blob = await downloadDebugPackage(account.account_id, {
+      const blob = await downloadDebugPackage(portfolio.portfolio_id, {
         market: "perpetual_futures",
         symbol: symbol.trim().toUpperCase(),
         interval: interval.trim() || "1m",
         start_time_ms: startTimeMs,
         end_time_ms: endTimeMs,
-        wallet_source: "account_snapshot",
+        wallet_source: "portfolio_snapshot",
         initial_balance: initialBalance,
       });
-      const filename = `debug-package-${downloadSafeName(account.name)}-${symbol.trim().toUpperCase()}-${interval.trim() || "1m"}.zip`;
+      const filename = `debug-package-${downloadSafeName(portfolio.name)}-${symbol.trim().toUpperCase()}-${interval.trim() || "1m"}.zip`;
       downloadBlob(blob, filename);
       setNotice("Debug package generated. Import it in the local strategy debugger workspace.");
     } catch (err) {
@@ -1231,7 +1232,7 @@ function LocalDebugPackagePanel({
               type="text"
               value={initialBalanceDisplay}
               disabled
-              title="Loaded from the current account wallet snapshot"
+              title="Loaded from the current portfolio wallet snapshot"
             />
           </FilterField>
           <DateTimeRangePicker
@@ -1283,14 +1284,14 @@ cd ~/hushine-debug-workspace
 }
 
 function StrategyPanel({
-  accountId,
+  portfolioId,
   environment,
   initialRuntimeId = "",
   initialStrategyId = "",
   returnTo,
   onSessionsChanged,
 }: {
-  accountId: number;
+  portfolioId: number;
   environment: number;
   initialRuntimeId?: string;
   initialStrategyId?: string;
@@ -1320,6 +1321,7 @@ function StrategyPanel({
   const navigate = useNavigate();
   const [startRuntimeId, setStartRuntimeId] = useState(initialRuntimeId);
   const [startRuntime, setStartRuntime] = useState<Runtime | null>(null);
+  const quickStartMode = isQuickStartReturnTo(returnTo);
   const [maxLossClosePercent, setMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
   const [sessionLeverageText, setSessionLeverageText] = useState(String(DEFAULT_SESSION_LEVERAGE));
   const [pendingStart, setPendingStart] = useState<{
@@ -1336,8 +1338,8 @@ function StrategyPanel({
   const [demoPreviewLoading, setDemoPreviewLoading] = useState(false);
   const [demoPreviewError, setDemoPreviewError] = useState<string | null>(null);
 
-  // Account strategies (mounting panel)
-  const [accountStrats, setAccountStrats] = useState<AccountStrategy[]>([]);
+  // Portfolio strategies (mounting panel)
+  const [portfolioStrats, setPortfolioStrats] = useState<PortfolioStrategy[]>([]);
   const [mountErr, setMountErr] = useState<string | null>(null);
   const [selectedMountId, setSelectedMountId] = useState<number | "">("");
   const maxLossClosePct = parseMaxLossClosePct(maxLossClosePercent);
@@ -1357,8 +1359,8 @@ function StrategyPanel({
   }, []);
 
   useEffect(() => {
-    loadAccountStrats();
-  }, [accountId]);
+    loadPortfolioStrats();
+  }, [portfolioId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1366,7 +1368,7 @@ function StrategyPanel({
 
     async function restoreActiveRunPanelSession() {
       try {
-        const page = await listSessionsPage({ account_id: accountId, environment, runtime_id: startRuntimeId || undefined, limit: 20, offset: 0 });
+        const page = await listSessionsPage({ portfolio_id: portfolioId, environment, runtime_id: startRuntimeId || undefined, limit: 20, offset: 0 });
         if (cancelled) return;
         const session = page.items.find((session) => isRunPanelActiveStatus(session.status));
         if (!session) return;
@@ -1384,7 +1386,7 @@ function StrategyPanel({
     return () => {
       cancelled = true;
     };
-  }, [accountId, environment, startRuntimeId, activeSessionInRunPanel, running]);
+  }, [portfolioId, environment, startRuntimeId, activeSessionInRunPanel, running]);
 
   useEffect(() => {
     setStartRuntimeId(initialRuntimeId);
@@ -1427,7 +1429,7 @@ function StrategyPanel({
     async function loadDemoPreflight() {
       setDemoPreviewLoading(true);
       try {
-        const preview = await previewRunStrategy(accountId, {
+        const preview = await previewRunStrategy(portfolioId, {
           runtime_id: startRuntimeId,
           max_loss_close_pct: preflightMaxLossClosePct,
           leverage: preflightLeverage,
@@ -1453,12 +1455,12 @@ function StrategyPanel({
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [accountId, startDialogOpen, pendingStart?.kind, startRuntimeId, maxLossClosePct, sessionLeverage]);
+  }, [portfolioId, startDialogOpen, pendingStart?.kind, startRuntimeId, maxLossClosePct, sessionLeverage]);
 
-  async function loadAccountStrats() {
+  async function loadPortfolioStrats() {
     try {
-      const list = await listAccountStrategies(accountId);
-      setAccountStrats(list);
+      const list = await listPortfolioStrategies(portfolioId);
+      setPortfolioStrats(list);
     } catch {
       // ignore
     }
@@ -1468,13 +1470,13 @@ function StrategyPanel({
     if (!selectedMountId) return;
     setMountErr(null);
     try {
-      await mountStrategy(accountId, selectedMountId);
+      await mountStrategy(portfolioId, selectedMountId);
       if (returnTo) {
-        await activateStrategy(accountId, selectedMountId);
+        await activateStrategy(portfolioId, selectedMountId);
         navigate(appendReturnParam(returnTo, "strategy_id", selectedMountId), { replace: true });
         return;
       }
-      await loadAccountStrats();
+      await loadPortfolioStrats();
       setSelectedMountId("");
     } catch (e) {
       setMountErr(e instanceof Error ? e.message : "Mount failed");
@@ -1484,8 +1486,8 @@ function StrategyPanel({
   async function handleUnmount(sid: number) {
     setMountErr(null);
     try {
-      await unmountStrategy(accountId, sid);
-      await loadAccountStrats();
+      await unmountStrategy(portfolioId, sid);
+      await loadPortfolioStrats();
     } catch (e) {
       setMountErr(e instanceof Error ? e.message : "Unmount failed");
     }
@@ -1494,12 +1496,12 @@ function StrategyPanel({
   async function handleActivate(sid: number) {
     setMountErr(null);
     try {
-      await activateStrategy(accountId, sid);
+      await activateStrategy(portfolioId, sid);
       if (returnTo) {
         navigate(appendReturnParam(returnTo, "strategy_id", sid), { replace: true });
         return;
       }
-      await loadAccountStrats();
+      await loadPortfolioStrats();
     } catch (e) {
       setMountErr(e instanceof Error ? e.message : "Activate failed");
     }
@@ -1513,8 +1515,8 @@ function StrategyPanel({
   async function handleDeactivate(sid: number) {
     setMountErr(null);
     try {
-      await deactivateStrategy(accountId, sid);
-      await loadAccountStrats();
+      await deactivateStrategy(portfolioId, sid);
+      await loadPortfolioStrats();
     } catch (e) {
       setMountErr(e instanceof Error ? e.message : "Deactivate failed");
     }
@@ -1599,7 +1601,7 @@ function StrategyPanel({
     setError(null);
 
     try {
-      const sess = await runStrategy(accountId, {
+      const sess = await runStrategy(portfolioId, {
         strategy_path: "",
         interval: params.interval,
         start_time_ms: params.startTimeMs,
@@ -1626,7 +1628,7 @@ function StrategyPanel({
     setCoverageLoading(true);
     setCoverageError(null);
     try {
-      const result = await previewBacktestCoverage(accountId, {
+      const result = await previewBacktestCoverage(portfolioId, {
         strategy_path: "",
         start_time_ms: params.startTimeMs,
         end_time_ms: params.endTimeMs,
@@ -1697,7 +1699,7 @@ function StrategyPanel({
     setRunning(true);
     setError(null);
     try {
-      const job = await startDownloadAndRunBacktest(accountId, {
+      const job = await startDownloadAndRunBacktest(portfolioId, {
         strategy_path: "",
         interval: pendingStart.interval,
         start_time_ms: pendingStart.startTimeMs,
@@ -1824,8 +1826,8 @@ function StrategyPanel({
     }
   }
 
-  const activeStrat = accountStrats.find((s) => s.active);
-  const mountedIds = new Set(accountStrats.map((s) => s.strategy.strategy_id));
+  const activeStrat = portfolioStrats.find((s) => s.active);
+  const mountedIds = new Set(portfolioStrats.map((s) => s.strategy.strategy_id));
 
   return (
     <>
@@ -1834,10 +1836,10 @@ function StrategyPanel({
       {/* ── Mounted strategies ── */}
       <div className="card" style={{ marginBottom: "1rem" }}>
         <p style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Mounted strategies</p>
-        {accountStrats.length === 0 ? (
+        {portfolioStrats.length === 0 ? (
           <p className="muted">No strategies mounted.</p>
         ) : (
-          accountStrats.map((as) => (
+          portfolioStrats.map((as) => (
             <div
               key={as.strategy.strategy_id}
               style={{
@@ -1866,12 +1868,16 @@ function StrategyPanel({
                     </button>
                   </>
                 ) : (
-                  <>
-                    {returnTo ? (
-                      <button style={{ fontSize: "0.8rem" }} onClick={() => handleUseActiveStrategy(as.strategy.strategy_id)}>
-                        Use
-                      </button>
-                    ) : null}
+	                  <>
+	                    {returnTo ? (
+	                      quickStartMode ? (
+	                        <QuickStartActionButton onClick={() => handleUseActiveStrategy(as.strategy.strategy_id)} />
+	                      ) : (
+	                        <button style={{ fontSize: "0.8rem" }} onClick={() => handleUseActiveStrategy(as.strategy.strategy_id)}>
+	                          Use
+	                        </button>
+	                      )
+	                    ) : null}
                     <button style={{ fontSize: "0.8rem" }} onClick={() => handleDeactivate(as.strategy.strategy_id)}>
                       Deactivate
                     </button>
@@ -1906,7 +1912,7 @@ function StrategyPanel({
             <button onClick={handleMount} disabled={!selectedMountId}>Mount</button>
             <Link
               className="button-link"
-              to={`/strategies?tab=create&return_to=${encodeURIComponent(accountRunStrategyReturnPath(accountId, returnTo, startRuntimeId))}`}
+              to={`/strategies?tab=create&return_to=${encodeURIComponent(portfolioRunStrategyReturnPath(portfolioId, returnTo, startRuntimeId))}`}
             >
               Create Strategy in Strategy Management
             </Link>
@@ -2163,7 +2169,7 @@ function StrategyPanel({
 
 // ── Session Panel (pagination + search, click → session detail page) ───────
 
-function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTick: number }) {
+function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refreshTick: number }) {
   const navigate = useNavigate();
   const [loadedSessions, setLoadedSessions] = useState<Session[]>([]);
   const [search, setSearch] = useState("");
@@ -2182,7 +2188,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
 
   useEffect(() => {
     setTableRefresh((v) => v + 1);
-  }, [accountId, refreshTick]);
+  }, [portfolioId, refreshTick]);
 
   const shouldPollSessions = loadedSessions.some((session) => !isSessionTerminal(session));
 
@@ -2193,7 +2199,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
   }, [shouldPollSessions]);
 
   const loadSessionsForTable = async (offset: number, limit: number) => {
-    const page = await listSessionsPage({ account_id: accountId, session_id: search || undefined, offset, limit });
+    const page = await listSessionsPage({ portfolio_id: portfolioId, session_id: search || undefined, offset, limit });
     setLoadedSessions((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
     return page;
   };
@@ -2269,13 +2275,13 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
     }
     setResuming(true);
     try {
-      const resumed = await resumeWithNewSession(accountId, session, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
+      const resumed = await resumeWithNewSession(portfolioId, session, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
       setTableRefresh((v) => v + 1);
       setResumeDialogSession(null);
       setResumeRuntimeId("");
       setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
       setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
-      navigate(`/accounts/${accountId}/sessions/${resumed.session_id}`);
+      navigate(`/portfolios/${portfolioId}/sessions/${resumed.session_id}`);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to resume session");
     } finally {
@@ -2311,13 +2317,13 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
       <InfiniteTable<Session>
         columns={["Session", "Runtime", "Status", "Bars", "Action"]}
         loadPage={loadSessionsForTable}
-        refreshKey={`${accountId}-${search}-${tableRefresh}`}
+        refreshKey={`${portfolioId}-${search}-${tableRefresh}`}
         emptyText="No sessions found."
         rowKey={(s) => s.session_id}
         renderRow={(s) => (
           <>
             <td>
-              <Link to={`/accounts/${accountId}/sessions/${s.session_id}`}>{s.session_id.slice(0, 10)}…</Link>
+              <Link to={`/portfolios/${portfolioId}/sessions/${s.session_id}`}>{s.session_id.slice(0, 10)}…</Link>
               <span className="muted" style={{ marginLeft: "0.5rem" }}>{s.interval}</span>
               {sessionKindBadge(s)}
             </td>
@@ -2330,7 +2336,7 @@ function SessionPanel({ accountId, refreshTick }: { accountId: number; refreshTi
             <td>{s.bars_processed || 0}</td>
             <td>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-                <button type="button" onClick={() => navigate(`/accounts/${accountId}/sessions/${s.session_id}`)}>Open</button>
+                <button type="button" onClick={() => navigate(`/portfolios/${portfolioId}/sessions/${s.session_id}`)}>Open</button>
                 {s.status === "running" ? (
                   <>
                     <button type="button" onClick={() => void handleFinishListedSession(s)} disabled={finishingSessionId === s.session_id || stoppingSessionId === s.session_id}>

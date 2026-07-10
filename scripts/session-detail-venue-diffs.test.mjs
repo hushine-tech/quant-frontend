@@ -31,18 +31,18 @@ assert.match(
 );
 assert.doesNotMatch(
   source,
-  /Account aggregate hard \+ soft diffs/,
-  "Session detail should not render account aggregate reconciliation diffs.",
+  /Portfolio aggregate hard \+ soft diffs/,
+  "Session detail should not render portfolio aggregate reconciliation diffs.",
 );
 assert.doesNotMatch(
   source,
-  /accountAggregateDiffs/,
-  "Session detail should not keep account aggregate diff filtering code once reconciliation is venue-only.",
+  /portfolioAggregateDiffs/,
+  "Session detail should not keep portfolio aggregate diff filtering code once reconciliation is venue-only.",
 );
 assert.doesNotMatch(
   source,
   /run\.hard_fail_count|run\.soft_fail_count|run\.advisory_count/,
-  "Session detail should not display account-level diff counts.",
+  "Session detail should not display portfolio-level diff counts.",
 );
 assert.match(
   source,

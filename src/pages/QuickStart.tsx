@@ -2,20 +2,19 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Link, useSearchParams } from "react-router-dom";
 import { CheckCircle2, Circle, CircleDashed, ExternalLink } from "lucide-react";
 import {
-  getAccount,
+  getPortfolio,
   getRuntime,
   getStrategy,
-  listAccountVenues,
-  listRuntimes,
-  type Account,
+  listPortfolioVenues,
+  type Portfolio,
   type Runtime,
   type Strategy,
   type Venue,
 } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
-import { accountEnvironmentLabel } from "@/utils/accountEnvironment";
+import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 
-type StepId = "account" | "venue" | "strategy" | "runtime" | "start";
+type StepId = "portfolio" | "venue" | "strategy" | "runtime" | "start";
 
 type StepDefinition = {
   id: StepId;
@@ -23,7 +22,7 @@ type StepDefinition = {
 };
 
 const STEP_DEFINITIONS: StepDefinition[] = [
-  { id: "account", title: "Account" },
+  { id: "portfolio", title: "Portfolio" },
   { id: "venue", title: "Venue" },
   { id: "strategy", title: "Strategy" },
   { id: "runtime", title: "Runtime" },
@@ -89,24 +88,32 @@ function ActionLink({
   );
 }
 
+function SelectedAction({ children }: { children: ReactNode }) {
+  return (
+    <span className="button-link button-link--selected" aria-label={`${children} selected`}>
+      {children}
+      <CheckCircle2 size={15} aria-hidden="true" />
+    </span>
+  );
+}
+
 export default function QuickStart() {
   const [searchParams] = useSearchParams();
-  const accountId = searchParams.get("account_id");
+  const portfolioId = searchParams.get("portfolio_id");
   const venueId = searchParams.get("venue_id");
   const strategyId = searchParams.get("strategy_id");
   const runtimeId = searchParams.get("runtime_id");
 
-  const [account, setAccount] = useState<Account | null>(null);
+  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [runtime, setRuntime] = useState<Runtime | null>(null);
-  const [hasRouteableRuntime, setHasRouteableRuntime] = useState<boolean | null>(null);
   const [error, setError] = useState("");
 
   const quickStartReturnTo = useCallback(
     (override: Record<string, string | number | undefined | null> = {}) => {
       const merged = {
-        account_id: accountId,
+        portfolio_id: portfolioId,
         venue_id: venueId,
         strategy_id: strategyId,
         runtime_id: runtimeId,
@@ -114,18 +121,18 @@ export default function QuickStart() {
       };
       return routeWithParams("/quick-start", merged);
     },
-    [accountId, runtimeId, strategyId, venueId],
+    [portfolioId, runtimeId, strategyId, venueId],
   );
 
   useEffect(() => {
     let alive = true;
-    setAccount(null);
+    setPortfolio(null);
     setVenues([]);
-    if (!accountId) return;
-    void Promise.all([getAccount(accountId), listAccountVenues(accountId, { limit: 100 })])
+    if (!portfolioId) return;
+    void Promise.all([getPortfolio(portfolioId), listPortfolioVenues(portfolioId, { limit: 100 })])
       .then(([acc, venuePage]) => {
         if (!alive) return;
-        setAccount(acc);
+        setPortfolio(acc);
         setVenues(venuePage.items ?? []);
       })
       .catch((err: unknown) => {
@@ -135,7 +142,7 @@ export default function QuickStart() {
     return () => {
       alive = false;
     };
-  }, [accountId]);
+  }, [portfolioId]);
 
   useEffect(() => {
     let alive = true;
@@ -169,27 +176,6 @@ export default function QuickStart() {
     };
   }, [runtimeId]);
 
-  useEffect(() => {
-    let alive = true;
-    setHasRouteableRuntime(null);
-    if (!account || !venueId || !strategyId || runtimeId) return;
-    void listRuntimes({
-      limit: 1,
-      eligible: "session_start",
-      role: "executor",
-      environment: account.environment,
-    })
-      .then((result) => {
-        if (alive) setHasRouteableRuntime((result.runtimes ?? []).length > 0);
-      })
-      .catch(() => {
-        if (alive) setHasRouteableRuntime(null);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [account, runtimeId, strategyId, venueId]);
-
   const selectedVenue = useMemo(
     () => venues.find((venue) => String(venue.venue_id) === String(venueId)) ?? null,
     [venueId, venues],
@@ -198,12 +184,12 @@ export default function QuickStart() {
     () => venues.find((venue) => venue.status === 1) ?? venues[0] ?? null,
     [venues],
   );
-  const accountReady = Boolean(accountId && account);
-  const accountContextLoaded = !accountId || accountReady;
-  const venueStepNeedsCreate = accountReady && !suggestedVenue && !venueId;
+  const portfolioReady = Boolean(portfolioId && portfolio);
+  const portfolioContextLoaded = !portfolioId || portfolioReady;
+  const venueStepNeedsCreate = portfolioReady && !suggestedVenue && !venueId;
 
-  const activeStep: StepId = !accountReady
-    ? "account"
+  const activeStep: StepId = !portfolioReady
+    ? "portfolio"
     : !venueId
       ? "venue"
       : !strategyId
@@ -212,34 +198,33 @@ export default function QuickStart() {
           ? "runtime"
           : "start";
 
-  const accountHref = routeWithParams("/accounts", {
-    return_to: quickStartReturnTo({ account_id: null, venue_id: null, strategy_id: null, runtime_id: null }),
+  const portfolioHref = routeWithParams("/portfolios", {
+    return_to: quickStartReturnTo({ portfolio_id: null, venue_id: null, strategy_id: null, runtime_id: null }),
   });
-  const venueHref = accountReady
+  const venueHref = portfolioReady
     ? routeWithParams("/venues", {
         tab: venueStepNeedsCreate ? "create" : undefined,
-        account_id: accountId,
-        environment: venueEnvironmentParam(account?.environment),
+        portfolio_id: portfolioId,
+        environment: venueEnvironmentParam(portfolio?.environment),
         return_to: quickStartReturnTo({ venue_id: null, strategy_id: null, runtime_id: null }),
       })
     : null;
-  const strategyHref = accountReady && venueId
-    ? routeWithParams(`/accounts/${accountId}`, {
+  const strategyHref = portfolioReady && venueId
+    ? routeWithParams(`/portfolios/${portfolioId}`, {
         tab: "run",
         return_to: quickStartReturnTo({ strategy_id: null, runtime_id: null }),
       })
     : null;
-  const runtimeHref = accountReady && venueId && strategyId
+  const runtimeHref = portfolioReady && venueId && strategyId
     ? routeWithParams("/runtimes", {
-        tab: hasRouteableRuntime === false ? "create" : undefined,
         eligible: "session_start",
         role: "executor",
-        environment: account?.environment,
+        environment: portfolio?.environment,
         return_to: quickStartReturnTo({ runtime_id: null }),
       })
     : null;
-  const startHref = accountReady && venueId && strategyId && runtimeId
-    ? routeWithParams(`/accounts/${accountId}`, {
+  const startHref = portfolioReady && venueId && strategyId && runtimeId
+    ? routeWithParams(`/portfolios/${portfolioId}`, {
         tab: "run",
         runtime_id: runtimeId,
         return_to: quickStartReturnTo(),
@@ -247,11 +232,11 @@ export default function QuickStart() {
     : null;
 
   const ready: Record<StepId, boolean> = {
-    account: accountReady,
-    venue: accountReady && Boolean(venueId),
-    strategy: accountReady && Boolean(venueId && strategyId),
-    runtime: accountReady && Boolean(venueId && strategyId && runtimeId),
-    start: accountReady && Boolean(venueId && strategyId && runtimeId),
+    portfolio: portfolioReady,
+    venue: portfolioReady && Boolean(venueId),
+    strategy: portfolioReady && Boolean(venueId && strategyId),
+    runtime: portfolioReady && Boolean(venueId && strategyId && runtimeId),
+    start: portfolioReady && Boolean(venueId && strategyId && runtimeId),
   };
 
   return (
@@ -284,13 +269,15 @@ export default function QuickStart() {
           <section className="quick-start-card">
             <div className="quick-start-card__head">
               <div>
-                <h2>1. Account</h2>
-                <p>{accountId ? `${account?.name ?? "Account"} #${accountId}` : "No account selected."}</p>
+                <h2>1. Portfolio</h2>
+                <p>{portfolioId ? `${portfolio?.name ?? "Portfolio"} #${portfolioId}` : "No portfolio selected."}</p>
               </div>
-              {account ? <span className="quick-start-pill">{accountEnvironmentLabel(account.environment)}</span> : null}
+              {portfolio ? <span className="quick-start-pill">{portfolioEnvironmentLabel(portfolio.environment)}</span> : null}
             </div>
             <div className="quick-start-actions">
-              <ActionLink href={accountHref}>Open Account Management</ActionLink>
+              {portfolioReady ? <SelectedAction>Portfolio Selected</SelectedAction> : (
+                <ActionLink href={portfolioHref}>Open Portfolio Management</ActionLink>
+              )}
             </div>
           </section>
 
@@ -305,16 +292,18 @@ export default function QuickStart() {
                       ? `Venue #${venueId}`
                     : suggestedVenue
                       ? `Available default: ${suggestedVenue.display_name} #${suggestedVenue.venue_id}`
-                      : accountId && accountContextLoaded
+                      : portfolioId && portfolioContextLoaded
                         ? "No venue yet. Create one in Venue Management."
                         : "No venue selected."}
                 </p>
               </div>
             </div>
             <div className="quick-start-actions">
-              <ActionLink href={venueHref}>
-                {venueStepNeedsCreate ? "Create Venue in Venue Management" : "Open Venue Management"}
-              </ActionLink>
+              {ready.venue ? <SelectedAction>Venue Selected</SelectedAction> : (
+                <ActionLink href={venueHref}>
+                  {venueStepNeedsCreate ? "Create Venue in Venue Management" : "Open Venue Management"}
+                </ActionLink>
+              )}
             </div>
           </section>
 
@@ -330,7 +319,9 @@ export default function QuickStart() {
               </div>
             </div>
             <div className="quick-start-actions">
-              <ActionLink href={strategyHref}>Open Account Strategy</ActionLink>
+              {ready.strategy ? <SelectedAction>Strategy Selected</SelectedAction> : (
+                <ActionLink href={strategyHref}>Open Portfolio Strategy</ActionLink>
+              )}
             </div>
           </section>
 
@@ -339,30 +330,28 @@ export default function QuickStart() {
               <div>
                 <h2>4. Runtime</h2>
                 <p>
-                  {runtimeId
-                    ? runtimeLabel(runtime, runtimeId)
-                    : hasRouteableRuntime === false
-                      ? "No routeable executor runtime yet. Create one in Runtime Management."
-                      : runtimeLabel(runtime, runtimeId)}
-                </p>
+	                  {runtimeId
+	                    ? runtimeLabel(runtime, runtimeId)
+	                    : runtimeLabel(runtime, runtimeId)}
+	                </p>
               </div>
             </div>
-            <div className="quick-start-actions">
-              <ActionLink href={runtimeHref}>
-                {hasRouteableRuntime === false ? "Create Runtime in Runtime Management" : "Open Runtime Management"}
-              </ActionLink>
-            </div>
+	            <div className="quick-start-actions">
+	              {ready.runtime ? <SelectedAction>Runtime Selected</SelectedAction> : (
+	                <ActionLink href={runtimeHref}>Open Runtime Management</ActionLink>
+	              )}
+	            </div>
           </section>
 
           <section className="quick-start-card">
             <div className="quick-start-card__head">
               <div>
                 <h2>5. Start</h2>
-                <p>{ready.start ? "Ready to open the account run page." : "Complete the previous steps first."}</p>
+                <p>{ready.start ? "Ready to open the portfolio run page." : "Complete the previous steps first."}</p>
               </div>
             </div>
             <div className="quick-start-actions">
-              <ActionLink href={startHref}>Open Account Run Strategy</ActionLink>
+              <ActionLink href={startHref}>Open Portfolio Run Strategy</ActionLink>
             </div>
           </section>
         </div>

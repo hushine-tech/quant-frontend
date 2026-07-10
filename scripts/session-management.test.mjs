@@ -10,25 +10,25 @@ for (const token of [
   "PageHeader",
   "FilterPanel",
   "FilterField",
-  "listAccounts",
+  "listPortfolios",
   "listSessions",
   "listRuntimes",
   "listStrategies",
-  "accountFilter",
+  "portfolioFilter",
   "runtimeFilter",
   "strategyFilter",
   "environmentFilter",
   "statusFilter",
   "sessionIdFilter",
-  "/accounts/${session.account_id}/sessions/${session.session_id}",
-  "accountEnvironmentLabel(session.environment)",
+  "/portfolios/${session.portfolio_id}/sessions/${session.session_id}",
+  "portfolioEnvironmentLabel(session.environment)",
   '<option value="1">Demo (1)</option>',
   '<option value="2">Live (2)</option>',
 ]) {
   assert.equal(source.includes(token), true, `Session Management should include ${token}`);
 }
 
-const legacyAccountModeToken = String.fromCharCode(109, 111, 100, 101);
+const legacyPortfolioModeToken = String.fromCharCode(109, 111, 100, 101);
 for (const forbidden of [
   "stopSession(",
   "finishSession(",
@@ -37,9 +37,9 @@ for (const forbidden of [
   "Stop Session",
   "Finish",
   "Resume",
-  `<td>{session.${legacyAccountModeToken}}</td>`,
-  `${legacyAccountModeToken}Filter`,
-  `account${legacyAccountModeToken[0].toUpperCase()}${legacyAccountModeToken.slice(1)}Label`,
+  `<td>{session.${legacyPortfolioModeToken}}</td>`,
+  `${legacyPortfolioModeToken}Filter`,
+  `portfolio${legacyPortfolioModeToken[0].toUpperCase()}${legacyPortfolioModeToken.slice(1)}Label`,
 ]) {
   assert.equal(source.includes(forbidden), false, `Session Management must remain read-only: ${forbidden}`);
 }

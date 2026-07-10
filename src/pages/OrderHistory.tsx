@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import {
-  listAccountsPage,
+  listPortfoliosPage,
   listStrategiesPage,
   queryOrderAttempts,
   queryOrderFills,
   queryOrderIntents,
   queryOrders,
-  type Account,
+  type Portfolio,
   type Page,
   type Strategy,
 } from "@/api/client";
@@ -33,22 +33,22 @@ function toTreePage<T>(
 }
 
 export default function OrderHistory() {
-  const [accountId, setAccountId] = useState<string>("");
+  const [portfolioId, setPortfolioId] = useState<string>("");
   const [strategyId, setStrategyId] = useState<string>("");
   const [refreshTick, setRefreshTick] = useState(0);
 
   // resetKey collapses any expanded child rows and reloads the top-level
   // intents list whenever the user changes a top filter.
-  const resetKey = `${accountId}|${strategyId}|${refreshTick}`;
+  const resetKey = `${portfolioId}|${strategyId}|${refreshTick}`;
 
   // The strategy filter applies through the entire drill-down so child fetches
   // stay scoped to the same strategy as the parent intent.
   const baseScope = useMemo(
     () => ({
-      accountId: accountId || undefined,
+      portfolioId: portfolioId || undefined,
       strategyId: strategyId || undefined,
     }),
-    [accountId, strategyId],
+    [portfolioId, strategyId],
   );
 
   const fetchIntents = async (offset: number, limit: number) =>
@@ -85,21 +85,21 @@ export default function OrderHistory() {
 
       <div className="card">
         <FilterPanel>
-          <FilterField label="Account" wide>
-            <AsyncSelect<Account>
-              value={accountId}
-              placeholder="All accounts"
-              onChange={setAccountId}
+          <FilterField label="Portfolio" wide>
+            <AsyncSelect<Portfolio>
+              value={portfolioId}
+              placeholder="All portfolios"
+              onChange={setPortfolioId}
               loadPage={async (offset, limit, query) => {
                 const normalizedQuery = query.trim().toLowerCase();
-                return collectFilteredPage<Account, AsyncSelectOption<Account>>({
+                return collectFilteredPage<Portfolio, AsyncSelectOption<Portfolio>>({
                   offset,
                   limit,
-                  loadSourcePage: (sourceOffset, sourceLimit) => listAccountsPage({ offset: sourceOffset, limit: sourceLimit }),
-                  matches: (a) => !normalizedQuery || a.name.toLowerCase().includes(normalizedQuery) || String(a.account_id).includes(normalizedQuery),
+                  loadSourcePage: (sourceOffset, sourceLimit) => listPortfoliosPage({ offset: sourceOffset, limit: sourceLimit }),
+                  matches: (a) => !normalizedQuery || a.name.toLowerCase().includes(normalizedQuery) || String(a.portfolio_id).includes(normalizedQuery),
                   map: (a) => ({
-                    value: String(a.account_id),
-                    label: `${a.account_id} (${a.name})`,
+                    value: String(a.portfolio_id),
+                    label: `${a.portfolio_id} (${a.name})`,
                     item: a,
                   }),
                 });

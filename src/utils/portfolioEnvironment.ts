@@ -1,4 +1,4 @@
-export function accountEnvironmentLabel(environment: number | string | undefined | null): string {
+export function portfolioEnvironmentLabel(environment: number | string | undefined | null): string {
   const value = typeof environment === "string" ? Number(environment) : environment;
   switch (value) {
     case 0:

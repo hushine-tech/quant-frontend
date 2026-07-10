@@ -6,29 +6,29 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "../src/pages/RuntimeManagement.tsx"), "utf8");
 
-const accountHeaderCount = (source.match(/<th>Account<\/th>/g) || []).length;
+const portfolioHeaderCount = (source.match(/<th>Portfolio<\/th>/g) || []).length;
 assert.equal(
-  accountHeaderCount,
+  portfolioHeaderCount,
   1,
-  "Runtime Management should only show Account in the session table, not as a runtime-level column",
+  "Runtime Management should only show Portfolio in the session table, not as a runtime-level column",
 );
 
 assert.equal(
-  source.includes("runtimeAccountLinks"),
+  source.includes("runtimePortfolioLinks"),
   false,
-  "Runtime list must not track a single account per runtime",
+  "Runtime list must not track a single portfolio per runtime",
 );
 
 assert.equal(
-  source.includes("const relatedAccount = useMemo"),
+  source.includes("const relatedPortfolio = useMemo"),
   false,
-  "Runtime detail must not derive a single account for a runtime",
+  "Runtime detail must not derive a single portfolio for a runtime",
 );
 
 assert.equal(
-  source.includes('<p className="muted">Account</p>'),
+  source.includes('<p className="muted">Portfolio</p>'),
   false,
-  "Runtime detail status card must not display Account as a runtime property",
+  "Runtime detail status card must not display Portfolio as a runtime property",
 );
 
 assert.equal(

@@ -88,6 +88,7 @@ export default function RuntimeSelector({
           value={value}
           disabled={disabled || loading || noRouteable}
           placeholder={loading ? "Loading runtimes..." : noRouteable ? "No routeable runtime" : "Select runtime"}
+          allowClear={false}
           onChange={(next, opt) => {
             if (opt?.item) rememberSelectedRuntime(opt.item);
             onChange(next, opt?.item);

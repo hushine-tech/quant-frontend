@@ -20,11 +20,12 @@ import {
   PanelLeftClose,
   Rocket,
   ScrollText,
+  UserRound,
   UsersRound,
 } from "lucide-react";
-import { getToken, setToken } from "@/api/client";
-import AccountManagement from "@/pages/AccountManagement";
-import AccountDetail from "@/pages/AccountDetail";
+import { getAuthUser, getToken, setAuthUser, setToken } from "@/api/client";
+import PortfolioManagement from "@/pages/PortfolioManagement";
+import PortfolioDetail from "@/pages/PortfolioDetail";
 import Login from "@/pages/Login";
 import SessionDetailPage from "@/pages/SessionDetailPage";
 import SessionManagement from "@/pages/SessionManagement";
@@ -43,15 +44,15 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return children;
 }
 
-function AccountNewRedirect() {
+function PortfolioNewRedirect() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   params.set("tab", "create");
-  return <Navigate to={`/accounts?${params.toString()}`} replace />;
+  return <Navigate to={`/portfolios?${params.toString()}`} replace />;
 }
 
 const PRIMARY_NAV_ITEMS = [
-  { to: "/accounts", label: "Account Management", icon: UsersRound },
+  { to: "/portfolios", label: "Portfolio Management", icon: UsersRound },
   { to: "/venues", label: "Venue Management", icon: Building2 },
   { to: "/strategies", label: "Strategy Management", icon: ScrollText },
   { to: "/market-data", label: "Market Data", icon: ChartCandlestick },
@@ -62,6 +63,82 @@ const PRIMARY_NAV_ITEMS = [
 ];
 
 const QUICK_START_NAV_ITEM = { to: "/quick-start", label: "Quick Start", icon: Rocket, featured: true };
+
+function Profile() {
+  const user = getAuthUser();
+  const nav = useNavigate();
+  const profileRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  const handleLogout = useCallback(() => {
+    setProfileOpen(false);
+    setToken(null);
+    setAuthUser(null);
+    nav("/login", { replace: true });
+  }, [nav]);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!profileRef.current?.contains(event.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProfileOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [profileOpen]);
+
+  if (!getToken()) return null;
+  return (
+    <div className="app-profile" ref={profileRef}>
+      <button
+        id="app-profile-trigger"
+        type="button"
+        className="app-profile__button"
+        aria-haspopup="dialog"
+        aria-expanded={profileOpen}
+        aria-controls="app-profile-menu"
+        onClick={() => setProfileOpen((open) => !open)}
+      >
+        <UserRound size={18} aria-hidden="true" />
+        <span>Profile</span>
+      </button>
+      {profileOpen ? (
+        <div
+          id="app-profile-menu"
+          className="app-profile__menu"
+          role="dialog"
+          aria-label="Profile details"
+          aria-labelledby="app-profile-trigger"
+        >
+          <div className="app-profile__details" aria-label="Profile details">
+            <div className="app-profile__row">
+              <span className="app-profile__label">USER ID:</span>
+              <span className="app-profile__value">{user?.user_id ?? "-"}</span>
+            </div>
+            <div className="app-profile__row">
+              <span className="app-profile__label">USER:</span>
+              <span className="app-profile__value">{user?.username || "User"}</span>
+            </div>
+          </div>
+          <button type="button" className="app-profile__logout" onClick={handleLogout}>
+            <LogOut size={16} aria-hidden="true" />
+            <span>Log out</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 type SidebarProps = {
   drawerOpen: boolean;
@@ -78,7 +155,6 @@ function Sidebar({
   onNavigate,
   firstLinkRef,
 }: SidebarProps) {
-  const nav = useNavigate();
   const authed = !!getToken();
   const className = `sidebar${drawerOpen ? " sidebar--open" : ""}${collapsed ? " sidebar--collapsed" : ""}`;
   return (
@@ -115,26 +191,12 @@ function Sidebar({
         })}
       </ul>
       <div className="sidebar-bottom">
-        {authed ? (
-          <button
-            type="button"
-            className="sidebar-logout"
-            onClick={() => {
-              setToken(null);
-              onNavigate();
-              nav("/login", { replace: true });
-            }}
-            title={collapsed ? "Log out" : undefined}
-          >
-            <LogOut size={18} aria-hidden="true" />
-            <span className="sidebar-label">Log out</span>
-          </button>
-        ) : (
+        {!authed ? (
           <NavLink to="/login" onClick={onNavigate}>
             <LogIn size={18} aria-hidden="true" />
             <span className="sidebar-label">Log in</span>
           </NavLink>
-        )}
+        ) : null}
       </div>
     </aside>
   );
@@ -233,7 +295,8 @@ function Layout({ children }: { children: React.ReactNode }) {
         >
           <HamburgerIcon open={drawerOpen} />
         </button>
-        Quantitative Trading System
+        <span className="app-header__title">Quantitative Trading System</span>
+        <Profile />
       </header>
       <div className={`app-body${sidebarCollapsed ? " app-body--sidebar-collapsed" : ""}`}>
         <Sidebar
@@ -265,16 +328,16 @@ export default function App() {
           element={<RequireAuth><QuickStart /></RequireAuth>}
         />
         <Route
-          path="/accounts"
-          element={<RequireAuth><AccountManagement /></RequireAuth>}
+          path="/portfolios"
+          element={<RequireAuth><PortfolioManagement /></RequireAuth>}
         />
-        <Route path="/accounts/new" element={<AccountNewRedirect />} />
+        <Route path="/portfolios/new" element={<PortfolioNewRedirect />} />
         <Route
-          path="/accounts/:id"
-          element={<RequireAuth><AccountDetail /></RequireAuth>}
+          path="/portfolios/:id"
+          element={<RequireAuth><PortfolioDetail /></RequireAuth>}
         />
         <Route
-          path="/accounts/:id/sessions/:sessionId"
+          path="/portfolios/:id/sessions/:sessionId"
           element={<RequireAuth><SessionDetailPage /></RequireAuth>}
         />
         <Route
@@ -315,7 +378,7 @@ export default function App() {
           element={<RequireAuth><NotificationManagement /></RequireAuth>}
         />
         <Route path="/settings/runtime-credentials" element={<Navigate to="/runtimes?tab=credentials" replace />} />
-        <Route path="/" element={<Navigate to="/accounts" replace />} />
+        <Route path="/" element={<Navigate to="/portfolios" replace />} />
         <Route path="*" element={<p>Not found</p>} />
       </Routes>
     </Layout>

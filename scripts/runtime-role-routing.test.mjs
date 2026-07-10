@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { runtimeRoleForSessionEnvironment } from "../src/api/client.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const accountDetail = readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8");
+const portfolioDetail = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
 const sessionDetail = readFileSync(join(here, "../src/pages/SessionDetailPage.tsx"), "utf8");
 
 assert.equal(
@@ -28,15 +28,15 @@ assert.equal(
 );
 
 assert.equal(
-  accountDetail.includes("role={runtimeRoleForSessionEnvironment(pendingStart?.kind === \"demo\" ? 1 : 0)}"),
+  portfolioDetail.includes("role={runtimeRoleForSessionEnvironment(pendingStart?.kind === \"demo\" ? 1 : 0)}"),
   true,
-  "Account detail start dialog must route by account environment",
+  "Portfolio detail start dialog must route by portfolio environment",
 );
 
 assert.equal(
-  accountDetail.includes("role={runtimeRoleForSessionEnvironment(resumeDialogSession?.environment)}"),
+  portfolioDetail.includes("role={runtimeRoleForSessionEnvironment(resumeDialogSession?.environment)}"),
   true,
-  "Account detail resume dialog must route by session environment",
+  "Portfolio detail resume dialog must route by session environment",
 );
 
 assert.equal(

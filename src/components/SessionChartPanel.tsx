@@ -1039,46 +1039,60 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
             ))}
           </select>
         </label>
-        <div className="session-chart__toggles" aria-label="Chart layers">
-          <label><input type="checkbox" checked={showVolume} onChange={(event) => setShowVolume(event.target.checked)} /> Volume</label>
-          <label><input type="checkbox" checked={showMACD} onChange={(event) => setShowMACD(event.target.checked)} /> DIF/DEA/MACD</label>
-          {RSI_PERIODS.map((period) => (
-            <label key={period}>
-              <input
-                type="checkbox"
-                checked={showRSIPeriods[period]}
-                onChange={(event) => {
-                  setShowRSIPeriods((current) => ({
-                    ...current,
-                    [period]: event.target.checked,
-                  }));
-                }}
-              /> RSI{period}
-            </label>
-          ))}
-          <label><input type="checkbox" checked={showFills} onChange={(event) => setShowFills(event.target.checked)} /> Fills</label>
-          <label><input type="checkbox" checked={showLifecycle} onChange={(event) => setShowLifecycle(event.target.checked)} /> Events</label>
-          {customDefinitions.map((definition) => {
-            const key = customIndicatorKey(definition);
-            return (
-              <label key={key} className="custom-indicator">
-                <input
-                  type="checkbox"
-                  checked={showCustomIndicators[key] !== false}
-                  onChange={(event) => {
-                    setShowCustomIndicators((current) => ({
-                      ...current,
-                      [key]: event.target.checked,
-                    }));
-                  }}
-                /> {customIndicatorLabel(definition)}
-              </label>
-            );
-          })}
-        </div>
         <button type="button" onClick={() => { void load(); }} disabled={loading}>
           Refresh
         </button>
+      </div>
+
+      <div className="session-chart__indicator-sections">
+        <section className="session-chart__indicator-group session-chart__default-indicators" aria-label="Default Indicators">
+          <p className="session-chart__indicator-title">Default Indicators</p>
+          <div className="session-chart__toggles">
+            <label><input type="checkbox" checked={showVolume} onChange={(event) => setShowVolume(event.target.checked)} /> Volume</label>
+            <label><input type="checkbox" checked={showMACD} onChange={(event) => setShowMACD(event.target.checked)} /> DIF/DEA/MACD</label>
+            {RSI_PERIODS.map((period) => (
+              <label key={period}>
+                <input
+                  type="checkbox"
+                  checked={showRSIPeriods[period]}
+                  onChange={(event) => {
+                    setShowRSIPeriods((current) => ({
+                      ...current,
+                      [period]: event.target.checked,
+                    }));
+                  }}
+                /> RSI{period}
+              </label>
+            ))}
+            <label><input type="checkbox" checked={showFills} onChange={(event) => setShowFills(event.target.checked)} /> Fills</label>
+            <label><input type="checkbox" checked={showLifecycle} onChange={(event) => setShowLifecycle(event.target.checked)} /> Events</label>
+          </div>
+        </section>
+
+        {customDefinitions.length > 0 ? (
+          <section className="session-chart__indicator-group session-chart__custom-indicators" aria-label="Strategy Custom Indicators">
+            <p className="session-chart__indicator-title">Strategy Custom Indicators</p>
+            <div className="session-chart__toggles session-chart__custom-indicator-toggles">
+              {customDefinitions.map((definition) => {
+                const key = customIndicatorKey(definition);
+                return (
+                  <label key={key} className="custom-indicator">
+                    <input
+                      type="checkbox"
+                      checked={showCustomIndicators[key] !== false}
+                      onChange={(event) => {
+                        setShowCustomIndicators((current) => ({
+                          ...current,
+                          [key]: event.target.checked,
+                        }));
+                      }}
+                    /> {customIndicatorLabel(definition)}
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
       </div>
 
       <div className="session-chart__legend" aria-label="Indicator legend">

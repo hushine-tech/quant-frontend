@@ -17,3 +17,9 @@ assert.equal(
   true,
   "RuntimeSelector should remember the selected option before propagating onChange",
 );
+
+assert.equal(
+  source.includes("allowClear={false}"),
+  true,
+  "RuntimeSelector should not render a placeholder clear option such as Select runtime in the dropdown",
+);

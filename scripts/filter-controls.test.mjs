@@ -31,7 +31,7 @@ const pages = {
   sessions: readFileSync(join(here, "../src/pages/SessionManagement.tsx"), "utf8"),
   orders: readFileSync(join(here, "../src/pages/OrderHistory.tsx"), "utf8"),
   marketData: readFileSync(join(here, "../src/pages/MarketData.tsx"), "utf8"),
-  accountDetail: readFileSync(join(here, "../src/pages/AccountDetail.tsx"), "utf8"),
+  portfolioDetail: readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8"),
   runtimeManagement: readFileSync(join(here, "../src/pages/RuntimeManagement.tsx"), "utf8"),
 };
 

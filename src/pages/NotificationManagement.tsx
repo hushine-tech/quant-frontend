@@ -112,9 +112,13 @@ export default function NotificationManagement() {
     setError(null);
     setNotice(null);
     try {
-      setSettings(await confirmNotificationBinding());
+      const confirmed = await confirmNotificationBinding();
+      setSettings(confirmed);
+      if ((confirmed.telegram?.status || "").toLowerCase() !== "bound") {
+        throw new Error("Telegram binding is still pending. Send the latest bind code to the bot, then try again.");
+      }
       setBindCode(null);
-      setNotice("Telegram binding refreshed.");
+      setNotice("Telegram binding confirmed.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Confirm binding failed");
     } finally {
@@ -158,14 +162,41 @@ export default function NotificationManagement() {
   const telegram = settings?.telegram;
   const notificationEnabled = !!plan?.notification_enabled;
   const userNotificationsEnabled = preferences?.enabled !== false;
-  const channelBound = telegram?.status === "bound";
+  const telegramStatus = (telegram?.status || "").toLowerCase();
+  const channelBound = telegramStatus === "bound";
   const botUsername = bindCode?.bot_username || settings?.bot_username || "";
   const botHref = botUsername ? `https://t.me/${botUsername.replace(/^@/, "")}` : "";
+  const deliveryBlockedReason = useMemo(() => {
+    if (!settings) {
+      return "";
+    }
+    if (!notificationEnabled) {
+      return "Notification delivery is disabled by the current plan.";
+    }
+    if (!userNotificationsEnabled) {
+      return "Notification delivery is disabled by the user switch.";
+    }
+    if (!plan?.allow_strategy) {
+      return "Order and strategy Telegram delivery is blocked by the current plan.";
+    }
+    if (!preferences?.strategy_enabled) {
+      return "Order and strategy Telegram delivery is disabled in preferences.";
+    }
+    if (!channelBound) {
+      const bot = botUsername ? `@${botUsername.replace(/^@/, "")}` : "the Telegram bot";
+      if (telegramStatus === "pending") {
+        return `Order and strategy Telegram delivery is blocked until the Telegram channel is bound. Send the latest bind code to ${bot}, then confirm binding.`;
+      }
+      return "Order and strategy Telegram delivery is blocked until the Telegram channel is bound. Generate a bind code before expecting order alerts.";
+    }
+    return "";
+  }, [botUsername, channelBound, notificationEnabled, plan, preferences, settings, telegramStatus, userNotificationsEnabled]);
   const availability = useMemo(() => {
     return [
       {
         key: "system_enabled" as const,
         label: "System",
+        description: "Runtime, platform, and account status notifications.",
         planAllowed: notificationEnabled && !!plan?.allow_system,
         userEnabled: userNotificationsEnabled && !!preferences?.system_enabled,
         channelBound,
@@ -173,6 +204,7 @@ export default function NotificationManagement() {
       {
         key: "strategy_enabled" as const,
         label: "Strategy",
+        description: "Strategy session, order, and execution result notifications.",
         planAllowed: notificationEnabled && !!plan?.allow_strategy,
         userEnabled: userNotificationsEnabled && !!preferences?.strategy_enabled,
         channelBound,
@@ -180,6 +212,7 @@ export default function NotificationManagement() {
       {
         key: "custom_enabled" as const,
         label: "Custom",
+        description: "Messages sent by strategy code through self.notify.",
         planAllowed: notificationEnabled && !!plan?.allow_custom,
         userEnabled: userNotificationsEnabled && !!preferences?.custom_enabled,
         channelBound,
@@ -198,6 +231,7 @@ export default function NotificationManagement() {
 
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p className="env-banner env-banner--backtest">{notice}</p> : null}
+      {deliveryBlockedReason ? <p className="env-banner env-banner--demo">{deliveryBlockedReason}</p> : null}
       {loading ? <p className="muted">Loading notification settings...</p> : null}
 
       {settings ? (
@@ -299,31 +333,39 @@ export default function NotificationManagement() {
               <h2 className="section-title" style={{ marginTop: 0 }}>Preferences</h2>
               <div className="notification-toggle-grid">
                 <label className="notification-toggle">
-                  <input
-                    type="checkbox"
-                    checked={userNotificationsEnabled}
-                    disabled={saving || !notificationEnabled}
-                    onChange={(e) => {
-                      if (!preferences) return;
-                      void savePreferences({ ...preferences, enabled: e.target.checked });
-                    }}
-                  />
-                  <span>All notifications</span>
-                  {!notificationEnabled ? <small className="muted">Plan disabled</small> : <small className="muted">Master switch</small>}
+                  <span className="notification-toggle__heading">
+                    <input
+                      type="checkbox"
+                      checked={userNotificationsEnabled}
+                      disabled={saving || !notificationEnabled}
+                      onChange={(e) => {
+                        if (!preferences) return;
+                        void savePreferences({ ...preferences, enabled: e.target.checked });
+                      }}
+                    />
+                    <span className="notification-toggle__title">All notifications</span>
+                  </span>
+                  <span className="notification-toggle__description">
+                    {!notificationEnabled ? "Plan disabled. " : ""}Master switch for all Telegram notification delivery.
+                  </span>
                 </label>
                 {availability.map((row) => (
                   <label key={row.key} className="notification-toggle">
-                    <input
-                      type="checkbox"
-                      checked={!!preferences?.[row.key]}
-                      disabled={saving || !row.planAllowed}
-                      onChange={(e) => {
-                        if (!preferences) return;
-                        void savePreferences({ ...preferences, [row.key]: e.target.checked });
-                      }}
-                    />
-                    <span>{row.label}</span>
-                    {!row.planAllowed ? <small className="muted">Plan disabled</small> : null}
+                    <span className="notification-toggle__heading">
+                      <input
+                        type="checkbox"
+                        checked={!!preferences?.[row.key]}
+                        disabled={saving || !row.planAllowed}
+                        onChange={(e) => {
+                          if (!preferences) return;
+                          void savePreferences({ ...preferences, [row.key]: e.target.checked });
+                        }}
+                      />
+                      <span className="notification-toggle__title">{row.label}</span>
+                    </span>
+                    <span className="notification-toggle__description">
+                      {!row.planAllowed ? "Plan disabled. " : ""}{row.description}
+                    </span>
                   </label>
                 ))}
               </div>
