@@ -77,6 +77,10 @@ function isActiveSessionStatus(status: string): boolean {
   return status === "running" || status === "stopping";
 }
 
+function isRuntimeDependencyProfileFailure(code: string): boolean {
+  return code === "RUNTIME_DEPENDENCY_PROFILE_INVALID" || code === "RUNTIME_DEPENDENCY_PROFILE_MISMATCH";
+}
+
 type RuntimeManagementTab = "runtimes" | "create" | "credentials" | "failures";
 
 const runtimeTabs: Array<PageTab<RuntimeManagementTab>> = [
@@ -376,7 +380,7 @@ export default function RuntimeManagement() {
         {activeTab === "failures" ? (
           <>
               <h2 className="section-title" style={{ marginTop: 0 }}>Failure Overview</h2>
-              <p className="muted">Latest 5 self-hosted runtime startup or admission failures.</p>
+              <p className="muted">Latest 5 hosted or self-hosted runtime startup and admission failures.</p>
               {!loading && admissionFailures.length === 0 ? (
                 <p className="muted" style={{ margin: 0 }}>No recent runtime startup failures.</p>
               ) : null}
@@ -416,7 +420,16 @@ export default function RuntimeManagement() {
                               </span>
                             ) : null}
                           </td>
-                          <td>{f.reason || f.failure_code || "-"}</td>
+                          <td>
+                            {isRuntimeDependencyProfileFailure(f.failure_code) ? (
+                              <>
+                                <code>{f.failure_code}</code>
+                                {f.reason ? <> — {f.reason}</> : null}
+                              </>
+                            ) : (
+                              f.reason || f.failure_code || "-"
+                            )}
+                          </td>
                           <td>{f.attempt_count || 1}</td>
                         </tr>
                       ))}

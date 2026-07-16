@@ -27,6 +27,8 @@ import {
   queryMarketDataKlines,
   runtimeRoleForSessionEnvironment,
   isSessionTerminal,
+  APIError,
+  formatRuntimeDependencyError,
   type Portfolio,
   type WalletSnapshot,
   type PortfolioVenueWallets,
@@ -85,6 +87,13 @@ function normalizePortfolioDetailTab(value: string | null): PortfolioDetailTab {
 const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
 const DEFAULT_SESSION_LEVERAGE = 1;
+
+function formatAPIError(error: unknown, fallback: string): string {
+  if (error instanceof APIError) {
+    return formatRuntimeDependencyError(error.runtime_error) ?? error.message;
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 function parseMaxLossClosePct(percentText: string): number | null {
   const value = Number(percentText);
@@ -925,6 +934,8 @@ function BacktestCoverageGate({
 
   const blocked = !preview?.complete;
   const canDownloadAndRun = Boolean(preview && !preview.complete && preview.can_auto_download && !busy);
+  const jobRuntimeError = job ? formatRuntimeDependencyError(job.runtime_error) : null;
+  const jobError = jobRuntimeError ?? job?.error;
 
   return (
     <div className="card" style={{ marginTop: "0.75rem", marginBottom: "0.75rem", borderLeft: blocked ? "4px solid #eab308" : "4px solid #16a34a" }}>
@@ -1021,7 +1032,7 @@ function BacktestCoverageGate({
           <p className="muted" style={{ margin: 0 }}>
             download job: {job.status} · {Math.round((job.progress || 0) * 100)}%
             {job.updated_at ? ` · last checked ${formatUTCWithLocal(job.updated_at)}` : ""}
-            {job.error ? ` · ${job.error}` : ""}
+            {jobError ? ` · ${jobError}` : ""}
           </p>
           {job.message ? (
             <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
@@ -1441,7 +1452,7 @@ function StrategyPanel({
       } catch (err) {
         if (!cancelled) {
           setDemoPreview(null);
-          setDemoPreviewError(err instanceof Error ? err.message : "Demo preflight failed");
+          setDemoPreviewError(formatAPIError(err, "Demo preflight failed"));
         }
       } finally {
         if (!cancelled) {
@@ -1615,7 +1626,7 @@ function StrategyPanel({
       beginSessionPoll(sess.session_id);
       setRunning(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start");
+      setError(formatAPIError(err, "Failed to start"));
       setRunning(false);
     }
   }
@@ -1664,7 +1675,7 @@ function StrategyPanel({
     }
     if (job.status === "error") {
       clearDownloadPoll();
-      setError(job.error || "Download data and run backtest failed");
+      setError(formatRuntimeDependencyError(job.runtime_error) ?? job.error ?? "Download data and run backtest failed");
       setRunning(false);
     }
   }
@@ -1713,7 +1724,7 @@ function StrategyPanel({
         pollDownloadAndRunJob(job.job_id);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Download data and run backtest failed");
+      setError(formatAPIError(err, "Download data and run backtest failed"));
       setRunning(false);
     }
   }
@@ -2283,7 +2294,7 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
       navigate(`/portfolios/${portfolioId}/sessions/${resumed.session_id}`);
     } catch (err) {
-      setStopError(err instanceof Error ? err.message : "Failed to resume session");
+      setStopError(formatAPIError(err, "Failed to resume session"));
     } finally {
       setResuming(false);
     }

@@ -235,7 +235,7 @@ function sameHostApiBase(): string {
 }
 
 function apiBase(): string {
-  const v = import.meta.env.VITE_API_BASE_URL?.trim();
+  const v = (typeof import.meta.env === "object" ? import.meta.env.VITE_API_BASE_URL : undefined)?.trim();
   if (v && v !== "auto" && v !== "same-host") return v.replace(/\/$/, "");
   return sameHostApiBase();
 }
@@ -315,7 +315,111 @@ export function getAuthUser(): AuthUser | null {
   return authUserMem;
 }
 
-async function parseErr(res: Response): Promise<string> {
+export type RuntimeDependencyErrorCode =
+  | "UNSUPPORTED_STRATEGY_DEPENDENCY"
+  | "STRATEGY_DEPENDENCY_UNAVAILABLE"
+  | "STRATEGY_IMPORT_FAILED"
+  | "RUNTIME_DEPENDENCY_PROFILE_INVALID"
+  | "RUNTIME_DEPENDENCY_PROFILE_MISMATCH";
+
+export type RuntimeDependencyError = {
+  code: RuntimeDependencyErrorCode;
+  module: string;
+  runtime_profile: string;
+  runtime_profile_version: string;
+  image_build_id: string;
+  message: string;
+};
+
+export type RuntimeDependencyProfile = {
+  schema_version: number;
+  profile_name: string;
+  profile_version: string;
+  contract_sha256: string;
+  hosted_python: string;
+  public_import_roots: string[];
+  strategy_service_commit: string;
+  strategy_library_commit: string;
+  image_build_id: string;
+};
+
+export type StrategyValidationIssue = {
+  code: string;
+  message: string;
+  module: string;
+  line: number;
+  symbol: string;
+};
+
+export type StrategySourceValidationResponse = {
+  ok: boolean;
+  issues: StrategyValidationIssue[];
+  runtime_profile: RuntimeDependencyProfile | null;
+};
+
+export class APIError extends Error {
+  readonly status: number;
+  readonly runtime_error?: RuntimeDependencyError;
+
+  constructor(message: string, status: number, runtimeError?: RuntimeDependencyError) {
+    super(message);
+    this.name = "APIError";
+    this.status = status;
+    this.runtime_error = runtimeError;
+  }
+}
+
+function runtimeDependencyCategory(code: string): string | null {
+  switch (code) {
+    case "UNSUPPORTED_STRATEGY_DEPENDENCY":
+      return "Unsupported strategy dependency";
+    case "STRATEGY_DEPENDENCY_UNAVAILABLE":
+      return "Runtime dependency unavailable";
+    case "STRATEGY_IMPORT_FAILED":
+      return "Strategy import initialization failed";
+    case "RUNTIME_DEPENDENCY_PROFILE_INVALID":
+      return "Runtime image profile invalid";
+    case "RUNTIME_DEPENDENCY_PROFILE_MISMATCH":
+      return "Runtime profile mismatch";
+    default:
+      return null;
+  }
+}
+
+function parseRuntimeDependencyError(value: unknown): RuntimeDependencyError | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.code !== "string" || runtimeDependencyCategory(candidate.code) === null) return undefined;
+  if (typeof candidate.message !== "string" || !candidate.message.trim()) return undefined;
+  for (const field of ["module", "runtime_profile", "runtime_profile_version", "image_build_id"] as const) {
+    if (typeof candidate[field] !== "string") return undefined;
+  }
+  return {
+    code: candidate.code as RuntimeDependencyErrorCode,
+    module: candidate.module as string,
+    runtime_profile: candidate.runtime_profile as string,
+    runtime_profile_version: candidate.runtime_profile_version as string,
+    image_build_id: candidate.image_build_id as string,
+    message: candidate.message,
+  };
+}
+
+export function formatRuntimeDependencyError(error?: RuntimeDependencyError | null): string | null {
+  if (!error) return null;
+  const category = runtimeDependencyCategory(error.code);
+  if (!category) return null;
+  const profile = error.runtime_profile.trim() || "unknown";
+  const version = error.runtime_profile_version.trim() || "unknown";
+  const imageBuildID = error.image_build_id.trim() || "unknown";
+  const details = [category];
+  if (error.message.trim()) details.push(error.message.trim());
+  if (error.module.trim()) details.push(`Module: ${error.module.trim()}`);
+  details.push(`Profile: ${profile}@${version}`);
+  details.push(`Image build: ${imageBuildID}`);
+  return details.join(" · ");
+}
+
+async function parseErr(res: Response): Promise<APIError> {
   // Auto-handle stale/expired sessions: when the backend rejects an
   // authenticated request with 401, wipe the local JWT so the next
   // render-pass through ``RequireAuth`` (or the next fetch) sees no
@@ -333,18 +437,29 @@ async function parseErr(res: Response): Promise<string> {
       setAuthUser(null);
     }
   }
+  let detail = res.statusText;
+  let runtimeError: RuntimeDependencyError | undefined;
   try {
-    const j = (await res.json()) as { error?: string };
-    const detail = j.error ?? res.statusText;
-    if (res.status === 401) {
-      return `Session expired — please log in again. (${detail})`;
+    const raw = (await res.json()) as unknown;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const body = raw as Record<string, unknown>;
+      runtimeError = parseRuntimeDependencyError(body.runtime_error);
+      if (typeof body.error === "string" && body.error) {
+        detail = body.error;
+      } else if (runtimeError) {
+        detail = runtimeError.message;
+      }
     }
-    return detail;
   } catch {
-    return res.status === 401
-      ? "Session expired — please log in again."
-      : res.statusText;
+    // Keep the HTTP status text when the response is not JSON.
   }
+  if (res.status === 401) {
+    const message = detail
+      ? `Session expired — please log in again. (${detail})`
+      : "Session expired — please log in again.";
+    return new APIError(message, res.status, runtimeError);
+  }
+  return new APIError(detail, res.status, runtimeError);
 }
 
 export async function signup(username: string, password: string): Promise<AuthUser> {
@@ -353,7 +468,7 @@ export async function signup(username: string, password: string): Promise<AuthUs
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   const j = (await res.json()) as { user: AuthUser };
   return j.user;
 }
@@ -364,7 +479,7 @@ export async function login(username: string, password: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   const j = (await res.json()) as { token: string; user: AuthUser };
   setToken(j.token);
   setAuthUser(j.user);
@@ -376,7 +491,7 @@ export async function listPortfolios(): Promise<Portfolio[]> {
   const res = await fetch(`${apiBase()}/api/portfolios`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Portfolio[];
 }
 
@@ -403,7 +518,7 @@ export async function createPortfolio(body: CreatePortfolioPayload): Promise<Por
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Portfolio;
 }
 
@@ -413,7 +528,7 @@ export async function getPortfolio(id: number | string): Promise<Portfolio> {
   const res = await fetch(`${apiBase()}/api/portfolios/${id}`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Portfolio;
 }
 
@@ -449,7 +564,7 @@ export async function createVenue(payload: CreateVenuePayload): Promise<Venue> {
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Venue;
 }
 
@@ -463,7 +578,7 @@ export async function bindVenue(venueId: number | string, portfolioId: number | 
     },
     body: JSON.stringify({ portfolio_id: Number(portfolioId), reason }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Venue;
 }
 
@@ -477,7 +592,7 @@ export async function releaseVenue(venueId: number | string, reason = ""): Promi
     },
     body: JSON.stringify({ reason }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Venue;
 }
 
@@ -491,7 +606,7 @@ export async function archiveVenue(venueId: number | string, reason = ""): Promi
     },
     body: JSON.stringify({ reason }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 export async function getVenueWallet(venueId: number | string): Promise<VenueWallet> {
@@ -499,7 +614,7 @@ export async function getVenueWallet(venueId: number | string): Promise<VenueWal
   const res = await fetch(`${apiBase()}/api/venues/${venueId}/wallet`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as VenueWallet;
 }
 
@@ -514,7 +629,7 @@ export async function listSymbols(
   u.searchParams.set("q", q);
   u.searchParams.set("limit", "50");
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as { symbols: string[]; stale: boolean };
 }
 
@@ -524,7 +639,7 @@ export async function getPortfolioPortfolioSnapshot(id: number | string): Promis
   const res = await fetch(`${apiBase()}/api/portfolios/${id}/portfolio-snapshot`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as PortfolioVenueWallets;
 }
 
@@ -564,7 +679,7 @@ export async function runStrategy(
     },
     body: JSON.stringify(params),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategySession;
 }
 
@@ -579,7 +694,7 @@ export async function getStrategyStatus(sessionId: string): Promise<StrategyStat
     SESSION_STATUS_TIMEOUT_MS,
     "Session status timed out. Check runtime connectivity and try again.",
   );
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategyStatus;
 }
 
@@ -648,8 +763,23 @@ export async function previewRunStrategy(
     },
     body: JSON.stringify(params ?? {}),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as PreviewRunStrategy;
+}
+
+export async function validateStrategySource(runtimeID: string, source: string): Promise<StrategySourceValidationResponse> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const res = await fetch(`${apiBase()}/api/strategy/validate-source`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${t}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ runtime_id: runtimeID, source }),
+  });
+  if (!res.ok) throw await parseErr(res);
+  return (await res.json()) as StrategySourceValidationResponse;
 }
 
 export type BacktestCoverageInput = {
@@ -675,6 +805,7 @@ export type DownloadRunJob = {
   requests?: MarketDataRequest[];
   session_id?: string;
   error?: string;
+  runtime_error?: RuntimeDependencyError;
   created_at: string;
   updated_at: string;
 };
@@ -693,7 +824,7 @@ export async function previewBacktestCoverage(
     },
     body: JSON.stringify(params),
   }, COVERAGE_PREVIEW_TIMEOUT_MS, "Coverage preview timed out. Check runtime connectivity and try again.");
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as BacktestCoveragePreview;
 }
 
@@ -711,7 +842,7 @@ export async function startDownloadAndRunBacktest(
     },
     body: JSON.stringify(params),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DownloadRunJob;
 }
 
@@ -721,7 +852,7 @@ export async function getDownloadAndRunJob(jobId: string): Promise<DownloadRunJo
   const res = await fetch(`${apiBase()}/api/strategy/download-and-run-jobs/${encodeURIComponent(jobId)}`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DownloadRunJob;
 }
 
@@ -749,7 +880,7 @@ export async function downloadDebugPackage(
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return await res.blob();
 }
 
@@ -791,7 +922,7 @@ export async function createStrategy(payload: CreateStrategyPayload): Promise<St
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Strategy;
 }
 
@@ -802,7 +933,7 @@ export async function listStrategies(namePrefix?: string, activeOnly?: boolean):
   if (namePrefix) u.searchParams.set("name_prefix", namePrefix);
   if (activeOnly) u.searchParams.set("active_only", "true");
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Strategy[];
 }
 
@@ -820,7 +951,7 @@ export async function getStrategy(id: number | string): Promise<Strategy> {
   const res = await fetch(`${apiBase()}/api/strategies/${id}`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Strategy;
 }
 
@@ -831,7 +962,7 @@ export async function archiveStrategy(id: number | string): Promise<void> {
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 // ── Portfolio strategy mount management ───────────────────────────────────────
@@ -842,7 +973,7 @@ export async function listPortfolioStrategies(portfolioId: number | string): Pro
   const res = await fetch(`${apiBase()}/api/portfolios/${portfolioId}/strategies`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as PortfolioStrategy[];
 }
 
@@ -853,7 +984,7 @@ export async function mountStrategy(portfolioId: number | string, strategyId: nu
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 export async function unmountStrategy(portfolioId: number | string, strategyId: number | string): Promise<void> {
@@ -863,7 +994,7 @@ export async function unmountStrategy(portfolioId: number | string, strategyId: 
     method: "DELETE",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 export async function deactivateStrategy(portfolioId: number | string, strategyId: number | string): Promise<void> {
@@ -873,7 +1004,7 @@ export async function deactivateStrategy(portfolioId: number | string, strategyI
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 export async function activateStrategy(portfolioId: number | string, strategyId: number | string): Promise<void> {
@@ -883,7 +1014,7 @@ export async function activateStrategy(portfolioId: number | string, strategyId:
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
@@ -923,7 +1054,7 @@ export async function listSessions(portfolioId: number | string, offset?: number
   if (offset) u.searchParams.set("offset", String(offset));
   if (limit) u.searchParams.set("limit", String(limit));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Session[];
 }
 
@@ -958,7 +1089,7 @@ export async function getSession(sessionId: string): Promise<Session> {
   const res = await fetch(`${apiBase()}/api/sessions/${sessionId}`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Session;
 }
 
@@ -1007,7 +1138,7 @@ export async function getSessionIndicators(
   const u = new URL(`${apiBase()}/api/sessions/${sessionId}/indicators`);
   if (streamKey) u.searchParams.set("stream_key", streamKey);
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategyIndicatorDefinitionList;
 }
 
@@ -1028,7 +1159,7 @@ export async function getSessionIndicatorChunks(
   u.searchParams.set("start_time_ms", String(params.start_time_ms));
   u.searchParams.set("end_time_ms", String(params.end_time_ms));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategyIndicatorChunkList;
 }
 
@@ -1248,7 +1379,7 @@ async function fetchPage<T>(url: URL): Promise<Page<T>> {
   const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Page<T>;
 }
 
@@ -1358,7 +1489,7 @@ export async function getSessionReconciliationSummary(
   if (!t) throw new Error("Not logged in");
   const u = new URL(`${apiBase()}/api/sessions/${sessionId}/reconciliation/summary`);
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as SessionReconciliationSummary;
 }
 
@@ -1386,7 +1517,7 @@ export async function stopSessionResult(
     headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
     body: JSON.stringify({ stop_action: action }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   const json = await res.json() as StopSessionResult;
   return { ...json, stopped: Boolean(json.stopped) };
 }
@@ -1589,7 +1720,7 @@ async function fetchOrderHistory<T>(suffix: string, params: QueryOrdersParams): 
   if (params.limit) u.searchParams.set("limit", String(params.limit));
   if (params.offset) u.searchParams.set("offset", String(params.offset));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as T;
 }
 
@@ -1763,7 +1894,7 @@ export async function createMarketDataRequest(payload: CreateMarketDataRequestPa
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as MarketDataEntry;
 }
 
@@ -1773,7 +1904,7 @@ export async function listMarketDataRequests(): Promise<MarketDataEntry[]> {
   const res = await fetch(`${apiBase()}/api/market-data/requests`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as MarketDataEntry[];
 }
 
@@ -1803,7 +1934,7 @@ export async function queryMarketDataCoverage(params: {
   u.searchParams.set("start_time_ms", String(params.start_time_ms));
   u.searchParams.set("end_time_ms", String(params.end_time_ms));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as MarketDataCoverage;
 }
 
@@ -1829,7 +1960,7 @@ export async function queryMarketDataKlines(params: {
   u.searchParams.set("end_time_ms", String(params.end_time_ms));
   if (params.limit) u.searchParams.set("limit", String(params.limit));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as MarketDataKlines;
 }
 
@@ -1840,7 +1971,7 @@ export async function cancelMarketDataRequest(requestId: number | string): Promi
     method: "DELETE",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
 }
 
 // getMarketDataStreamByKey is used by live-start preflight paths (e.g. on
@@ -1855,7 +1986,7 @@ export async function getMarketDataStreamByKey(key: StreamKey): Promise<MarketDa
   u.searchParams.set("symbol", key.symbol);
   u.searchParams.set("interval", key.interval);
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as MarketDataStream;
 }
 
@@ -1869,7 +2000,7 @@ export async function listSessionDeliveryHealth(params: {
   if (params.session_id) u.searchParams.set("session_id", params.session_id);
   if (params.runtime_id) u.searchParams.set("runtime_id", params.runtime_id);
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as SessionDeliveryHealthResult;
 }
 
@@ -1927,7 +2058,7 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
   const res = await fetch(`${apiBase()}/api/notifications/settings`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as NotificationSettings;
 }
 
@@ -1941,7 +2072,7 @@ export async function updateNotificationPreferences(preferences: NotificationPre
     },
     body: JSON.stringify(preferences),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as NotificationSettings;
 }
 
@@ -1951,7 +2082,7 @@ export async function createNotificationBindCode(): Promise<NotificationBindCode
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as NotificationBindCode;
 }
 
@@ -1961,7 +2092,7 @@ export async function confirmNotificationBinding(): Promise<NotificationSettings
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as NotificationSettings;
 }
 
@@ -1971,7 +2102,7 @@ export async function unbindNotificationTelegram(): Promise<NotificationSettings
     method: "DELETE",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as NotificationSettings;
 }
 
@@ -1981,7 +2112,7 @@ export async function sendTestNotification(): Promise<{ accepted: boolean; setti
     method: "POST",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as { accepted: boolean; settings: NotificationSettings };
 }
 
@@ -2157,7 +2288,7 @@ export async function listRuntimes(params: {
   if (params.limit) u.searchParams.set("limit", String(params.limit));
   if (params.offset) u.searchParams.set("offset", String(params.offset));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as RuntimeListResult;
 }
 
@@ -2167,7 +2298,7 @@ export async function getRuntime(runtimeId: string): Promise<Runtime> {
   const res = await fetch(`${apiBase()}/api/runtimes/${encodeURIComponent(runtimeId)}`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Runtime;
 }
 
@@ -2178,7 +2309,7 @@ export async function cancelRuntime(runtimeId: string): Promise<Runtime> {
     method: "DELETE",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as Runtime;
 }
 
@@ -2196,7 +2327,7 @@ export async function ensureHostedRuntime(payload: {
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as EnsureHostedRuntimeResult;
 }
 
@@ -2214,7 +2345,7 @@ export async function prepareDebugWorkspace(runtimeId: string, payload: {
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DebugWorkspaceState;
 }
 
@@ -2224,7 +2355,7 @@ export async function getRuntimeDebugDataset(runtimeId: string): Promise<DebugDa
   const res = await fetch(`${apiBase()}/api/runtimes/${encodeURIComponent(runtimeId)}/debug-dataset`, {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DebugDatasetState;
 }
 
@@ -2246,7 +2377,7 @@ export async function loadDebugDataset(portfolioId: number | string, params: {
     },
     body: JSON.stringify(params),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DebugDatasetState;
 }
 
@@ -2256,7 +2387,7 @@ export async function listRuntimeAdmissionFailures(limit = 20): Promise<RuntimeA
   const u = new URL(`${apiBase()}/api/runtime-admission-failures`);
   if (limit) u.searchParams.set("limit", String(limit));
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as RuntimeAdmissionFailureResult;
 }
 
@@ -2305,7 +2436,7 @@ export async function listRuntimeCredentials(includeInactive = false): Promise<R
   const res = await fetch(u.toString(), {
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as RuntimeCredential[];
 }
 
@@ -2333,7 +2464,7 @@ export async function issueRuntimeCredential(
     },
     body: JSON.stringify({ label, role }),
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as IssuedRuntimeCredential;
 }
 
@@ -2344,6 +2475,6 @@ export async function revokeRuntimeCredential(keyID: string): Promise<RevokedRun
     method: "DELETE",
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!res.ok) throw new Error(await parseErr(res));
+  if (!res.ok) throw await parseErr(res);
   return (await res.json()) as RevokedRuntimeCredential;
 }
