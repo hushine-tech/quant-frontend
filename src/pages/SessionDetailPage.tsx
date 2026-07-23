@@ -24,6 +24,8 @@ import {
   stopSessionResult,
   unmountStrategy,
   isSessionTerminal,
+  exactDecimalText,
+  strategyStreamKey,
   runtimeRoleForSessionEnvironment,
   type Session,
   type SessionReconciliationSummary,
@@ -32,6 +34,10 @@ import {
   type ReconciliationFieldDiff,
   type SessionDeliveryHealth,
   type OrderLifecycleEvent,
+  type SessionOrderIntent,
+  type SessionOrderAttempt,
+  type SessionOrder,
+  type SessionOrderFill,
   type Strategy,
   type StrategyInputDeclaration,
   type StrategyOrderTargetDeclaration,
@@ -42,6 +48,7 @@ import SessionChartPanel from "@/components/SessionChartPanel";
 import Pager from "@/components/Pager";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
+import { extractStrategyInputs, extractStrategyOrderTargets } from "@/utils/strategyDeclarations";
 
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
 const DEFAULT_SESSION_LEVERAGE = 1;
@@ -285,116 +292,6 @@ function sessionKindBadge(session: Session): React.ReactNode {
   );
 }
 
-function extractAssignmentList(code: string | undefined, name: string): string {
-  if (!code) return "";
-  const match = new RegExp(`\\b${name}\\s*=`).exec(code);
-  if (!match) return "";
-  const start = code.indexOf("[", match.index);
-  if (start < 0) return "";
-
-  let depth = 0;
-  let quote = "";
-  let escaped = false;
-  for (let i = start; i < code.length; i += 1) {
-    const ch = code[i];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === quote) {
-        quote = "";
-      }
-      continue;
-    }
-    if (ch === "\"" || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === "[") depth += 1;
-    if (ch === "]") {
-      depth -= 1;
-      if (depth === 0) return code.slice(start + 1, i);
-    }
-  }
-  return "";
-}
-
-function splitPythonDicts(block: string): string[] {
-  const result: string[] = [];
-  let start = -1;
-  let depth = 0;
-  let quote = "";
-  let escaped = false;
-  for (let i = 0; i < block.length; i += 1) {
-    const ch = block[i];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === quote) {
-        quote = "";
-      }
-      continue;
-    }
-    if (ch === "\"" || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === "{") {
-      if (depth === 0) start = i + 1;
-      depth += 1;
-      continue;
-    }
-    if (ch === "}") {
-      depth -= 1;
-      if (depth === 0 && start >= 0) {
-        result.push(block.slice(start, i));
-        start = -1;
-      }
-    }
-  }
-  return result;
-}
-
-function parsePythonValue(raw: string | undefined): string {
-  if (!raw) return "";
-  const trimmed = raw.trim().replace(/,$/, "");
-  const quoted = /^["'](.*)["']$/.exec(trimmed);
-  if (quoted) return quoted[1];
-  const enumValue = /(?:Exchange|Market)\.([A-Z0-9_]+)/.exec(trimmed);
-  if (enumValue) return enumValue[1].toLowerCase();
-  return trimmed;
-}
-
-function dictValue(dict: string, key: string): string {
-  const match = new RegExp(`["']${key}["']\\s*:\\s*([^,}\\n]+)`).exec(dict);
-  return parsePythonValue(match?.[1]);
-}
-
-function extractStrategyInputs(code: string | undefined): StrategyInputDeclaration[] {
-  return splitPythonDicts(extractAssignmentList(code, "INPUTS"))
-    .map((dict) => ({
-      exchange: dictValue(dict, "exchange") || "binance",
-      market: dictValue(dict, "market"),
-      kind: dictValue(dict, "kind") || "kline",
-      symbol: dictValue(dict, "symbol"),
-      interval: dictValue(dict, "interval"),
-    }))
-    .filter((input) => input.symbol && input.interval);
-}
-
-function extractStrategyOrderTargets(code: string | undefined): StrategyOrderTargetDeclaration[] {
-  return splitPythonDicts(extractAssignmentList(code, "ORDER_TARGETS"))
-    .map((dict) => ({
-      exchange: dictValue(dict, "exchange") || "binance",
-      market: dictValue(dict, "market"),
-      symbol: dictValue(dict, "symbol"),
-    }))
-    .filter((target) => target.symbol);
-}
-
 function formatInputRoute(input: StrategyInputDeclaration): string {
   return `${input.symbol || "-"} ${input.interval || "-"}`;
 }
@@ -410,6 +307,95 @@ function formatOrderTarget(target: StrategyOrderTargetDeclaration): string {
 
 function formatRangeEndpoint(ms?: number): string {
   return ms ? formatUTCWithLocal(ms) : "-";
+}
+
+function withExactIntentDecimals(item: SessionOrderIntent): SessionOrderIntent {
+  return {
+    ...item,
+    requested_qty_decimal: exactDecimalText(item.requested_qty_decimal, item.requested_qty),
+    requested_price_decimal: exactDecimalText(item.requested_price_decimal, item.requested_price),
+  };
+}
+
+function withExactAttemptDecimals(item: SessionOrderAttempt): SessionOrderAttempt {
+  return {
+    ...item,
+    requested_qty_decimal: exactDecimalText(item.requested_qty_decimal, item.requested_qty),
+    requested_price_decimal: exactDecimalText(item.requested_price_decimal, item.requested_price),
+    mark_price_decimal: exactDecimalText(item.mark_price_decimal, item.mark_price),
+  };
+}
+
+function withExactOrderDecimals(item: SessionOrder): SessionOrder {
+  return {
+    ...item,
+    orig_qty_decimal: exactDecimalText(item.orig_qty_decimal, item.orig_qty),
+    executed_qty_decimal: exactDecimalText(item.executed_qty_decimal, item.executed_qty),
+    remaining_qty_decimal: exactDecimalText(item.remaining_qty_decimal, item.remaining_qty),
+    avg_price_decimal: exactDecimalText(item.avg_price_decimal, item.avg_price),
+    price_decimal: exactDecimalText(item.price_decimal, item.price),
+    cumulative_quote_qty_decimal: exactDecimalText(item.cumulative_quote_qty_decimal, undefined),
+  };
+}
+
+function withExactFillDecimals(item: SessionOrderFill): SessionOrderFill {
+  return {
+    ...item,
+    qty_decimal: exactDecimalText(item.qty_decimal, item.qty),
+    fill_price_decimal: exactDecimalText(item.fill_price_decimal, item.fill_price),
+    fee_decimal: exactDecimalText(item.fee_decimal, item.fee),
+    quote_qty_decimal: exactDecimalText(item.quote_qty_decimal, undefined),
+    fee_asset: item.fee_asset || "-",
+  };
+}
+
+type SessionFailureDetail = {
+  code?: string;
+  message?: string;
+  environment?: number | string;
+  retryable?: boolean;
+  source?: string;
+  filter_type?: string;
+};
+
+function sessionFailureDetails(session: Session | null): SessionFailureDetail[] {
+  if (!session) return [];
+  let detail: unknown = session.error_detail;
+  if (!detail && session.error_detail_json) {
+    try {
+      detail = JSON.parse(session.error_detail_json);
+    } catch {
+      detail = undefined;
+    }
+  }
+  if (!detail || typeof detail !== "object") {
+    return session.error_code
+      ? [{
+          code: session.error_code,
+          message: session.error_message || session.error,
+          environment: session.environment,
+          source: session.runtime_source,
+        }]
+      : [];
+  }
+  const root = detail as Record<string, unknown>;
+  const values = Array.isArray(root.failures) ? root.failures : [root];
+  return values
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"))
+    .map((value) => ({
+      code: typeof value.code === "string" ? value.code : undefined,
+      message: typeof value.message === "string"
+        ? value.message
+        : typeof value.reason === "string"
+          ? value.reason
+          : typeof value.error === "string"
+            ? value.error
+            : undefined,
+      environment: typeof value.environment === "number" || typeof value.environment === "string" ? value.environment : undefined,
+      retryable: typeof value.retryable === "boolean" ? value.retryable : undefined,
+      source: typeof value.source === "string" ? value.source : session.runtime_source,
+      filter_type: typeof value.filter_type === "string" ? value.filter_type : undefined,
+    }));
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -887,6 +873,7 @@ export default function SessionDetailPage() {
   const stopFailureStatus = (session?.status || "").toLowerCase();
   const showStopFailureModal = (stopFailureStatus === "stop_failed" || stopFailureStatus === "stopping_failed")
     && !stopFailureAcknowledged;
+  const structuredFailures = sessionFailureDetails(session);
 
   return (
     <div>
@@ -930,6 +917,22 @@ export default function SessionDetailPage() {
             <p className="error" style={{ flexBasis: "100%", margin: "0.5rem 0 0" }}>
               {session.error}
             </p>
+          ) : null}
+          {structuredFailures.length > 0 ? (
+            <div className="error" style={{ flexBasis: "100%", display: "grid", gap: "0.35rem" }}>
+              {structuredFailures.map((failure, index) => (
+                <div key={`${failure.code || "SESSION_FAILURE"}-${index}`}>
+                  <code>{failure.code || "SESSION_FAILURE"}</code>
+                  {failure.message ? `: ${failure.message}` : ""}
+                  <div className="muted" style={{ fontSize: "0.78rem" }}>
+                    environment {failure.environment ?? session?.environment ?? "-"}
+                    {` · source ${failure.source || "-"}`}
+                    {` · retryable ${failure.retryable == null ? "-" : String(failure.retryable)}`}
+                    {failure.filter_type ? ` · filter ${failure.filter_type}` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : null}
           {session?.status === "running" ? (
             <>
@@ -1018,7 +1021,7 @@ export default function SessionDetailPage() {
                 <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
                   {strategyInputs.map((input) => (
                     <span
-                      key={`${input.exchange}-${input.market}-${input.symbol}-${input.interval}`}
+                      key={strategyStreamKey(input)}
                       className="status-badge status-badge--idle"
                       style={{ display: "inline-flex", gap: "0.4rem", alignItems: "center" }}
                     >
@@ -1038,7 +1041,7 @@ export default function SessionDetailPage() {
                 <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
                   {strategyOrderTargets.map((target) => (
                     <span
-                      key={`${target.exchange}-${target.market}-${target.symbol}`}
+                      key={strategyStreamKey({ ...target, interval: "order" })}
                       className="status-badge status-badge--idle"
                     >
                       {formatOrderTarget(target)}
@@ -1369,16 +1372,22 @@ export default function SessionDetailPage() {
 
             {activeTab === "orders" ? (
               <OrderTree
-                fetchIntents={(offset, limit) => getSessionIntents(stableSessionId, { limit, offset })}
-                fetchAttempts={(intentId, offset, limit) =>
-                  getSessionAttempts(stableSessionId, { limit, offset, intent_id: intentId })
-                }
-                fetchOrder={(attemptId, offset, limit) =>
-                  getSessionOrders(stableSessionId, { limit, offset, attempt_id: attemptId })
-                }
-                fetchFills={(orderId, offset, limit) =>
-                  getSessionFills(stableSessionId, { limit, offset, order_id: orderId })
-                }
+                fetchIntents={async (offset, limit) => {
+                  const page = await getSessionIntents(stableSessionId, { limit, offset });
+                  return { ...page, items: page.items.map(withExactIntentDecimals) };
+                }}
+                fetchAttempts={async (intentId, offset, limit) => {
+                  const page = await getSessionAttempts(stableSessionId, { limit, offset, intent_id: intentId });
+                  return { ...page, items: page.items.map(withExactAttemptDecimals) };
+                }}
+                fetchOrder={async (attemptId, offset, limit) => {
+                  const page = await getSessionOrders(stableSessionId, { limit, offset, attempt_id: attemptId });
+                  return { ...page, items: page.items.map(withExactOrderDecimals) };
+                }}
+                fetchFills={async (orderId, offset, limit) => {
+                  const page = await getSessionFills(stableSessionId, { limit, offset, order_id: orderId });
+                  return { ...page, items: page.items.map(withExactFillDecimals) };
+                }}
                 resetKey={stableSessionId}
               />
             ) : null}
@@ -1426,9 +1435,11 @@ export default function SessionDetailPage() {
                               <td>
                                 {event.fill_delta ? (
                                   <>
-                                    {event.fill_delta.symbol} {event.fill_delta.qty}
+                                    {event.fill_delta.symbol} {exactDecimalText(event.fill_delta.qty_decimal, event.fill_delta.qty)}
                                     <div className="muted">
-                                      px {event.fill_delta.fill_price} · fee {event.fill_delta.fee} {event.fill_delta.fee_asset || ""}
+                                      px {exactDecimalText(event.fill_delta.fill_price_decimal, event.fill_delta.fill_price)}
+                                      {" · "}quote {exactDecimalText(event.fill_delta.quote_qty_decimal, undefined)}
+                                      {" · "}fee {exactDecimalText(event.fill_delta.fee_decimal, event.fill_delta.fee)} {event.fill_delta.fee_asset || "-"}
                                     </div>
                                   </>
                                 ) : "-"}
@@ -1438,8 +1449,11 @@ export default function SessionDetailPage() {
                                   <>
                                     {event.order_state.status || "-"}
                                     <div className="muted">
-                                      filled {event.order_state.executed_qty} / {event.order_state.orig_qty}
-                                      {" · "}remain {event.order_state.remaining_qty}
+                                      filled {exactDecimalText(event.order_state.executed_qty_decimal, event.order_state.executed_qty)}
+                                      {" / "}{exactDecimalText(event.order_state.orig_qty_decimal, event.order_state.orig_qty)}
+                                      {" · "}remain {exactDecimalText(event.order_state.remaining_qty_decimal, event.order_state.remaining_qty)}
+                                      {" · "}avg {exactDecimalText(event.order_state.avg_price_decimal, event.order_state.avg_price)}
+                                      {" · "}price {exactDecimalText(event.order_state.price_decimal, undefined)}
                                     </div>
                                   </>
                                 ) : "-"}
@@ -1504,6 +1518,13 @@ export default function SessionDetailPage() {
         sessionId={stableSessionId}
         busy={stopping}
         error={stopError}
+        declaredTargets={strategyOrderTargets}
+        stopAndCloseDisabled={Boolean(session?.strategy_id) && !sessionStrategy}
+        stopAndCloseDisabledReason={Boolean(session?.strategy_id) && !sessionStrategy
+          ? strategyContextError
+            ? "Stop-and-close is unavailable because the strategy declarations could not be verified. Stop-only remains available."
+            : "Loading declared order targets before stop-and-close can be selected."
+          : null}
         onCancel={() => {
           if (stopping) return;
           setStopDialogOpen(false);

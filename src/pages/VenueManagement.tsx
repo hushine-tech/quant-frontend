@@ -9,8 +9,12 @@ import {
   listPortfoliosPage,
   listVenues,
   releaseVenue,
+  canonicalSpotWalletAsset,
+  defaultSpotWalletAssets,
   type Portfolio,
   type CreateVenuePayload,
+  type SpotAsset,
+  type SpotSymbolCatalogEntry,
   type Venue,
   type VenueWallet,
 } from "@/api/client";
@@ -25,7 +29,7 @@ import { formatUTCWithLocal } from "@/utils/time";
 import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
 
 type VenueTab = "venues" | "create";
-type SpotRow = { symbol: string; qty: string; price: string; avg: string };
+type SpotRow = SpotAsset & { symbol?: string };
 type FutRow = { symbol: string; direction: string; initial_balance: string; leverage: string; fee_rate: string };
 type VenueCreatedResult = { reusedExisting?: boolean };
 
@@ -506,8 +510,7 @@ function CreateVenueForm({
   const [positionMode, setPositionMode] = useState<NonNullable<CreateVenuePayload["position_mode"]>>("one_way");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [spotFree, setSpotFree] = useState("0");
-  const [spotRows, setSpotRows] = useState<SpotRow[]>([]);
+  const [spotRows, setSpotRows] = useState<SpotRow[]>(() => defaultSpotWalletAssets());
   const [showSpotAdd, setShowSpotAdd] = useState(false);
   const [futInitial, setFutInitial] = useState("0");
   const [futRows, setFutRows] = useState<FutRow[]>([]);
@@ -525,10 +528,19 @@ function CreateVenueForm({
   const requiresCredentials = environment !== "backtest";
   const isBacktest = environment === "backtest";
 
-  function addSpot(sym: string) {
-    const u = sym.toUpperCase();
-    if (spotRows.some((r) => r.symbol === u)) return;
-    setSpotRows((r) => [...r, { symbol: u, qty: "0", price: "", avg: "0" }]);
+  function addSpot(_symbol: string, entry?: SpotSymbolCatalogEntry, stale = false) {
+    if (!entry || stale) {
+      setError("Fresh Binance Spot symbol metadata is required before adding an asset.");
+      return;
+    }
+    const candidate = canonicalSpotWalletAsset(entry, false);
+    if (!candidate) {
+      setError("Only fresh, TRADING, Spot-enabled USDT symbols can add wallet assets.");
+      return;
+    }
+    const assetCode = entry.base_asset.trim().toUpperCase();
+    if (spotRows.some((row) => row.asset === assetCode)) return;
+    setSpotRows((rows) => [...rows, { ...candidate, asset: entry.base_asset.trim().toUpperCase(), symbol: entry.symbol }]);
     setShowSpotAdd(false);
   }
 
@@ -539,8 +551,8 @@ function CreateVenueForm({
     setShowFutAdd(false);
   }
 
-  function updateSpotRow(sym: string, field: keyof SpotRow, val: string) {
-    setSpotRows((rows) => rows.map((x) => (x.symbol === sym ? { ...x, [field]: val } : x)));
+  function updateSpotRow(asset: string, field: "free" | "locked" | "avg_entry_price" | "price", val: string) {
+    setSpotRows((rows) => rows.map((row) => (row.asset === asset ? { ...row, [field]: val } : row)));
   }
 
   function updateFutRow(sym: string, field: keyof FutRow, val: string) {
@@ -551,21 +563,13 @@ function CreateVenueForm({
     if (!isBacktest) return;
     if (isSpot) {
       payload.spot = {
-        free: parseFloat(spotFree) || 0,
-        locked: 0,
-        assets: spotRows.map((r) => {
-          const asset: { symbol: string; qty: number; locked: number; avg_entry_price: number; price?: number } = {
-            symbol: r.symbol,
-            qty: parseFloat(r.qty) || 0,
-            locked: 0,
-            avg_entry_price: parseFloat(r.avg) || 0,
-          };
-          if (r.price.trim() !== "") {
-            const p = parseFloat(r.price);
-            if (!Number.isNaN(p)) asset.price = p;
-          }
-          return asset;
-        }),
+        assets: spotRows.map((row) => ({
+          asset: row.asset,
+          free: row.free,
+          locked: row.locked,
+          ...(row.avg_entry_price?.trim() ? { avg_entry_price: row.avg_entry_price } : {}),
+          ...(row.price?.trim() ? { price: row.price } : {}),
+        })),
       };
       return;
     }
@@ -608,6 +612,19 @@ function CreateVenueForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (requiresCredentials && (!apiKey.trim() || !apiSecret.trim())) return;
+    if (isBacktest && isSpot) {
+      const decimalPattern = /^[0-9]+(?:\.[0-9]{1,8})?$/;
+      const invalid = spotRows.find((row) => (
+        !decimalPattern.test(row.free)
+        || !decimalPattern.test(row.locked)
+        || (Boolean(row.avg_entry_price) && !decimalPattern.test(row.avg_entry_price ?? ""))
+        || (Boolean(row.price) && !decimalPattern.test(row.price ?? ""))
+      ));
+      if (invalid) {
+        setError(`Spot asset ${invalid.asset} must use non-negative decimal strings with at most 8 fractional digits.`);
+        return;
+      }
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -753,34 +770,30 @@ function CreateVenueForm({
           <details className="wallet-details" open>
             <summary>Spot wallet</summary>
             <div className="wallet-details__body">
-              <label className="field">
-                <span>Free USDT</span>
-                <input type="number" step="0.0001" value={spotFree} onChange={(e) => setSpotFree(e.target.value)} />
-              </label>
               <button type="button" onClick={() => setShowSpotAdd((v) => !v)}>
                 {showSpotAdd ? "Hide symbol search" : "Add spot asset"}
               </button>
               {showSpotAdd ? (
                 <SymbolPicker market="spot" label="Spot symbol" onAdd={addSpot} />
               ) : null}
-              {spotRows.length > 0 ? (
-                <table className="compact">
-                  <thead>
-                    <tr><th>Symbol</th><th>Qty</th><th>Avg entry</th><th>Mark price</th><th></th></tr>
-                  </thead>
-                  <tbody>
-                    {spotRows.map((r) => (
-                      <tr key={r.symbol}>
-                        <td><strong>{r.symbol}</strong></td>
-                        <td><input type="number" step="0.00000001" value={r.qty} onChange={(e) => updateSpotRow(r.symbol, "qty", e.target.value)} /></td>
-                        <td><input type="number" step="0.0001" value={r.avg} onChange={(e) => updateSpotRow(r.symbol, "avg", e.target.value)} /></td>
-                        <td><input type="number" step="0.0001" value={r.price} onChange={(e) => updateSpotRow(r.symbol, "price", e.target.value)} /></td>
-                        <td><button type="button" onClick={() => setSpotRows((rows) => rows.filter((x) => x.symbol !== r.symbol))}>Remove</button></td>
+              <table className="compact">
+                <thead>
+                  <tr><th>Asset</th><th>Trading pair</th><th>Free</th><th>Locked</th><th>Avg entry</th><th>Mark price</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {spotRows.map((row) => (
+                      <tr key={row.asset}>
+                        <td><strong>{row.asset}</strong></td>
+                        <td>{row.symbol ?? "Quote asset"}</td>
+                        <td><input type="text" inputMode="decimal" value={row.free} onChange={(e) => updateSpotRow(row.asset, "free", e.target.value)} /></td>
+                        <td><input type="text" inputMode="decimal" value={row.locked} onChange={(e) => updateSpotRow(row.asset, "locked", e.target.value)} /></td>
+                        <td><input type="text" inputMode="decimal" value={row.avg_entry_price ?? ""} disabled={row.asset === "USDT"} onChange={(e) => updateSpotRow(row.asset, "avg_entry_price", e.target.value)} /></td>
+                        <td><input type="text" inputMode="decimal" value={row.price ?? ""} disabled={row.asset === "USDT"} onChange={(e) => updateSpotRow(row.asset, "price", e.target.value)} /></td>
+                        <td>{row.asset === "USDT" ? null : <button type="button" onClick={() => setSpotRows((rows) => rows.filter((item) => item.asset !== row.asset))}>Remove</button>}</td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : null}
+                  ))}
+                </tbody>
+              </table>
             </div>
           </details>
         ) : null}

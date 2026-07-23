@@ -4,12 +4,15 @@ import { formatUTCWithLocal } from "@/utils/time";
 import {
   getPortfolio,
   getPortfolioPortfolioSnapshot,
+  getProductCapabilities,
+  listSymbols,
   runStrategy,
   bindVenue,
   getStrategyStatus,
   getDownloadAndRunJob,
   listVenues,
   listStrategiesPage,
+  getStrategy,
   listPortfolioStrategies,
   listPortfolioVenues,
   releaseVenue,
@@ -24,6 +27,10 @@ import {
   stopSession,
   startDownloadAndRunBacktest,
   downloadDebugPackage,
+  buildDebugPackageRequest,
+  normalizeProductCapabilities,
+  strategySpotCapabilityDecision,
+  strategyStreamKey,
   queryMarketDataKlines,
   runtimeRoleForSessionEnvironment,
   isSessionTerminal,
@@ -42,6 +49,9 @@ import {
   type StreamKey,
   type PreviewRunStrategy,
   type Runtime,
+  type ProductCapabilities,
+  type RequiredSnapshotSymbol,
+  type StrategyOrderTargetDeclaration,
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
@@ -51,11 +61,11 @@ import PageTabs, { type PageTab } from "@/components/PageTabs";
 import InfiniteTable from "@/components/InfiniteTable";
 import AsyncSelect, { type AsyncSelectOption } from "@/components/AsyncSelect";
 import QuickStartActionButton from "@/components/QuickStartActionButton";
-import SymbolPicker from "@/components/SymbolPicker";
 import DateTimeRangePicker from "@/components/DateTimeRangePicker";
 import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
+import { extractStrategyInputs, extractStrategyOrderTargets, strategyDeclaresSpot } from "@/utils/strategyDeclarations";
 
 function envBannerClass(environment: number): string {
   switch (environment) {
@@ -84,13 +94,22 @@ function normalizePortfolioDetailTab(value: string | null): PortfolioDetailTab {
   return value === "run" || value === "debug" || value === "sessions" || value === "venues" ? value : "portfolio";
 }
 
-const LOCAL_DEBUG_INTERVALS = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"];
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
 const DEFAULT_SESSION_LEVERAGE = 1;
 
 function formatAPIError(error: unknown, fallback: string): string {
   if (error instanceof APIError) {
-    return formatRuntimeDependencyError(error.runtime_error) ?? error.message;
+    const runtimeMessage = formatRuntimeDependencyError(error.runtime_error);
+    if (runtimeMessage) return runtimeMessage;
+    if (!error.code) return error.message;
+    const facts = [
+      error.environment == null ? "" : `environment=${error.environment}`,
+      error.source ? `source=${error.source}` : "",
+      error.retryable == null ? "" : `retryable=${String(error.retryable)}`,
+      error.filter_type ? `filter=${error.filter_type}` : "",
+      error.route ? `route=${error.route}` : "",
+    ].filter(Boolean);
+    return `${error.code}: ${error.message}${facts.length ? ` (${facts.join(", ")})` : ""}`;
   }
   return error instanceof Error ? error.message : fallback;
 }
@@ -115,20 +134,6 @@ function formatRiskPercent(value: number | undefined): string {
 function formatLeverage(value: number | undefined): string {
   if (!Number.isFinite(value ?? NaN) || !value) return `${DEFAULT_SESSION_LEVERAGE}x`;
   return `${(value ?? DEFAULT_SESSION_LEVERAGE).toFixed(2).replace(/\.?0+$/, "")}x`;
-}
-
-function localDebugInitialBalance(wallet: WalletSnapshot | null): number {
-  const balance = wallet?.futures?.wallet_balance ?? wallet?.wallet_balance ?? 1000;
-  return Number.isFinite(balance) && balance > 0 ? balance : 1000;
-}
-
-function formatLocalDebugBalance(value: number): string {
-  return value.toFixed(4).replace(/\.?0+$/, "");
-}
-
-function localDebugDefaultSymbol(wallet: WalletSnapshot | null): string {
-  const positionSymbol = wallet?.futures?.positions?.find((p) => p.symbol?.trim())?.symbol;
-  return (positionSymbol || "BTCUSDT").trim().toUpperCase();
 }
 
 function sessionStartedAtMs(session: Session): number {
@@ -203,6 +208,42 @@ async function resumeWithNewSession(portfolioId: number, session: Session, runti
   }
 }
 
+async function requiredSpotSymbolsForSnapshot(summary: PortfolioVenueWallets): Promise<RequiredSnapshotSymbol[]> {
+  const required: RequiredSnapshotSymbol[] = [];
+  const seen = new Set<string>();
+  for (const item of summary.items) {
+    const market = (item.venue.market_label || "").trim().toLowerCase();
+    const exchange = (item.venue.exchange_label || "").trim().toLowerCase();
+    const isBinanceSpot = (item.venue.market === 1 || market === "spot")
+      && (item.venue.exchange === 1 || exchange === "binance");
+    if (!isBinanceSpot || !item.wallet?.spot) continue;
+    for (const asset of item.wallet.spot.assets) {
+      const assetCode = asset.asset.trim().toUpperCase();
+      if (!assetCode || assetCode === "USDT") continue;
+      const catalog = await listSymbols("spot", assetCode);
+      if (catalog.stale) {
+        throw new Error(`Binance symbol metadata for ${assetCode} is stale`);
+      }
+      const matches = catalog.entries.filter((entry) => (
+        entry.base_asset.trim().toUpperCase() === assetCode
+        && entry.quote_asset.trim().toUpperCase() === "USDT"
+        && entry.status.trim().toUpperCase() === "TRADING"
+        && entry.spot_trading_allowed
+      ));
+      if (matches.length !== 1) {
+        throw new Error(`Expected one authoritative Binance Spot USDT symbol for asset ${assetCode}, found ${matches.length}`);
+      }
+      const symbol = matches[0].symbol.trim().toUpperCase();
+      const key = `binance:spot:${symbol}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        required.push({ exchange: "binance", market: "spot", symbol });
+      }
+    }
+  }
+  return required;
+}
+
 export default function PortfolioDetail() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -214,6 +255,8 @@ export default function PortfolioDetail() {
   const [venueWalletErr, setVenueWalletErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [venueWalletLoading, setVenueWalletLoading] = useState(false);
+  const [capabilities, setCapabilities] = useState<ProductCapabilities>(() => normalizeProductCapabilities(null, true));
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<PortfolioDetailTab>(() => normalizePortfolioDetailTab(searchParams.get("tab")));
   const returnTo = safeInternalReturnTo(searchParams.get("return_to"));
   const initialRuntimeId = searchParams.get("runtime_id") || "";
@@ -238,6 +281,25 @@ export default function PortfolioDetail() {
   }, [id]);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getProductCapabilities();
+        if (!cancelled) {
+          setCapabilities(result);
+          setCapabilityError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCapabilities(normalizeProductCapabilities(null, true));
+          setCapabilityError(error instanceof Error ? error.message : "Capability discovery failed");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     if (!id || !acc) return;
     let cancelled = false;
     (async () => {
@@ -245,8 +307,19 @@ export default function PortfolioDetail() {
       setVenueWallets(null);
       setVenueWalletLoading(true);
       try {
-        const summary = await getPortfolioPortfolioSnapshot(id);
-        if (!cancelled) setVenueWallets(summary);
+        const initial = await getPortfolioPortfolioSnapshot(id);
+        if (!cancelled) setVenueWallets(initial);
+        try {
+          const requiredSymbols = await requiredSpotSymbolsForSnapshot(initial);
+          if (requiredSymbols.length > 0) {
+            const valued = await getPortfolioPortfolioSnapshot(id, requiredSymbols);
+            if (!cancelled) setVenueWallets(valued);
+          }
+        } catch (valuationError) {
+          if (!cancelled) {
+            setVenueWalletErr(`Spot valuation unavailable: ${valuationError instanceof Error ? valuationError.message : "metadata lookup failed"}`);
+          }
+        }
       } catch (e) {
         if (!cancelled) setVenueWalletErr(e instanceof Error ? e.message : "Venue wallet load failed");
       } finally {
@@ -319,12 +392,14 @@ export default function PortfolioDetail() {
               initialRuntimeId={initialRuntimeId}
               initialStrategyId={initialStrategyId}
               returnTo={returnTo}
+              capabilities={capabilities}
+              capabilityError={capabilityError}
               onSessionsChanged={bumpSessionRefreshTick}
             />
           ) : null}
 
           {activeTab === "debug" ? (
-            <LocalDebugPackagePanel portfolio={acc} wallet={portfolioWallet} />
+            <LocalDebugPackagePanel portfolio={acc} capabilities={capabilities} capabilityError={capabilityError} />
           ) : null}
 
           {activeTab === "sessions" ? (
@@ -428,6 +503,7 @@ function PortfolioVenuePortfolio({ portfolio, summary }: { portfolio: Portfolio;
                 <th>Venue</th>
                 <th>Route</th>
                 <th>Total value</th>
+                <th>Spot assets</th>
                 <th>Futures wallet</th>
                 <th>Available</th>
                 <th>Status</th>
@@ -448,6 +524,19 @@ function PortfolioVenuePortfolio({ portfolio, summary }: { portfolio: Portfolio;
                       <div className="muted">{venueRouteLabel(venue.environment_label, venue.environment)}</div>
                     </td>
                     <td>{wallet ? formatUSDT(walletDisplayTotal(wallet)) : "-"}</td>
+                    <td>
+                      {wallet?.spot?.assets.length ? (
+                        <div style={{ display: "grid", gap: "0.2rem" }}>
+                          {wallet.spot.assets.map((asset) => (
+                            <div key={asset.asset} style={{ whiteSpace: "nowrap" }}>
+                              <strong>{asset.asset}</strong>{" "}
+                              <span className="muted">free {asset.free} · locked {asset.locked}</span>
+                              {asset.price ? <span className="muted"> · price {asset.price}</span> : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : "-"}
+                    </td>
                     <td>{wallet ? formatUSDT(wallet.futures?.wallet_balance) : "-"}</td>
                     <td>{wallet ? formatUSDT(wallet.futures?.available_balance) : "-"}</td>
                     <td>
@@ -856,8 +945,16 @@ function LiveStartReadinessHint({
                 {" — "}
               </>
             ) : null}
-            <span style={{ opacity: 0.75 }}>[{f.kind}]</span>{" "}
+            {f.code ? <code>{f.code}</code> : <span style={{ opacity: 0.75 }}>[{f.kind}]</span>}{" "}
             {f.reason}
+            <div style={{ fontSize: "0.78rem" }}>
+              route {f.route || `${f.exchange_label || f.exchange || "-"}/${f.market_label || f.market || "-"}/${f.symbol || "-"}`}
+              {` · environment ${f.environment}`}
+              {` · source ${f.source || "-"}`}
+              {` · retryable ${String(f.retryable)}`}
+              {f.filter_type ? ` · filter ${f.filter_type}` : ""}
+              {f.venue_id ? ` · venue ${f.venue_id}` : ""}
+            </div>
           </li>
         ))}
       </ul>
@@ -898,7 +995,7 @@ function BacktestCoverageGate({
 
   async function loadSampleData(key: StreamKey) {
     if (!startTimeMs || !endTimeMs) return;
-    const id = `${key.exchange}-${key.market}-${key.symbol}-${key.interval}`;
+    const id = strategyStreamKey(key);
     setSampleKey(id);
     setSampleLoading(true);
     setSampleError(null);
@@ -974,7 +1071,7 @@ function BacktestCoverageGate({
               </thead>
               <tbody>
                 {preview.inputs.map((input) => {
-                  const id = `${input.key.exchange}-${input.key.market}-${input.key.symbol}-${input.key.interval}`;
+                  const id = strategyStreamKey(input.key);
                   return (
                     <tr key={id}>
                       <td>
@@ -1149,28 +1246,51 @@ function downloadSafeName(value: string): string {
 
 function LocalDebugPackagePanel({
   portfolio,
-  wallet,
+  capabilities,
+  capabilityError,
 }: {
   portfolio: Portfolio;
-  wallet: WalletSnapshot | null;
+  capabilities: ProductCapabilities;
+  capabilityError: string | null;
 }) {
-  const defaultSymbol = localDebugDefaultSymbol(wallet);
-  const [symbol, setSymbol] = useState(defaultSymbol);
-  const [symbolTouched, setSymbolTouched] = useState(false);
-  const [interval, setInterval] = useState("1m");
+  const [activeStrategy, setActiveStrategy] = useState<PortfolioStrategy | null>(null);
+  const [runtimeId, setRuntimeId] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const initialBalance = localDebugInitialBalance(wallet);
-  const initialBalanceDisplay = `${formatLocalDebugBalance(initialBalance)} USDT`;
+  const declaresSpot = strategyDeclaresSpot(activeStrategy?.strategy.code);
+  const offlineSpotCapability = capabilities.states.offline_spot_usdt;
+  const spotOfflineBlocked = declaresSpot && (capabilities.discovery_failed || !offlineSpotCapability.effective);
+  const spotOfflineCode = capabilities.discovery_failed
+    ? "SPOT_CAPABILITY_DISCOVERY_UNAVAILABLE"
+    : "SPOT_CAPABILITY_DISABLED";
+  const spotOfflineReason = capabilities.discovery_failed
+    ? "Spot capability discovery failed; offline Spot package export is disabled."
+    : offlineSpotCapability.reason || "Offline Spot package export is disabled.";
 
   useEffect(() => {
-    if (!symbolTouched) {
-      setSymbol(defaultSymbol);
-    }
-  }, [defaultSymbol, symbolTouched]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const items = await listPortfolioStrategies(portfolio.portfolio_id);
+        const active = items.find((item) => item.active) ?? null;
+        if (!active) {
+          if (!cancelled) setActiveStrategy(null);
+          return;
+        }
+        const detail = await getStrategy(active.strategy.strategy_id);
+        if (!cancelled) setActiveStrategy({ ...active, strategy: detail });
+      } catch (loadError) {
+        if (!cancelled) {
+          setActiveStrategy(null);
+          setError(loadError instanceof Error ? loadError.message : "Load active strategy failed");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [portfolio.portfolio_id]);
 
   async function handleGenerateDebugPackage() {
     const startTimeMs = parseDateTimeLocalMs(startTime);
@@ -1179,12 +1299,16 @@ function LocalDebugPackagePanel({
       setError("Select a valid start and end time.");
       return;
     }
-    if (!symbol.trim()) {
-      setError("Symbol is required.");
+    if (!activeStrategy) {
+      setError("Activate a strategy before generating a debug package.");
       return;
     }
-    if (!Number.isFinite(initialBalance) || initialBalance <= 0) {
-      setError("Initial balance must be greater than zero.");
+    if (!runtimeId) {
+      setError("Select a debugger runtime.");
+      return;
+    }
+    if (spotOfflineBlocked) {
+      setError(`${spotOfflineCode}: ${spotOfflineReason}`);
       return;
     }
 
@@ -1192,16 +1316,14 @@ function LocalDebugPackagePanel({
     setError(null);
     setNotice(null);
     try {
-      const blob = await downloadDebugPackage(portfolio.portfolio_id, {
-        market: "perpetual_futures",
-        symbol: symbol.trim().toUpperCase(),
-        interval: interval.trim() || "1m",
-        start_time_ms: startTimeMs,
-        end_time_ms: endTimeMs,
-        wallet_source: "portfolio_snapshot",
-        initial_balance: initialBalance,
-      });
-      const filename = `debug-package-${downloadSafeName(portfolio.name)}-${symbol.trim().toUpperCase()}-${interval.trim() || "1m"}.zip`;
+      const body = buildDebugPackageRequest(
+        activeStrategy.strategy.strategy_id,
+        runtimeId,
+        startTimeMs,
+        endTimeMs,
+      );
+      const blob = await downloadDebugPackage(portfolio.portfolio_id, body);
+      const filename = `debug-package-${downloadSafeName(portfolio.name)}-strategy-${activeStrategy.strategy.strategy_id}.zip`;
       downloadBlob(blob, filename);
       setNotice("Debug package generated. Import it in the local strategy debugger workspace.");
     } catch (err) {
@@ -1217,35 +1339,22 @@ function LocalDebugPackagePanel({
       <div className="card">
         <p className="muted" style={{ marginTop: 0 }}>
           Generate an offline package for the local strategy debugger CLI. The package contains
-          historical futures bars, a wallet snapshot, and a strategy template; it does not require a
-          platform-connected debugger runtime.
+          every declared strategy input (Spot and/or Futures), the authoritative Venue wallet and risk
+          facts, and the exact active strategy source. Routes cannot be overridden from this form.
+        </p>
+        <p>
+          Active strategy: {activeStrategy
+            ? <><strong>{activeStrategy.strategy.name}</strong> v{activeStrategy.strategy.version} · #{activeStrategy.strategy.strategy_id}</>
+            : <span className="error">None</span>}
         </p>
         <FilterPanel>
-          <SymbolPicker
-            market="usdm_futures"
-            label="Symbol"
-            onAdd={(value) => {
-              setSymbol(value);
-              setSymbolTouched(true);
-            }}
-            selected={symbol}
-            className="filter-field"
+          <RuntimeSelector
+            value={runtimeId}
+            onChange={(value) => setRuntimeId(value)}
+            environment={0}
+            role="debugger"
+            label="Debugger runtime"
           />
-          <FilterField label="Interval">
-            <select value={interval} onChange={(e) => setInterval(e.target.value)}>
-              {LOCAL_DEBUG_INTERVALS.map((value) => (
-                <option key={value} value={value}>{value}</option>
-              ))}
-            </select>
-          </FilterField>
-          <FilterField label="Initial balance">
-            <input
-              type="text"
-              value={initialBalanceDisplay}
-              disabled
-              title="Loaded from the current portfolio wallet snapshot"
-            />
-          </FilterField>
           <DateTimeRangePicker
             label="Time range"
             startValue={startTime}
@@ -1259,12 +1368,19 @@ function LocalDebugPackagePanel({
               type="button"
               className="primary"
               onClick={() => { void handleGenerateDebugPackage(); }}
-              disabled={downloading || !startTime || !endTime || !symbol.trim()}
+              disabled={downloading || !startTime || !endTime || !runtimeId || !activeStrategy || spotOfflineBlocked}
             >
               {downloading ? "Generating..." : "Generate Debug Package"}
             </button>
           </div>
         </FilterPanel>
+
+        {spotOfflineBlocked ? (
+          <p className="error" style={{ marginTop: "0.75rem" }}>
+            <code>{spotOfflineCode}</code>: {spotOfflineReason}
+            {capabilityError ? ` Discovery error: ${capabilityError}` : ""}
+          </p>
+        ) : null}
 
         {error ? <p className="error" style={{ marginTop: "0.75rem" }}>{error}</p> : null}
         {notice ? <p className="muted" style={{ marginTop: "0.75rem" }}>{notice}</p> : null}
@@ -1300,6 +1416,8 @@ function StrategyPanel({
   initialRuntimeId = "",
   initialStrategyId = "",
   returnTo,
+  capabilities,
+  capabilityError,
   onSessionsChanged,
 }: {
   portfolioId: number;
@@ -1307,6 +1425,8 @@ function StrategyPanel({
   initialRuntimeId?: string;
   initialStrategyId?: string;
   returnTo?: string | null;
+  capabilities: ProductCapabilities;
+  capabilityError: string | null;
   onSessionsChanged: () => void;
 }) {
   // Interval is no longer user-selectable: the strategy's declared INPUTS
@@ -1348,15 +1468,61 @@ function StrategyPanel({
   const [demoPreview, setDemoPreview] = useState<PreviewRunStrategy | null>(null);
   const [demoPreviewLoading, setDemoPreviewLoading] = useState(false);
   const [demoPreviewError, setDemoPreviewError] = useState<string | null>(null);
+  const [activeRunDeclaredTargets, setActiveRunDeclaredTargets] = useState<StrategyOrderTargetDeclaration[]>([]);
 
   // Portfolio strategies (mounting panel)
   const [portfolioStrats, setPortfolioStrats] = useState<PortfolioStrategy[]>([]);
+  const [activeStrategyCode, setActiveStrategyCode] = useState<string | undefined>(undefined);
+  const [activeStrategyContextLoading, setActiveStrategyContextLoading] = useState(false);
+  const [activeStrategyContextError, setActiveStrategyContextError] = useState<string | null>(null);
   const [mountErr, setMountErr] = useState<string | null>(null);
   const [selectedMountId, setSelectedMountId] = useState<number | "">("");
+  const activeStrat = portfolioStrats.find((item) => item.active);
+  const mountedIds = new Set(portfolioStrats.map((item) => item.strategy.strategy_id));
   const maxLossClosePct = parseMaxLossClosePct(maxLossClosePercent);
   const sessionLeverage = parseSessionLeverage(sessionLeverageText);
+  const sourceDeclaredInputs = extractStrategyInputs(activeStrategyCode ?? activeStrat?.strategy.code);
+  const sourceDeclaredTargets = extractStrategyOrderTargets(activeStrategyCode ?? activeStrat?.strategy.code);
+  const activeStrategyDeclaresSpot = [...sourceDeclaredInputs, ...sourceDeclaredTargets]
+    .some((declaration) => declaration.market.trim().toLowerCase() === "spot");
+  const sourceDeclarationPreview: PreviewRunStrategy | null = activeStrat
+    ? {
+        profile: environment === 0 ? "backtest" : environment === 1 ? "demo" : environment === 2 ? "live" : "unknown",
+        supported: true,
+        ok: true,
+        failures: [],
+        required_streams: [],
+        declared_inputs: sourceDeclaredInputs,
+        declared_order_targets: sourceDeclaredTargets,
+      }
+    : null;
+  const coverageSpotPreview: PreviewRunStrategy | null = coveragePreview
+    ? {
+        profile: "backtest",
+        supported: true,
+        ok: coveragePreview.complete,
+        failures: [],
+        required_streams: coveragePreview.inputs.map((input) => input.key),
+        declared_inputs: sourceDeclaredInputs,
+        declared_order_targets: sourceDeclaredTargets,
+      }
+    : null;
+  const selectedCapabilityPreview = pendingStart?.kind === "demo"
+    ? demoPreview ?? sourceDeclarationPreview
+    : pendingStart?.kind === "backtest"
+      ? coverageSpotPreview ?? sourceDeclarationPreview
+      : sourceDeclarationPreview;
+  const runCapabilityDecision = strategySpotCapabilityDecision(
+    selectedCapabilityPreview,
+    environment,
+    "run",
+    capabilities,
+  );
+  const activeStrategyDeclaredTargets = activeRunDeclaredTargets.length > 0
+    ? activeRunDeclaredTargets
+    : sourceDeclaredTargets;
   const demoStartPreflightReady = pendingStart?.kind !== "demo" || (
-    Boolean(demoPreview?.ok) && !demoPreviewLoading && !demoPreviewError
+    Boolean(demoPreview?.ok) && !demoPreviewLoading && !demoPreviewError && runCapabilityDecision.enabled
   );
   const activeSessionInRunPanel = Boolean(activePollSession && isRunPanelActiveStatus(activePollSession.statusLabel));
 
@@ -1372,6 +1538,32 @@ function StrategyPanel({
   useEffect(() => {
     loadPortfolioStrats();
   }, [portfolioId]);
+
+  useEffect(() => {
+    const strategyID = activeStrat?.strategy.strategy_id;
+    setActiveStrategyCode(undefined);
+    setActiveStrategyContextLoading(Boolean(strategyID));
+    setActiveStrategyContextError(null);
+    if (!strategyID) return;
+    let cancelled = false;
+    getStrategy(strategyID)
+      .then((strategy) => {
+        if (!cancelled) setActiveStrategyCode(strategy.code);
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setActiveStrategyContextError(loadError instanceof Error ? loadError.message : "Load active strategy declarations failed");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setActiveStrategyContextLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeStrat?.strategy.strategy_id]);
+
+  useEffect(() => {
+    setActiveRunDeclaredTargets([]);
+  }, [activeStrat?.strategy.strategy_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1447,6 +1639,7 @@ function StrategyPanel({
         });
         if (!cancelled) {
           setDemoPreview(preview);
+          setActiveRunDeclaredTargets(previewOrderTargets(preview));
           setDemoPreviewError(null);
         }
       } catch (err) {
@@ -1596,6 +1789,10 @@ function StrategyPanel({
     params: { interval: string; startTimeMs?: number; endTimeMs?: number },
     runtimeId: string,
   ) {
+    if (!runCapabilityDecision.enabled) {
+      setError(`${runCapabilityDecision.code}: ${runCapabilityDecision.reason}`);
+      return;
+    }
     if (maxLossClosePct === null) {
       setError("Max loss close must be greater than 0 and no more than 100%.");
       return;
@@ -1737,6 +1934,10 @@ function StrategyPanel({
 
   async function handleConfirmStart() {
     if (!pendingStart) return;
+    if (!runCapabilityDecision.enabled) {
+      setError(`${runCapabilityDecision.code}: ${runCapabilityDecision.reason}`);
+      return;
+    }
     if (maxLossClosePct === null) {
       setError("Max loss close must be greater than 0 and no more than 100%.");
       return;
@@ -1837,9 +2038,6 @@ function StrategyPanel({
     }
   }
 
-  const activeStrat = portfolioStrats.find((s) => s.active);
-  const mountedIds = new Set(portfolioStrats.map((s) => s.strategy.strategy_id));
-
   return (
     <>
       <h2 className="section-title">Strategy</h2>
@@ -1899,6 +2097,11 @@ function StrategyPanel({
           ))
         )}
         {mountErr ? <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{mountErr}</p> : null}
+        {activeStrategyContextError ? (
+          <p className="error" style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
+            Strategy declaration preview unavailable: {activeStrategyContextError}. Server preflight remains authoritative.
+          </p>
+        ) : null}
 
         <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
             <AsyncSelect<Strategy>
@@ -1993,6 +2196,12 @@ function StrategyPanel({
             Active: <strong>{activeStrat.strategy.name} v{activeStrat.strategy.version}</strong>
           </p>
         )}
+        {activeStrat && !runCapabilityDecision.enabled ? (
+          <p className="error" style={{ marginTop: "0.5rem" }}>
+            <code>{runCapabilityDecision.code}</code>: {runCapabilityDecision.reason}
+            {capabilityError ? ` Capability discovery: ${capabilityError}` : ""}
+          </p>
+        ) : null}
         <form onSubmit={handleSubmit}>
           <p className="muted" style={{ fontSize: "0.8rem", marginTop: 0, marginBottom: "0.75rem" }}>
             Intervals are read from the active strategy's declared <code>INPUTS</code> —
@@ -2024,7 +2233,7 @@ function StrategyPanel({
           {error ? <p className="error" style={{ marginTop: "0.5rem" }}>{error}</p> : null}
 
           <p style={{ marginTop: "0.75rem" }}>
-            <button type="submit" className="primary" disabled={running || activeSessionInRunPanel || !startTime || !endTime || !startRuntimeId || !activeStrat}>
+            <button type="submit" className="primary" disabled={running || activeSessionInRunPanel || !startTime || !endTime || !startRuntimeId || !activeStrat || !runCapabilityDecision.enabled}>
               {running ? "Starting…" : activeSessionInRunPanel ? "Session running" : "Run backtest"}
             </button>
           </p>
@@ -2042,6 +2251,13 @@ function StrategyPanel({
             Active: <strong>{activeStrat.strategy.name} v{activeStrat.strategy.version}</strong>
           </p>
         )}
+
+        {activeStrat && !runCapabilityDecision.enabled ? (
+          <p className="error" style={{ marginTop: "0.5rem" }}>
+            <code>{runCapabilityDecision.code}</code>: {runCapabilityDecision.reason}
+            {capabilityError ? ` Capability discovery: ${capabilityError}` : ""}
+          </p>
+        ) : null}
 
         <p className="muted" style={{ fontSize: "0.85rem", marginTop: 0 }}>
           This starts a demo session using the active strategy's
@@ -2065,7 +2281,7 @@ function StrategyPanel({
           <button
             type="button"
             className="primary"
-            disabled={running || activeSessionInRunPanel || !activeStrat || !startRuntimeId}
+            disabled={running || activeSessionInRunPanel || !activeStrat || !startRuntimeId || !runCapabilityDecision.enabled}
             onClick={() => { void handleLiveStart(); }}
           >
             {running ? "Starting…" : activeSessionInRunPanel ? "Session running" : "Start Demo Session"}
@@ -2074,11 +2290,41 @@ function StrategyPanel({
       </div>
       ) : null}
 
+      {environment === 2 ? (
+        <div className="card">
+          <p style={{ fontWeight: 600, marginTop: 0 }}>Live strategy start</p>
+          {activeStrategyDeclaresSpot ? (
+            <p className="error" style={{ marginBottom: "0.75rem" }}>
+              <code>SPOT_LIVE_ROLLOUT_GUARD</code>: Live Spot remains rollout-guarded. Existing Session history
+              and stop/drain controls remain available.
+            </p>
+          ) : (
+            <p className="muted" style={{ marginBottom: "0.75rem" }}>
+              Live start is not exposed by the current runtime profile. Existing Session history and stop/drain controls remain available.
+            </p>
+          )}
+          <button type="button" className="primary" disabled>
+            Start Live Session
+          </button>
+        </div>
+      ) : null}
+
       <StopSessionDialog
         open={stopDialogOpen}
         sessionId={activePollSession?.sessionId}
         busy={stopping}
         error={stopError}
+        declaredTargets={activeStrategyDeclaredTargets}
+        stopAndCloseDisabled={activeRunDeclaredTargets.length === 0 && (!activeStrat || activeStrategyContextLoading || Boolean(activeStrategyContextError))}
+        stopAndCloseDisabledReason={activeRunDeclaredTargets.length > 0
+          ? null
+          : !activeStrat
+            ? "Stop-and-close is unavailable because the running Session's strategy declarations could not be identified. Stop-only remains available."
+            : activeStrategyContextLoading
+            ? "Loading declared order targets before stop-and-close can be selected."
+            : activeStrategyContextError
+              ? "Stop-and-close is unavailable because the strategy declarations could not be verified. Stop-only remains available."
+              : null}
         onCancel={() => {
           if (stopping) return;
           setStopDialogOpen(false);
@@ -2103,6 +2349,7 @@ function StrategyPanel({
         confirmDisabled={
           maxLossClosePct === null ||
           sessionLeverage === null ||
+          !runCapabilityDecision.enabled ||
           (pendingStart?.kind === "demo" && !demoStartPreflightReady) ||
           (pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error")))
         }
@@ -2171,7 +2418,14 @@ function StrategyPanel({
             onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
           />
         ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null && sessionLeverage !== null ? (
-          <LiveStartReadinessHint preview={demoPreview} loading={demoPreviewLoading} error={demoPreviewError} />
+          <>
+            {!runCapabilityDecision.enabled ? (
+              <p className="error">
+                <code>{runCapabilityDecision.code}</code>: {runCapabilityDecision.reason}
+              </p>
+            ) : null}
+            <LiveStartReadinessHint preview={demoPreview} loading={demoPreviewLoading} error={demoPreviewError} />
+          </>
         ) : null}
       </RuntimeSelectionDialog>
     </>
@@ -2189,6 +2443,10 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
   const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const [finishingSessionId, setFinishingSessionId] = useState<string | null>(null);
   const [stopDialogSessionId, setStopDialogSessionId] = useState<string | null>(null);
+  const [stopDialogTargets, setStopDialogTargets] = useState<StrategyOrderTargetDeclaration[]>([]);
+  const [stopDialogTargetsLoading, setStopDialogTargetsLoading] = useState(false);
+  const [stopDialogTargetsUnavailable, setStopDialogTargetsUnavailable] = useState(false);
+  const stopTargetRequestRef = useRef(0);
   const [resumeDialogSession, setResumeDialogSession] = useState<Session | null>(null);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
   const [resumeMaxLossClosePercent, setResumeMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
@@ -2224,7 +2482,9 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
         setStopError("Session is not running or has already been stopped.");
         return;
       }
+      stopTargetRequestRef.current += 1;
       setStopDialogSessionId(null);
+      setStopDialogTargets([]);
       setStopError(null);
       setTableRefresh((v) => v + 1);
     } catch (err) {
@@ -2243,7 +2503,9 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
         setStopError("Session stop-and-close was not accepted.");
         return;
       }
+      stopTargetRequestRef.current += 1;
       setStopDialogSessionId(null);
+      setStopDialogTargets([]);
       setTableRefresh((v) => v + 1);
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to stop and close session");
@@ -2308,6 +2570,32 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
     setResumeDialogSession(session);
   }
 
+  async function openStopDialogForSession(session: Session) {
+    const requestID = stopTargetRequestRef.current + 1;
+    stopTargetRequestRef.current = requestID;
+    setStopError(null);
+    setStopDialogTargets([]);
+    setStopDialogTargetsLoading(false);
+    setStopDialogTargetsUnavailable(false);
+    setStopDialogSessionId(session.session_id);
+    if (!session.strategy_id) {
+      setStopDialogTargetsUnavailable(true);
+      return;
+    }
+    setStopDialogTargetsLoading(true);
+    try {
+      const strategy = await getStrategy(session.strategy_id);
+      if (stopTargetRequestRef.current !== requestID) return;
+      setStopDialogTargets(extractStrategyOrderTargets(strategy.code));
+    } catch (err) {
+      if (stopTargetRequestRef.current !== requestID) return;
+      setStopDialogTargetsUnavailable(true);
+      setStopError(err instanceof Error ? err.message : "Failed to load declared order targets");
+    } finally {
+      if (stopTargetRequestRef.current === requestID) setStopDialogTargetsLoading(false);
+    }
+  }
+
   return (
     <>
     <h2 className="section-title">Sessions</h2>
@@ -2353,7 +2641,7 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
                     <button type="button" onClick={() => void handleFinishListedSession(s)} disabled={finishingSessionId === s.session_id || stoppingSessionId === s.session_id}>
                       {finishingSessionId === s.session_id ? "Finishing…" : "Finish"}
                     </button>
-                    <button type="button" onClick={() => setStopDialogSessionId(s.session_id)} disabled={stoppingSessionId === s.session_id || finishingSessionId === s.session_id}>
+                    <button type="button" onClick={() => { void openStopDialogForSession(s); }} disabled={stoppingSessionId === s.session_id || finishingSessionId === s.session_id}>
                       {stoppingSessionId === s.session_id ? "Stopping…" : "Stop"}
                     </button>
                   </>
@@ -2373,9 +2661,20 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       sessionId={stopDialogSessionId ?? undefined}
       busy={stoppingSessionId === stopDialogSessionId}
       error={stopError}
+      declaredTargets={stopDialogTargets}
+      stopAndCloseDisabled={stopDialogTargetsLoading || stopDialogTargetsUnavailable}
+      stopAndCloseDisabledReason={stopDialogTargetsLoading
+        ? "Loading declared order targets before stop-and-close can be selected."
+        : stopDialogTargetsUnavailable
+          ? "Stop-and-close is unavailable because the strategy declarations could not be verified. Stop-only remains available."
+          : null}
       onCancel={() => {
         if (stoppingSessionId === stopDialogSessionId) return;
+        stopTargetRequestRef.current += 1;
         setStopDialogSessionId(null);
+        setStopDialogTargets([]);
+        setStopDialogTargetsLoading(false);
+        setStopDialogTargetsUnavailable(false);
         setStopError(null);
       }}
       onStopOnly={() => {

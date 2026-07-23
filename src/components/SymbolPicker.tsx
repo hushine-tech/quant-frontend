@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { listSymbols } from "@/api/client";
+import { listSymbols, type SpotSymbolCatalogEntry } from "@/api/client";
 
 type Props = {
   market: "spot" | "usdm_futures";
   label: string;
-  onAdd: (symbol: string) => void;
+  onAdd: (symbol: string, entry?: SpotSymbolCatalogEntry, stale?: boolean) => void;
   disabled?: boolean;
   /** Extra symbols always shown at the top (e.g. TESTUSDT for testing). */
   extraSymbols?: string[];
@@ -25,6 +25,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   const singleSelect = selected !== undefined;
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<string[]>([]);
+  const [entries, setEntries] = useState<SpotSymbolCatalogEntry[]>([]);
   const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   useEffect(() => {
     if (disabled) {
       setHits([]);
+      setEntries([]);
       return;
     }
     let cancelled = false;
@@ -48,6 +50,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
           const r = await listSymbols(market, q);
           if (!cancelled) {
             setHits(r.symbols ?? []);
+            setEntries(r.entries ?? []);
             setStale(r.stale);
           }
         } catch (e) {
@@ -84,7 +87,8 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   }, [singleSelect, open]);
 
   function handlePick(s: string) {
-    onAdd(s);
+    const entry = entries.find((candidate) => candidate.symbol === s);
+    onAdd(s, entry, stale);
     if (singleSelect) {
       setOpen(false);
       setQ("");
@@ -154,7 +158,12 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
             <ul className="symbol-hits">
               {hits.map((s) => (
                 <li key={s}>
-                  <button type="button" disabled={disabled} onClick={() => handlePick(s)}>
+                  <button
+                    type="button"
+                    disabled={disabled || (market === "spot" && (stale || !entries.some((entry) => entry.symbol === s)))}
+                    title={market === "spot" && stale ? "Refresh symbol metadata before selecting this Spot symbol." : undefined}
+                    onClick={() => handlePick(s)}
+                  >
                     {singleSelect ? s : `+ ${s}`}
                   </button>
                 </li>

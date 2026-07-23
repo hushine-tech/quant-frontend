@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import Pager from "@/components/Pager";
-import type { Page } from "@/api/client";
+import { exactDecimalText, type Page } from "@/api/client";
 
 // Row shapes used by the tree. Both the global Order History page and the
 // Session Detail page have richer types (with portfolio_id / session_id); those
@@ -19,6 +19,8 @@ export type TreeIntent = {
   side: string;
   requested_qty: number;
   requested_price: number;
+  requested_qty_decimal?: string;
+  requested_price_decimal?: string;
   venue_id?: number;
   exchange?: number | string;
   exchange_label?: string;
@@ -43,6 +45,11 @@ export type TreeAttempt = {
   attempt_id: string;
   status: string;
   mark_price: number;
+  requested_qty?: number;
+  requested_price?: number;
+  requested_qty_decimal?: string;
+  requested_price_decimal?: string;
+  mark_price_decimal?: string;
   venue_id?: number;
   exchange?: number | string;
   exchange_label?: string;
@@ -64,7 +71,15 @@ export type TreeOrder = {
   status: string;
   executed_qty: number;
   orig_qty: number;
+  remaining_qty?: number;
   avg_price: number;
+  price?: number;
+  orig_qty_decimal?: string;
+  executed_qty_decimal?: string;
+  remaining_qty_decimal?: string;
+  avg_price_decimal?: string;
+  price_decimal?: string;
+  cumulative_quote_qty_decimal?: string;
   venue_id?: number;
   exchange?: number | string;
   exchange_label?: string;
@@ -88,6 +103,11 @@ export type TreeFill = {
   qty: number;
   fill_price: number;
   fee: number;
+  qty_decimal?: string;
+  fill_price_decimal?: string;
+  fee_decimal?: string;
+  quote_qty_decimal?: string;
+  fee_asset?: string;
   status: string;
   venue_id?: number;
   exchange?: number | string;
@@ -429,9 +449,9 @@ function IntentRow<
           {intent.intent_id}
         </span>
         <span><strong>{intent.symbol}</strong> {intent.side}</span>
-        <span className="muted">qty {intent.requested_qty}</span>
+        <span className="muted">qty {exactDecimalText(intent.requested_qty_decimal, intent.requested_qty)}</span>
         <span className="muted">
-          req px {intent.requested_price > 0 ? intent.requested_price.toFixed(2) : "—"}
+          req px {exactDecimalText(intent.requested_price_decimal, intent.requested_price)}
         </span>
         <OrderSemanticBadges item={intent} />
         <span className="muted">{routeFactText(intent)}</span>
@@ -583,8 +603,13 @@ function AttemptRow<
           </span>
         ) : null}
         <span className="muted">
-          mark {attempt.mark_price > 0 ? attempt.mark_price.toFixed(2) : "—"}
+          mark {exactDecimalText(attempt.mark_price_decimal, attempt.mark_price)}
         </span>
+        {attempt.requested_qty_decimal || attempt.requested_price_decimal ? (
+          <span className="muted">
+            requested {exactDecimalText(attempt.requested_qty_decimal, attempt.requested_qty)} @ {exactDecimalText(attempt.requested_price_decimal, attempt.requested_price)}
+          </span>
+        ) : null}
         <span className="muted">{routeFactText(attempt)}</span>
         {failureReason ? (
           <span
@@ -701,10 +726,13 @@ function OrderRow<
           </span>
         ) : null}
         <span className="muted">
-          {order.executed_qty} / {order.orig_qty}
+          {exactDecimalText(order.executed_qty_decimal, order.executed_qty)} / {exactDecimalText(order.orig_qty_decimal, order.orig_qty)}
         </span>
         <span className="muted">
-          avg {order.avg_price > 0 ? order.avg_price.toFixed(2) : "—"}
+          remain {exactDecimalText(order.remaining_qty_decimal, order.remaining_qty)}
+          {" · "}avg {exactDecimalText(order.avg_price_decimal, order.avg_price)}
+          {" · "}price {exactDecimalText(order.price_decimal, order.price)}
+          {order.cumulative_quote_qty_decimal ? ` · quote ${order.cumulative_quote_qty_decimal}` : ""}
         </span>
         <span className="muted">{routeFactText(order)}</span>
         <span className="muted" style={{ marginLeft: "auto", fontSize: "0.8rem" }}>
@@ -769,6 +797,7 @@ function OrderFills<F extends TreeFill>({
                 <th>Fill</th>
                 <th>Qty</th>
                 <th>Fill Price</th>
+                <th>Quote Qty</th>
                 <th>Fee</th>
                 <th>Route</th>
                 <th>Status</th>
@@ -779,9 +808,10 @@ function OrderFills<F extends TreeFill>({
                 <tr key={f.fill_id}>
                   <td style={{ whiteSpace: "nowrap" }}>{formatUTCWithLocal(f.time)}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{f.fill_id}</td>
-                  <td>{f.qty}</td>
-                  <td>{f.fill_price.toFixed(2)}</td>
-                  <td>{f.fee.toFixed(4)}</td>
+                  <td>{exactDecimalText(f.qty_decimal, f.qty)}</td>
+                  <td>{exactDecimalText(f.fill_price_decimal, f.fill_price)}</td>
+                  <td>{exactDecimalText(f.quote_qty_decimal, undefined)}</td>
+                  <td>{exactDecimalText(f.fee_decimal, f.fee)} {f.fee_asset || "-"}</td>
                   <td>{routeFactText(f)}</td>
                   <td><span className={orderBadgeClass(f.status)}>{f.status}</span></td>
                 </tr>

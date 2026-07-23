@@ -47,6 +47,95 @@ export type WalletDisplay = {
   } | null;
 };
 
+export type SpotAsset = {
+  asset: string;
+  free: string;
+  locked: string;
+  avg_entry_price?: string;
+  price?: string;
+};
+
+export type SpotSymbolCatalogEntry = {
+  symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  status: string;
+  spot_trading_allowed: boolean;
+};
+
+export type SpotSymbolFilter = {
+  filter_type: string;
+  min_price?: string;
+  max_price?: string;
+  tick_size?: string;
+  min_qty?: string;
+  max_qty?: string;
+  step_size?: string;
+  min_notional?: string;
+  max_notional?: string;
+  apply_to_market: boolean;
+  apply_min_to_market: boolean;
+  apply_max_to_market: boolean;
+  avg_price_mins?: number;
+  limit?: number;
+  multiplier_up?: string;
+  multiplier_down?: string;
+  bid_multiplier_up?: string;
+  bid_multiplier_down?: string;
+  ask_multiplier_up?: string;
+  ask_multiplier_down?: string;
+  raw_json?: string;
+  max_position?: string;
+  max_num_orders?: number;
+  max_num_algo_orders?: number;
+  max_num_iceberg_orders?: number;
+  max_num_order_amends?: number;
+  max_num_order_lists?: number;
+};
+
+export type SpotSymbolMetadata = SpotSymbolCatalogEntry & {
+  base_asset_precision: number;
+  quote_asset_precision: number;
+  permission_sets: Array<{ alternatives: string[] }>;
+  order_types: string[];
+  filters: SpotSymbolFilter[];
+  snapshot_time_ms: number;
+};
+
+export function defaultSpotWalletAssets(): SpotAsset[] {
+  return [{ asset: "USDT", free: "0", locked: "0" }];
+}
+
+export function canonicalSpotWalletAsset(metadata: SpotSymbolCatalogEntry, stale: boolean): SpotAsset | null {
+  const symbol = metadata.symbol.trim().toUpperCase();
+  const baseAsset = metadata.base_asset.trim().toUpperCase();
+  const quoteAsset = metadata.quote_asset.trim().toUpperCase();
+  if (
+    stale
+    || !symbol
+    || !baseAsset
+    || baseAsset === "USDT"
+    || quoteAsset !== "USDT"
+    || metadata.status.trim().toUpperCase() !== "TRADING"
+    || !metadata.spot_trading_allowed
+  ) {
+    return null;
+  }
+  return { asset: baseAsset, free: "0", locked: "0", avg_entry_price: "0" };
+}
+
+export function appendCanonicalSpotAsset(
+  assets: SpotAsset[],
+  metadata: SpotSymbolCatalogEntry,
+  stale: boolean,
+): SpotAsset[] {
+  const candidate = canonicalSpotWalletAsset(metadata, stale);
+  if (!candidate || assets.some((asset) => asset.asset.trim().toUpperCase() === candidate.asset)) {
+    return assets;
+  }
+  return [...assets, candidate];
+}
+
 export type WalletSnapshot = {
   // ── canonical (authoritative) ─────────────────────────────────────────
   environment: number;
@@ -55,17 +144,7 @@ export type WalletSnapshot = {
   margin_balance: number;
   total_margin_balance: number;
   available_balance: number;
-  spot: {
-    free: number;
-    locked: number;
-    assets: Array<{
-      symbol: string;
-      qty: number;
-      locked: number;
-      avg_entry_price: number;
-      price?: number;
-    }>;
-  } | null;
+  spot: { assets: SpotAsset[] } | null;
   futures: {
     margin_mode: string;
     position_mode: string;
@@ -188,6 +267,7 @@ export type VenuePortfolioSnapshot = {
     margin_balance: number;
     liquidation_price: number;
   }>;
+  spot_symbols: SpotSymbolMetadata[];
 };
 
 export type CreateVenuePayload = {
@@ -203,15 +283,7 @@ export type CreateVenuePayload = {
   position_mode?: "one_way" | "hedge" | "none";
   initial_balance?: number;
   spot?: {
-    free: number;
-    locked?: number;
-    assets?: Array<{
-      symbol: string;
-      qty: number;
-      locked?: number;
-      avg_entry_price: number;
-      price?: number;
-    }>;
+    assets: SpotAsset[];
   };
   futures?: {
     margin_mode: "cross" | "isolated";
@@ -226,6 +298,71 @@ export type CreateVenuePayload = {
     }>;
   };
 };
+
+export const PRODUCT_CAPABILITY_NAMES = [
+  "backtest_spot_usdt",
+  "demo_spot_usdt",
+  "offline_spot_usdt",
+  "live_spot_usdt",
+] as const;
+
+export type ProductCapabilityName = (typeof PRODUCT_CAPABILITY_NAMES)[number];
+
+export type ProductCapabilityState = {
+  name: ProductCapabilityName;
+  configured: boolean;
+  effective: boolean;
+  reason: string;
+};
+
+export type ProductCapabilities = {
+  states: Record<ProductCapabilityName, ProductCapabilityState>;
+  discovery_failed: boolean;
+};
+
+export function normalizeProductCapabilities(
+  values: Array<{ name: string; configured: boolean; effective: boolean; reason?: string }> | null,
+  discoveryFailed = false,
+): ProductCapabilities {
+  const states = Object.fromEntries(PRODUCT_CAPABILITY_NAMES.map((name) => [name, {
+    name,
+    configured: false,
+    effective: false,
+    reason: discoveryFailed ? "SPOT_CAPABILITY_DISCOVERY_UNAVAILABLE" : "SPOT_CAPABILITY_DISABLED",
+  }])) as Record<ProductCapabilityName, ProductCapabilityState>;
+  if (values) {
+    for (const value of values) {
+      if (!PRODUCT_CAPABILITY_NAMES.includes(value.name as ProductCapabilityName)) continue;
+      const name = value.name as ProductCapabilityName;
+      states[name] = {
+        name,
+        configured: value.configured === true,
+        effective: value.effective === true,
+        reason: typeof value.reason === "string" ? value.reason : "",
+      };
+    }
+  }
+  return { states, discovery_failed: discoveryFailed };
+}
+
+export function exactDecimalText(exact: string | null | undefined, legacy: number | null | undefined): string {
+  if (typeof exact === "string" && exact.trim() !== "") return exact;
+  return typeof legacy === "number" && Number.isFinite(legacy) ? String(legacy) : "-";
+}
+
+export function strategyStreamKey(value: {
+  exchange?: string;
+  market?: string;
+  symbol?: string;
+  interval?: string;
+}): string {
+  return [
+    (value.exchange || "").trim().toLowerCase(),
+    (value.market || "").trim().toLowerCase(),
+    (value.symbol || "").trim().toUpperCase(),
+    (value.interval || "").trim(),
+  ].join(":");
+}
 
 function sameHostApiBase(): string {
   if (typeof window !== "undefined") {
@@ -357,15 +494,51 @@ export type StrategySourceValidationResponse = {
   runtime_profile: RuntimeDependencyProfile | null;
 };
 
+export type StructuredAPIErrorDetails = {
+  code?: string;
+  route?: string;
+  exchange?: number | string;
+  market?: number | string;
+  symbol?: string;
+  venue_id?: number;
+  filter_type?: string;
+  environment?: number;
+  retryable?: boolean;
+  source?: string;
+  failures?: Array<Record<string, unknown>>;
+};
+
 export class APIError extends Error {
   readonly status: number;
   readonly runtime_error?: RuntimeDependencyError;
+  readonly code?: string;
+  readonly route?: string;
+  readonly exchange?: number | string;
+  readonly market?: number | string;
+  readonly symbol?: string;
+  readonly venue_id?: number;
+  readonly filter_type?: string;
+  readonly environment?: number;
+  readonly retryable?: boolean;
+  readonly source?: string;
+  readonly failures?: Array<Record<string, unknown>>;
 
-  constructor(message: string, status: number, runtimeError?: RuntimeDependencyError) {
+  constructor(message: string, status: number, runtimeError?: RuntimeDependencyError, details: StructuredAPIErrorDetails = {}) {
     super(message);
     this.name = "APIError";
     this.status = status;
     this.runtime_error = runtimeError;
+    this.code = details.code;
+    this.route = details.route;
+    this.exchange = details.exchange;
+    this.market = details.market;
+    this.symbol = details.symbol;
+    this.venue_id = details.venue_id;
+    this.filter_type = details.filter_type;
+    this.environment = details.environment;
+    this.retryable = details.retryable;
+    this.source = details.source;
+    this.failures = details.failures;
   }
 }
 
@@ -439,11 +612,27 @@ async function parseErr(res: Response): Promise<APIError> {
   }
   let detail = res.statusText;
   let runtimeError: RuntimeDependencyError | undefined;
+  let structured: StructuredAPIErrorDetails = {};
   try {
     const raw = (await res.json()) as unknown;
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
       const body = raw as Record<string, unknown>;
       runtimeError = parseRuntimeDependencyError(body.runtime_error);
+      structured = {
+        code: typeof body.code === "string" ? body.code : undefined,
+        route: typeof body.route === "string" ? body.route : undefined,
+        exchange: typeof body.exchange === "number" || typeof body.exchange === "string" ? body.exchange : undefined,
+        market: typeof body.market === "number" || typeof body.market === "string" ? body.market : undefined,
+        symbol: typeof body.symbol === "string" ? body.symbol : undefined,
+        venue_id: typeof body.venue_id === "number" ? body.venue_id : undefined,
+        filter_type: typeof body.filter_type === "string" ? body.filter_type : undefined,
+        environment: typeof body.environment === "number" ? body.environment : undefined,
+        retryable: typeof body.retryable === "boolean" ? body.retryable : undefined,
+        source: typeof body.source === "string" ? body.source : undefined,
+        failures: Array.isArray(body.failures)
+          ? body.failures.filter((failure): failure is Record<string, unknown> => Boolean(failure) && typeof failure === "object" && !Array.isArray(failure))
+          : undefined,
+      };
       if (typeof body.error === "string" && body.error) {
         detail = body.error;
       } else if (runtimeError) {
@@ -457,9 +646,9 @@ async function parseErr(res: Response): Promise<APIError> {
     const message = detail
       ? `Session expired — please log in again. (${detail})`
       : "Session expired — please log in again.";
-    return new APIError(message, res.status, runtimeError);
+    return new APIError(message, res.status, runtimeError, structured);
   }
-  return new APIError(detail, res.status, runtimeError);
+  return new APIError(detail, res.status, runtimeError, structured);
 }
 
 export async function signup(username: string, password: string): Promise<AuthUser> {
@@ -621,7 +810,7 @@ export async function getVenueWallet(venueId: number | string): Promise<VenueWal
 export async function listSymbols(
   market: "spot" | "usdm_futures",
   q: string,
-): Promise<{ symbols: string[]; stale: boolean }> {
+): Promise<{ symbols: string[]; entries: SpotSymbolCatalogEntry[]; stale: boolean }> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
   const u = new URL(`${apiBase()}/api/symbols`);
@@ -630,13 +819,47 @@ export async function listSymbols(
   u.searchParams.set("limit", "50");
   const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
   if (!res.ok) throw await parseErr(res);
-  return (await res.json()) as { symbols: string[]; stale: boolean };
+  return (await res.json()) as { symbols: string[]; entries: SpotSymbolCatalogEntry[]; stale: boolean };
 }
 
-export async function getPortfolioPortfolioSnapshot(id: number | string): Promise<PortfolioVenueWallets> {
+export async function getProductCapabilities(): Promise<ProductCapabilities> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
-  const res = await fetch(`${apiBase()}/api/portfolios/${id}/portfolio-snapshot`, {
+  const res = await fetch(`${apiBase()}/api/capabilities`, {
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!res.ok) throw await parseErr(res);
+  const body = (await res.json()) as {
+    capabilities?: Array<{ name: string; configured: boolean; effective: boolean; reason?: string }>;
+  };
+  return normalizeProductCapabilities(body.capabilities ?? []);
+}
+
+export type RequiredSnapshotSymbol = {
+  exchange: string;
+  market: string;
+  symbol: string;
+};
+
+export async function getPortfolioPortfolioSnapshot(
+  id: number | string,
+  requiredSymbols: RequiredSnapshotSymbol[] = [],
+): Promise<PortfolioVenueWallets> {
+  const t = getToken();
+  if (!t) throw new Error("Not logged in");
+  const url = new URL(`${apiBase()}/api/portfolios/${id}/portfolio-snapshot`);
+  const seen = new Set<string>();
+  for (const item of requiredSymbols) {
+    const exchange = item.exchange.trim().toLowerCase();
+    const market = item.market.trim().toLowerCase();
+    const symbol = item.symbol.trim().toUpperCase();
+    if (!exchange || !market || !symbol) continue;
+    const key = `${exchange}:${market}:${symbol}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    url.searchParams.append("required_symbol", key);
+  }
+  const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${t}` },
   });
   if (!res.ok) throw await parseErr(res);
@@ -709,6 +932,18 @@ export type PreflightFailure = {
   kind: string;          // "profile" | "invalid_request" | "historical_data" | "stream" | "declaration"
   reason: string;
   input_key?: { market: string; symbol: string; interval: string };
+  code?: string;
+  route?: string;
+  exchange?: number;
+  exchange_label?: string;
+  market?: number;
+  market_label?: string;
+  symbol?: string;
+  venue_id?: number;
+  filter_type?: string;
+  environment: number;
+  retryable: boolean;
+  source?: string;
 };
 
 export type StrategyInputDeclaration = {
@@ -748,6 +983,70 @@ export type PreviewRunStrategy = {
     leverage_source: string;
   };
 };
+
+export type SpotCapabilityDecision = {
+  enabled: boolean;
+  code: string;
+  reason: string;
+  capability?: ProductCapabilityName;
+};
+
+function previewDeclaresSpot(preview: PreviewRunStrategy | null | undefined): boolean {
+  if (!preview) return false;
+  const declarations = [
+    ...(preview.inputs ?? preview.declared_inputs ?? []),
+    ...(preview.order_targets ?? preview.declared_order_targets ?? []),
+    ...(preview.required_routes ?? []),
+    ...(preview.required_streams ?? []),
+  ];
+  return declarations.some((item) => item.market.trim().toLowerCase() === "spot");
+}
+
+export function strategySpotCapabilityDecision(
+  preview: PreviewRunStrategy | null | undefined,
+  environment: number,
+  action: "run" | "offline",
+  capabilities: ProductCapabilities,
+): SpotCapabilityDecision {
+  if (!previewDeclaresSpot(preview)) {
+    return { enabled: true, code: "", reason: "" };
+  }
+  if (environment === 2 && action === "run") {
+    return {
+      enabled: false,
+      code: "SPOT_LIVE_ROLLOUT_GUARD",
+      reason: "Live Spot remains rollout-guarded.",
+      capability: "live_spot_usdt",
+    };
+  }
+  if (capabilities.discovery_failed) {
+    return {
+      enabled: false,
+      code: "SPOT_CAPABILITY_DISCOVERY_UNAVAILABLE",
+      reason: "Spot capability discovery failed; Spot actions are disabled.",
+    };
+  }
+  const capability: ProductCapabilityName = action === "offline"
+    ? "offline_spot_usdt"
+    : environment === 0
+      ? "backtest_spot_usdt"
+      : environment === 1
+        ? "demo_spot_usdt"
+        : "live_spot_usdt";
+  const state = capabilities.states[capability];
+  if (state.effective) {
+    return { enabled: true, code: "", reason: "", capability };
+  }
+  const code = state.reason === "SPOT_LIVE_ROLLOUT_GUARD"
+    ? "SPOT_LIVE_ROLLOUT_GUARD"
+    : "SPOT_CAPABILITY_DISABLED";
+  return {
+    enabled: false,
+    code,
+    reason: state.reason || "Spot capability is disabled.",
+    capability,
+  };
+}
 
 export async function previewRunStrategy(
   portfolioId: number | string,
@@ -857,14 +1156,25 @@ export async function getDownloadAndRunJob(jobId: string): Promise<DownloadRunJo
 }
 
 export type DebugPackageRequest = {
-  market: "perpetual_futures";
-  symbol: string;
-  interval: string;
+  strategy_id: number;
+  runtime_id: string;
   start_time_ms: number;
   end_time_ms: number;
-  wallet_source: "manual" | "portfolio_snapshot";
-  initial_balance?: number;
 };
+
+export function buildDebugPackageRequest(
+  strategyId: number,
+  runtimeId: string,
+  startTimeMs: number,
+  endTimeMs: number,
+): DebugPackageRequest {
+  return {
+    strategy_id: strategyId,
+    runtime_id: runtimeId,
+    start_time_ms: startTimeMs,
+    end_time_ms: endTimeMs,
+  };
+}
 
 export async function downloadDebugPackage(
   portfolioId: number | string,
@@ -1030,6 +1340,10 @@ export type Session = {
   end_time_ms?: number;
   bars_processed: number;
   error?: string;
+  error_code?: string;
+  error_message?: string;
+  error_detail?: Record<string, unknown>;
+  error_detail_json?: string;
   runtime_id?: string;
   runtime_source?: string;
   runtime_name?: string;
@@ -1183,6 +1497,8 @@ export type SessionOrderIntent = {
   side: string;
   requested_qty: number;
   requested_price: number;
+  requested_qty_decimal: string;
+  requested_price_decimal?: string;
   strategy_id: number;
   market: string;
   market_label?: string;
@@ -1194,6 +1510,8 @@ export type SessionOrderIntent = {
   status?: string;
   reject_code?: string;
   reject_message?: string;
+  environment: number;
+  environment_label?: string;
 };
 
 export type SessionOrder = {
@@ -1210,6 +1528,12 @@ export type SessionOrder = {
   remaining_qty: number;
   avg_price: number;
   price: number;
+  orig_qty_decimal: string;
+  executed_qty_decimal: string;
+  remaining_qty_decimal: string;
+  avg_price_decimal: string;
+  price_decimal?: string;
+  cumulative_quote_qty_decimal: string;
   status: string;
   market: string;
   market_label?: string;
@@ -1219,6 +1543,8 @@ export type SessionOrder = {
   position_side?: string;
   strategy_id: number;
   error_message?: string;
+  environment: number;
+  environment_label?: string;
 };
 
 export type SessionOrderAttempt = {
@@ -1233,6 +1559,9 @@ export type SessionOrderAttempt = {
   requested_qty: number;
   requested_price: number;
   mark_price: number;
+  requested_qty_decimal: string;
+  requested_price_decimal?: string;
+  mark_price_decimal: string;
   status: string;
   market: string;
   market_label?: string;
@@ -1245,6 +1574,8 @@ export type SessionOrderAttempt = {
   recovery_error?: string;
   risk_status?: string;
   risk_reasons?: OrderRiskReason[];
+  environment: number;
+  environment_label?: string;
 };
 
 export type SessionOrderFill = {
@@ -1260,6 +1591,11 @@ export type SessionOrderFill = {
   qty: number;
   fill_price: number;
   fee: number;
+  qty_decimal: string;
+  fill_price_decimal: string;
+  fee_decimal: string;
+  quote_qty_decimal: string;
+  fee_asset: string;
   status: string;
   market: string;
   market_label?: string;
@@ -1268,6 +1604,8 @@ export type SessionOrderFill = {
   exchange_label?: string;
   position_side?: string;
   strategy_id: number;
+  environment: number;
+  environment_label?: string;
 };
 
 export type OrderLifecycleFillDelta = {
@@ -1277,6 +1615,10 @@ export type OrderLifecycleFillDelta = {
   qty: number;
   fill_price: number;
   fee: number;
+  qty_decimal: string;
+  fill_price_decimal: string;
+  fee_decimal: string;
+  quote_qty_decimal: string;
   fee_asset: string;
   fee_missing: boolean;
   trade_time?: string;
@@ -1291,6 +1633,12 @@ export type OrderLifecycleState = {
   executed_qty: number;
   remaining_qty: number;
   avg_price: number;
+  orig_qty_decimal: string;
+  executed_qty_decimal: string;
+  remaining_qty_decimal: string;
+  avg_price_decimal: string;
+  price_decimal?: string;
+  cumulative_quote_qty_decimal: string;
   updated_at?: string;
 };
 
@@ -1540,6 +1888,8 @@ export type OrderIntentEntry = {
   side: string;
   requested_qty: number;
   requested_price: number;
+  requested_qty_decimal: string;
+  requested_price_decimal?: string;
   strategy_id: number;
   market: string;
   market_label?: string;
@@ -1554,6 +1904,8 @@ export type OrderIntentEntry = {
   post_only?: boolean;
   good_till_date?: string;
   reduce_only?: boolean;
+  environment: number;
+  environment_label?: string;
 };
 
 export type OrderEntry = {
@@ -1571,6 +1923,12 @@ export type OrderEntry = {
   remaining_qty: number;
   avg_price: number;
   price: number;
+  orig_qty_decimal: string;
+  executed_qty_decimal: string;
+  remaining_qty_decimal: string;
+  avg_price_decimal: string;
+  price_decimal?: string;
+  cumulative_quote_qty_decimal: string;
   status: string;
   market: string;
   market_label?: string;
@@ -1589,6 +1947,8 @@ export type OrderEntry = {
   recovery_deadline_at?: string;
   last_recovery_error?: string;
   force_closed_at?: string;
+  environment: number;
+  environment_label?: string;
 };
 
 export type OrderRiskReason = {
@@ -1609,6 +1969,9 @@ export type OrderAttemptEntry = {
   requested_qty: number;
   requested_price: number;
   mark_price: number;
+  requested_qty_decimal: string;
+  requested_price_decimal?: string;
+  mark_price_decimal: string;
   status: string;
   market: string;
   market_label?: string;
@@ -1625,6 +1988,8 @@ export type OrderAttemptEntry = {
   reduce_only?: boolean;
   risk_status?: string;
   risk_reasons?: OrderRiskReason[];
+  environment: number;
+  environment_label?: string;
 };
 
 export type OrderFillEntry = {
@@ -1641,6 +2006,11 @@ export type OrderFillEntry = {
   qty: number;
   fill_price: number;
   fee: number;
+  qty_decimal: string;
+  fill_price_decimal: string;
+  fee_decimal: string;
+  quote_qty_decimal: string;
+  fee_asset: string;
   status: string;
   market: string;
   market_label?: string;
@@ -1650,6 +2020,8 @@ export type OrderFillEntry = {
   position_side?: string;
   strategy_id: number;
   session_id?: string;
+  environment: number;
+  environment_label?: string;
 };
 
 export type QueryOrdersParams = {
