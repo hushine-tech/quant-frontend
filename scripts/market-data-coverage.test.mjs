@@ -36,3 +36,12 @@ assert.equal(
   true,
   "Live stream requests should default to Kafka live delivery",
 );
+
+assert.equal(
+  source.includes("function alignRangeToInterval(") &&
+    source.includes("const aligned = alignRangeToInterval(startAt, endAt, nextInterval)") &&
+    source.includes("setStartAt(aligned.startAt)") &&
+    source.includes("setEndAt(aligned.endAt)"),
+  true,
+  "Historical coverage should realign the selected range when its interval changes",
+);

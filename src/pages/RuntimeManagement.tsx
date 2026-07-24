@@ -345,6 +345,7 @@ export default function RuntimeManagement() {
               <FilterPanel>
                 <FilterField label="Runtime name">
                   <input
+                    name="hosted_runtime_name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     disabled={creating}
@@ -352,7 +353,12 @@ export default function RuntimeManagement() {
                   />
                 </FilterField>
                 <FilterField label="Resource profile">
-                  <select value={resourceProfile} onChange={(e) => setResourceProfile(e.target.value)} disabled={creating}>
+                  <select
+                    name="runtime_resource_profile"
+                    value={resourceProfile}
+                    onChange={(e) => setResourceProfile(e.target.value)}
+                    disabled={creating}
+                  >
                     <option value="small">small</option>
                     <option value="medium">medium</option>
                     <option value="large">large</option>

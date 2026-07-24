@@ -92,6 +92,13 @@ assert.match(chartPanelSource, />C</, "Session chart should expose the close val
 assert.match(chartPanelSource, />V</, "Session chart should expose the volume value label");
 assert.match(chartPanelSource, /sessionRangeKey/, "Session chart load dependencies should use stable session range keys");
 assert.match(chartPanelSource, /sessionBoundaryKey/, "Session chart marker dependencies should use stable session boundary keys");
+assert.match(
+  chartPanelSource,
+  /label:\s*formatChartStreamLabel\(input\)/,
+  "Session chart stream labels should include market so Spot and Futures routes are distinguishable",
+);
+assert.match(chartPanelSource, /Perpetual Futures/, "Session chart should use an explicit Futures market label");
+assert.match(chartPanelSource, /Spot/, "Session chart should use an explicit Spot market label");
 assert.doesNotMatch(
   chartPanelSource,
   /\}, \[selectedInput, session\]\);/,

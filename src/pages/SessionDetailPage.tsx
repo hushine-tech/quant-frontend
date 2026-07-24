@@ -358,6 +358,15 @@ type SessionFailureDetail = {
   filter_type?: string;
 };
 
+function hasMeaningfulSessionFailure(failure: SessionFailureDetail): boolean {
+  return Boolean(
+    failure.code
+      || failure.message
+      || failure.filter_type
+      || failure.retryable !== undefined,
+  );
+}
+
 function sessionFailureDetails(session: Session | null): SessionFailureDetail[] {
   if (!session) return [];
   let detail: unknown = session.error_detail;
@@ -380,7 +389,7 @@ function sessionFailureDetails(session: Session | null): SessionFailureDetail[] 
   }
   const root = detail as Record<string, unknown>;
   const values = Array.isArray(root.failures) ? root.failures : [root];
-  return values
+  const failures = values
     .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"))
     .map((value) => ({
       code: typeof value.code === "string" ? value.code : undefined,
@@ -395,7 +404,18 @@ function sessionFailureDetails(session: Session | null): SessionFailureDetail[] 
       retryable: typeof value.retryable === "boolean" ? value.retryable : undefined,
       source: typeof value.source === "string" ? value.source : session.runtime_source,
       filter_type: typeof value.filter_type === "string" ? value.filter_type : undefined,
-    }));
+    }))
+    .filter(hasMeaningfulSessionFailure);
+  if (failures.length > 0) return failures;
+  if (session.error_code || session.error_message || session.error) {
+    return [{
+      code: session.error_code,
+      message: session.error_message || session.error,
+      environment: session.environment,
+      source: session.runtime_source,
+    }];
+  }
+  return [];
 }
 
 function finiteNumber(value: unknown): number | null {

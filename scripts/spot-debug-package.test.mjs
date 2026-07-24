@@ -17,6 +17,7 @@ assert.deepEqual(buildDebugPackageRequest(42, "rt-debug", 1000, 2000), {
 });
 
 const requestType = client.match(/export type DebugPackageRequest = \{([\s\S]*?)\n\};/)?.[1] ?? "";
+const localDebugPanel = portfolio.match(/function LocalDebugPackagePanel\([\s\S]*?\nfunction StrategyPanel\(/)?.[0] ?? "";
 for (const field of ["strategy_id", "runtime_id", "start_time_ms", "end_time_ms"]) {
   assert.match(requestType, new RegExp(`\\b${field}\\b`));
 }
@@ -25,7 +26,12 @@ for (const forbidden of ["market", "symbol", "interval", "wallet_source", "initi
 }
 assert.match(portfolio, /activeStrategy/, "debug package UI must use the selected active strategy");
 assert.match(portfolio, /getStrategy\(active\.strategy\.strategy_id\)/, "debug package UI must load the full active strategy because mounted-list rows omit source");
-assert.match(portfolio, /RuntimeSelector/, "debug package UI must select a runtime");
+assert.match(localDebugPanel, /RuntimeSelector/, "debug package UI must select a runtime");
+assert.match(localDebugPanel, /role="executor"/, "package validation must use an executor runtime");
+assert.doesNotMatch(localDebugPanel, /role="debugger"/, "the guarded debugger runtime is not a user-selectable dependency");
+assert.match(localDebugPanel, /Select an executor runtime\./, "the missing-runtime error must describe the executor dependency");
+assert.match(localDebugPanel, /uv run --no-project --python 3\.13 python init\.py/, "the setup command must match the supported debugger bootstrap");
+assert.doesNotMatch(localDebugPanel, /\npython init\.py\n/, "the stale direct-Python bootstrap must not be shown");
 assert.match(portfolio, /buildDebugPackageRequest/, "debug package body must be built from the four-field contract");
 assert.doesNotMatch(portfolio, /market:\s*["']perpetual_futures["']/, "debug package UI must not hardcode Futures routes");
 

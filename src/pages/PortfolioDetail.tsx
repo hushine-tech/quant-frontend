@@ -1304,7 +1304,7 @@ function LocalDebugPackagePanel({
       return;
     }
     if (!runtimeId) {
-      setError("Select a debugger runtime.");
+      setError("Select an executor runtime.");
       return;
     }
     if (spotOfflineBlocked) {
@@ -1340,7 +1340,8 @@ function LocalDebugPackagePanel({
         <p className="muted" style={{ marginTop: 0 }}>
           Generate an offline package for the local strategy debugger CLI. The package contains
           every declared strategy input (Spot and/or Futures), the authoritative Venue wallet and risk
-          facts, and the exact active strategy source. Routes cannot be overridden from this form.
+          facts, and the exact active strategy source. The selected executor validates strategy
+          declarations only; package replay remains offline. Routes cannot be overridden from this form.
         </p>
         <p>
           Active strategy: {activeStrategy
@@ -1352,8 +1353,8 @@ function LocalDebugPackagePanel({
             value={runtimeId}
             onChange={(value) => setRuntimeId(value)}
             environment={0}
-            role="debugger"
-            label="Debugger runtime"
+            role="executor"
+            label="Execution runtime"
           />
           <DateTimeRangePicker
             label="Time range"
@@ -1397,11 +1398,14 @@ function LocalDebugPackagePanel({
           <p style={{ fontWeight: 600, marginTop: 0 }}>Local CLI flow</p>
           <pre style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
 {`# One-time setup in the strategy-debugger-cli repository
-python init.py
+uv run --no-project --python 3.13 python init.py
 
 # Import this package into the generated workspace
 cd ~/hushine-debug-workspace
 .venv/bin/hushine-debug import ~/Downloads/debug-package.zip
+# Import preserves your current strategy.py. Review the package strategy, then activate it:
+diff -u strategy.py strategy.py.template || true
+cp strategy.py.template strategy.py
 .venv/bin/hushine-debug replay`}
           </pre>
         </div>

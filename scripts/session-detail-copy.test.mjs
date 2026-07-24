@@ -101,3 +101,10 @@ assert.equal(
   false,
   "Session detail should not render the input range as one long inline string",
 );
+
+assert.equal(
+  source.includes("function hasMeaningfulSessionFailure(") &&
+    source.includes(".filter(hasMeaningfulSessionFailure)"),
+  true,
+  "An empty error_detail object must not render a false SESSION_FAILURE banner",
+);

@@ -67,6 +67,16 @@ assert.equal(files.runtimeCredentials.includes("runtime-create-section"), true, 
 assert.equal(files.runtimeCredentials.includes("RuntimeInstallInstructions"), true, "Issued credential banner should show reusable runtime install instructions");
 assert.equal(files.runtime.includes("RuntimeInstallInstructions"), true, "Runtime detail should expose reusable install instructions for self-hosted runtimes");
 assert.equal(files.runtime.includes("Install instructions"), true, "Runtime detail should let users reopen install instructions");
+for (const token of ['name="hosted_runtime_name"', 'name="runtime_resource_profile"']) {
+  assert.equal(files.runtime.includes(token), true, `Runtime creation fields need stable form names: ${token}`);
+}
+for (const token of [
+  'name="runtime_credential_label"',
+  'name="runtime_credential_role"',
+  'name="include_inactive_runtime_credentials"',
+]) {
+  assert.equal(files.runtimeCredentials.includes(token), true, `Runtime credential fields need stable form names: ${token}`);
+}
 for (const token of [
   'type RuntimeDetailTab = "overview" | "connection" | "debugging" | "sessions" | "live_delivery"',
   "runtimeDetailTabs",
@@ -97,6 +107,11 @@ for (const token of [
   assert.equal(files.portfolioDetail.includes(token), true, `Portfolio detail should include ${token}`);
 }
 assert.equal(files.portfolioDetail.includes("SessionPanel portfolioId"), true, "Portfolio detail should keep session inspection as a tab panel");
+assert.equal(
+  files.portfolioDetail.includes("cp strategy.py.template strategy.py"),
+  true,
+  "Local Debug flow must activate the package strategy before replay",
+);
 assert.equal(files.portfolioDetail.includes("View reconciliation"), false, "Portfolio detail should not keep the old reconciliation shortcut panel");
 assert.equal(files.venueManagement.includes("credential_info: requiresCredentials ?"), false, "Venue create payload must not send empty credential_info for backtest venues");
 assert.equal(files.venueManagement.includes("api_key: requiresCredentials ?"), false, "Venue create payload must not send empty api_key for backtest venues");

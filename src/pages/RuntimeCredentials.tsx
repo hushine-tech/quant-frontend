@@ -252,6 +252,7 @@ export function RuntimeCredentialsPanel({
             <FilterField label="Label">
               <input
                 type="text"
+                name="runtime_credential_label"
                 value={newLabel}
                 onChange={(e) => setNewLabel(e.target.value)}
                 disabled={issuing}
@@ -261,6 +262,7 @@ export function RuntimeCredentialsPanel({
             </FilterField>
             <FilterField label="Role">
               <select
+                name="runtime_credential_role"
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value as "executor")}
                 disabled={issuing}
@@ -283,6 +285,7 @@ export function RuntimeCredentialsPanel({
             <label>
               <input
                 type="checkbox"
+                name="include_inactive_runtime_credentials"
                 checked={includeInactive}
                 onChange={(e) => setIncludeInactive(e.target.checked)}
               />{" "}

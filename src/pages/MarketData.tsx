@@ -24,6 +24,15 @@ import { safeInternalReturnTo } from "@/utils/returnTo";
 
 const SUPPORTED_EXCHANGES = ["binance"] as const;
 const SUPPORTED_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
+const INTERVAL_MS: Record<(typeof SUPPORTED_INTERVALS)[number], number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
+  "1h": 60 * 60_000,
+  "4h": 4 * 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+};
 type MarketDataTab = "live" | "coverage" | "data" | "requests";
 
 const MARKET_DATA_TABS: Array<PageTab<MarketDataTab>> = [
@@ -83,6 +92,25 @@ function parseLocalInputMs(raw: string): number | null {
   if (!raw) return null;
   const ms = new Date(raw).getTime();
   return Number.isFinite(ms) ? ms : null;
+}
+
+function alignRangeToInterval(
+  startAt: string,
+  endAt: string,
+  interval: string,
+): { startAt: string; endAt: string } {
+  const intervalMs = INTERVAL_MS[normalizeInterval(interval) as keyof typeof INTERVAL_MS];
+  const rawStartMs = parseLocalInputMs(startAt);
+  const rawEndMs = parseLocalInputMs(endAt);
+  if (rawStartMs == null || rawEndMs == null) return { startAt, endAt };
+
+  const startMs = Math.floor(rawStartMs / intervalMs) * intervalMs;
+  let endMs = Math.floor(rawEndMs / intervalMs) * intervalMs;
+  if (endMs <= startMs) endMs = startMs + intervalMs;
+  return {
+    startAt: toLocalInputValue(new Date(startMs)),
+    endAt: toLocalInputValue(new Date(endMs)),
+  };
 }
 
 function normalizeMarketDataTab(value: string | null): MarketDataTab {
@@ -358,7 +386,19 @@ function HistoricalCoveragePanel({ onRequestCreated }: { onRequestCreated: () =>
         />
 
         <FilterField label="Interval">
-          <select name="interval" value={interval} onChange={(e) => setInterval(e.target.value)}>
+          <select
+            name="interval"
+            value={interval}
+            onChange={(e) => {
+              const nextInterval = e.target.value;
+              const aligned = alignRangeToInterval(startAt, endAt, nextInterval);
+              setInterval(nextInterval);
+              setStartAt(aligned.startAt);
+              setEndAt(aligned.endAt);
+              setCoverage(null);
+              setErr(null);
+            }}
+          >
             {SUPPORTED_INTERVALS.map((iv) => (
               <option key={iv} value={iv}>{iv}</option>
             ))}

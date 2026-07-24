@@ -173,6 +173,16 @@ function alignToBarTime(ms: number, stepMs: number): UTCTimestamp {
   return (Math.floor(ms / stepMs) * (stepMs / 1000)) as UTCTimestamp;
 }
 
+function formatChartStreamLabel(input: StrategyInputDeclaration): string {
+  const market = normalizeMarketForStreamKey(input.market);
+  const marketLabel = market === "spot"
+    ? "Spot"
+    : market === "perpetual_futures"
+      ? "Perpetual Futures"
+      : market || "Unknown Market";
+  return `${input.symbol} · ${marketLabel} · ${input.interval}`;
+}
+
 function chartInputsFromStrategy(inputs: StrategyInputDeclaration[]): ChartInput[] {
   return inputs
     .filter((input) => input.symbol && input.interval)
@@ -180,7 +190,7 @@ function chartInputsFromStrategy(inputs: StrategyInputDeclaration[]): ChartInput
       ...input,
       exchange: input.exchange || "binance",
       kind: input.kind || "kline",
-      label: `${input.symbol} ${input.interval}`,
+      label: formatChartStreamLabel(input),
     }));
 }
 
