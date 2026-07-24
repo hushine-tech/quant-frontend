@@ -150,7 +150,7 @@ export default function SessionManagement() {
             />
           </FilterField>
           <FilterField label="Environment">
-            <select value={environmentFilter} onChange={(e) => setEnvironmentFilter(e.target.value)}>
+            <select name="session_environment_filter" value={environmentFilter} onChange={(e) => setEnvironmentFilter(e.target.value)}>
               <option value="">All environments</option>
               <option value="0">Backtest (0)</option>
               <option value="1">Demo (1)</option>
@@ -158,7 +158,7 @@ export default function SessionManagement() {
             </select>
           </FilterField>
           <FilterField label="Status">
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select name="session_status_filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
               <option value="running">running</option>
               <option value="stopping">stopping</option>
@@ -178,7 +178,7 @@ export default function SessionManagement() {
             className="filter-field--wide"
           />
           <FilterField label="Session ID" wide>
-            <input value={sessionIdFilter} onChange={(e) => setSessionIdFilter(e.target.value)} placeholder="Search session ID" />
+            <input name="session_id_filter" value={sessionIdFilter} onChange={(e) => setSessionIdFilter(e.target.value)} placeholder="Search session ID" />
           </FilterField>
         </FilterPanel>
 

@@ -141,6 +141,17 @@ for (const [name, content] of [
 ]) {
   assert.equal(content.includes("AsyncSelect"), true, `${name} should use async paged select controls for large option sets`);
 }
+for (const token of [
+  'name="session_environment_filter"',
+  'name="session_status_filter"',
+  'name="session_id_filter"',
+]) {
+  assert.equal(
+    files.sessionManagement.includes(token),
+    true,
+    `Session Management filters need stable form names: ${token}`,
+  );
+}
 assert.equal(files.asyncSelectPagination.includes("collectFilteredPage"), true, "AsyncSelect client-side filtering should use a cross-page pagination helper");
 for (const [name, content] of [
   ["Venue Management", files.venueManagement],
