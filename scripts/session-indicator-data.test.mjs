@@ -37,6 +37,20 @@ const markerDefinition = {
   config_json: '{"position":"belowBar","shape":"arrowUp"}',
 };
 
+assert.equal(indicators.intervalToMs("1s"), 1_000);
+assert.equal(indicators.intervalToMs("15s"), 15_000);
+assert.equal(indicators.intervalToMs("1m"), 60_000);
+assert.equal(
+  indicators.intervalToMs("1M"),
+  30 * 24 * 60 * 60_000,
+  "Binance month intervals must not be folded into minute intervals",
+);
+assert.equal(
+  indicators.intervalToMs("9007199254740991w"),
+  60_000,
+  "interval conversion must fail closed when milliseconds exceed a safe integer",
+);
+
 function lineChunk(count, { finalized = false, revision = count, session = "session-a" } = {}) {
   const times = count === 1 ? [1_000] : [1_000, 9_000, 21_000].slice(0, count);
   return {

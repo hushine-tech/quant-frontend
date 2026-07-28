@@ -52,6 +52,24 @@ function positiveInteger(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0;
 }
 
+export function intervalToMs(interval: string): number {
+  const match = /^(\d+)([smhdwM])$/.exec(interval.trim());
+  if (!match) return 60_000;
+  const value = Number(match[1]);
+  if (!Number.isSafeInteger(value) || value <= 0) return 60_000;
+  const multiplier = {
+    s: 1_000,
+    m: 60_000,
+    h: 60 * 60_000,
+    d: 24 * 60 * 60_000,
+    w: 7 * 24 * 60 * 60_000,
+    M: 30 * 24 * 60 * 60_000,
+  }[match[2]];
+  if (multiplier === undefined) return 60_000;
+  const milliseconds = value * multiplier;
+  return Number.isSafeInteger(milliseconds) ? milliseconds : 60_000;
+}
+
 function chunkIdentity(chunk: StrategyIndicatorChunk): string {
   return [
     chunk.session_id,

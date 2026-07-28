@@ -41,6 +41,7 @@ import {
   expandScalarIndicatorV2,
   indicatorPollDecision,
   indicatorTailState,
+  intervalToMs,
   mergeIndicatorChunksV2,
 } from "@/components/sessionIndicatorData";
 
@@ -114,19 +115,6 @@ type CustomIndicatorSeriesRef = {
 type ChartViewport = {
   logicalRange: LogicalRange | null;
 };
-
-function intervalToMs(interval: string): number {
-  const match = /^(\d+)([mhdw])$/i.exec(interval.trim());
-  if (!match) return 60_000;
-  const value = Number(match[1]);
-  switch (match[2].toLowerCase()) {
-    case "m": return value * 60_000;
-    case "h": return value * 60 * 60_000;
-    case "d": return value * 24 * 60 * 60_000;
-    case "w": return value * 7 * 24 * 60 * 60_000;
-    default: return 60_000;
-  }
-}
 
 function toTimestamp(input: string | number): UTCTimestamp {
   const ms = typeof input === "number" ? input : Date.parse(input);
