@@ -110,9 +110,34 @@ assert.doesNotMatch(
   "Session chart data effect should not depend on the whole session object",
 );
 assert.equal(
-  (chartPanelSource.match(/fetchKlines\(selectedInput, startMs, endMs\)/g) ?? []).length,
+  (chartPanelSource.match(/fetchKlines\(capturedInput, startMs, endMs\)/g) ?? []).length,
   1,
   "SessionChartPanel should fetch klines once per chart load",
+);
+assert.doesNotMatch(
+  chartPanelSource,
+  /setInterval/,
+  "Session chart polling must schedule after the prior request settles",
+);
+assert.match(
+  chartPanelSource,
+  /chartRequestOwnerRef[\s\S]*chartLoadPendingRef/,
+  "Session chart must reject stale loads and queue the newest identity",
+);
+assert.match(
+  chartPanelSource,
+  /return \(\) => \{[\s\S]*chartRequestOwnerRef\.current\.invalidate\(\);[\s\S]*chartLoadPendingRef\.current = false;[\s\S]*\};/,
+  "Session chart cleanup must cancel a queued load after unmount",
+);
+assert.match(
+  chartPanelSource,
+  /setChartState\(null\);[\s\S]*\}, \[session\.session_id, selectedInputKey\]\);/,
+  "Session or stream changes must clear the previous chart before the replacement request settles",
+);
+assert.match(
+  chartPanelSource,
+  /\}, \[hasMeasuredWidth, session\.session_id, selectedInputKey,/,
+  "Session changes must recreate the chart so old series data cannot remain visible",
 );
 
 const sessionDetailSource = readFileSync(sessionDetailPath, "utf8");

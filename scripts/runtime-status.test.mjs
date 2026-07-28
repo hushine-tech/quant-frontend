@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
-import { isRuntimeTerminal, isSessionTerminal } from "../src/api/client.ts";
+import {
+  isRuntimeTerminal,
+  isSessionTerminal,
+  shouldPollSessionRecord,
+} from "../src/api/client.ts";
 
 const terminalStatuses = ["ended", "cancelled", "failed", "heartbeat_stale"];
 for (const status of terminalStatuses) {
@@ -20,7 +26,16 @@ for (const status of nonTerminalStatuses) {
   );
 }
 
-const terminalSessionStatuses = ["completed", "finished", "stopped", "failed", "stop_failed", "recoverable"];
+const terminalSessionStatuses = [
+  "completed",
+  "finished",
+  "stopped",
+  "failed",
+  "stop_failed",
+  "stopping_failed",
+  "recoverable",
+  "preflight_failed",
+];
 for (const status of terminalSessionStatuses) {
   assert.equal(
     isSessionTerminal({ status }),
@@ -37,3 +52,36 @@ for (const status of activeSessionStatuses) {
     `${status || "(empty)"} must not be treated as a terminal session status`,
   );
 }
+
+assert.equal(
+  shouldPollSessionRecord({ status: "running", indicator_finalization_pending: false }),
+  true,
+);
+assert.equal(
+  shouldPollSessionRecord({ status: "recoverable", indicator_finalization_pending: true }),
+  true,
+);
+assert.equal(
+  shouldPollSessionRecord({ status: "recoverable", indicator_finalization_pending: false }),
+  false,
+);
+
+const sessionDetailSource = readFileSync(
+  path.join(process.cwd(), "src/pages/SessionDetailPage.tsx"),
+  "utf8",
+);
+assert.doesNotMatch(
+  sessionDetailSource,
+  /setInterval/,
+  "Session detail polling must not overlap requests with setInterval",
+);
+assert.match(
+  sessionDetailSource,
+  /await getSession\(capturedSessionID\)[\s\S]*shouldPollSessionRecord\(item\)[\s\S]*schedule\(3000\)/,
+  "the next Session read should be scheduled only after the prior response settles",
+);
+assert.match(
+  sessionDetailSource,
+  /cancelled \|\| capturedSessionID !== stableSessionId/,
+  "superseded Session responses must not update state or schedule another read",
+);

@@ -35,6 +35,14 @@ import {
 } from "@/api/client";
 import { calculateMACD, calculateRSI } from "@/utils/chartIndicators";
 import { formatUTCWithLocal } from "@/utils/time";
+import {
+  buildIndicatorMarkersV2,
+  createIndicatorRequestOwner,
+  expandScalarIndicatorV2,
+  indicatorPollDecision,
+  indicatorTailState,
+  mergeIndicatorChunksV2,
+} from "@/components/sessionIndicatorData";
 
 const KLINE_LIMIT = 500;
 const PAGE_LIMIT = 200;
@@ -254,22 +262,6 @@ function lineWidthConfig(config: Record<string, unknown>): 1 | 2 | 3 | 4 {
   return 1;
 }
 
-function parseIndicatorValues(raw: string): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) return { values: parsed };
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
-function valueAtOffset(chunk: StrategyIndicatorChunk, offset: number): UTCTimestamp {
-  const intervalMs = chunk.interval_ms > 0 ? chunk.interval_ms : 60_000;
-  return toTimestamp(chunk.start_time_ms + (offset * intervalMs));
-}
-
 function expandCustomIndicatorChunks(
   definition: StrategyIndicatorDefinition,
   chunks: StrategyIndicatorChunk[],
@@ -281,38 +273,29 @@ function expandCustomIndicatorChunks(
   const rows: Array<LineData<UTCTimestamp> | HistogramData<UTCTimestamp>> = [];
   const relevantChunks = chunks
     .filter((chunk) => chunk.indicator_key === definition.indicator_key)
-    .sort((a, b) => a.start_time_ms - b.start_time_ms || a.chunk_index - b.chunk_index);
+    .sort((left, right) => left.chunk_index - right.chunk_index);
   for (const chunk of relevantChunks) {
-    const payload = parseIndicatorValues(chunk.values_json);
-    const values = Array.isArray(payload.values) ? payload.values : [];
-    values.forEach((raw, offset) => {
-      if (raw === null || raw === undefined) return;
-      const value = Number(raw);
-      if (!Number.isFinite(value)) return;
-      if (definition.type === "histogram") {
-        rows.push({
-          time: valueAtOffset(chunk, offset),
-          value,
-          color: value >= 0 ? positiveColor : negativeColor,
-        });
-      } else {
-        rows.push({
-          time: valueAtOffset(chunk, offset),
-          value,
-        });
+    try {
+      for (const point of expandScalarIndicatorV2(definition, chunk)) {
+        if (definition.type === "histogram") {
+          rows.push({
+            time: point.time,
+            value: point.value,
+            color: point.value >= 0 ? positiveColor : negativeColor,
+          });
+        } else {
+          rows.push({
+            time: point.time,
+            value: point.value,
+          });
+        }
       }
-    });
+    } catch {
+      // Invalid chunks are rejected by the merge boundary. Keep rendering
+      // defensive if a stale in-memory value survives a hot reload.
+    }
   }
   return rows;
-}
-
-function validMarkerPosition(value: unknown): "aboveBar" | "belowBar" | "inBar" {
-  return value === "belowBar" || value === "inBar" ? value : "aboveBar";
-}
-
-function validMarkerShape(value: unknown): "circle" | "square" | "arrowUp" | "arrowDown" {
-  if (value === "square" || value === "arrowUp" || value === "arrowDown") return value;
-  return "circle";
 }
 
 function buildCustomIndicatorMarkers(
@@ -325,29 +308,18 @@ function buildCustomIndicatorMarkers(
     if (definition.type !== "marker") return;
     const key = customIndicatorKey(definition);
     if (visibility[key] === false) return;
-    const config = parseIndicatorConfig(definition);
     const fallbackColor = definition.color || customIndicatorFallbackColor(index);
     const relevantChunks = chunks
       .filter((chunk) => chunk.indicator_key === definition.indicator_key)
-      .sort((a, b) => a.start_time_ms - b.start_time_ms || a.chunk_index - b.chunk_index);
+      .sort((left, right) => left.chunk_index - right.chunk_index);
     for (const chunk of relevantChunks) {
-      const payload = parseIndicatorValues(chunk.values_json);
-      const payloadMarkers = Array.isArray(payload.markers) ? payload.markers : [];
-      for (const raw of payloadMarkers) {
-        if (!raw || typeof raw !== "object") continue;
-        const item = raw as Record<string, unknown>;
-        const offset = Number(item.offset);
-        if (!Number.isFinite(offset) || offset < 0) continue;
-        const text = typeof item.text === "string" && item.text.trim()
-          ? item.text.trim()
-          : customIndicatorLabel(definition);
-        markers.push({
-          time: valueAtOffset(chunk, offset),
-          position: validMarkerPosition(item.position || config.position),
-          shape: validMarkerShape(item.shape || config.shape),
-          color: typeof item.color === "string" && item.color.trim() ? item.color.trim() : fallbackColor,
-          text,
-        } satisfies SeriesMarker<Time>);
+      try {
+        markers.push(...buildIndicatorMarkersV2(
+          { ...definition, color: definition.color || fallbackColor },
+          chunk,
+        ));
+      } catch {
+        // See scalar path above: merge validation is authoritative.
       }
     }
   });
@@ -492,39 +464,6 @@ async function fetchAllLifecycleEvents(sessionId: string): Promise<OrderLifecycl
     afterEventId = page.next_event_id;
   }
   return rows;
-}
-
-async function fetchCustomIndicators(
-  sessionId: string,
-  input: ChartInput,
-  startMs: number,
-  endMs: number,
-): Promise<ChartState["customIndicators"]> {
-  const streamKey = chartStreamKey(input);
-  try {
-    const definitionsResp = await getSessionIndicators(sessionId, streamKey);
-    const definitions = definitionsResp.items ?? [];
-    if (definitions.length === 0) {
-      return { definitions: [], chunks: [], error: "" };
-    }
-    const chunksResp = await getSessionIndicatorChunks(sessionId, {
-      stream_key: streamKey,
-      keys: definitions.map((definition) => definition.indicator_key),
-      start_time_ms: startMs,
-      end_time_ms: endMs,
-    });
-    return {
-      definitions,
-      chunks: chunksResp.items ?? [],
-      error: "",
-    };
-  } catch (err) {
-    return {
-      definitions: [],
-      chunks: [],
-      error: err instanceof Error ? err.message : "Failed to load custom indicators",
-    };
-  }
 }
 
 function klineRangeForSession(session: Session, input: ChartInput): { startMs: number; endMs: number; visibleStartMs: number } {
@@ -687,6 +626,22 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
   const macdSignalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const rsiSeriesRefs = useRef<Map<RSIPeriod, ISeriesApi<"Line">>>(new Map());
   const customIndicatorSeriesRefs = useRef<Map<string, CustomIndicatorSeriesRef>>(new Map());
+  const chartRequestOwnerRef = useRef(createIndicatorRequestOwner());
+  const chartLoadInFlightRef = useRef(false);
+  const chartLoadPendingRef = useRef(false);
+  const chartLoadRef = useRef<(() => void) | null>(null);
+  const indicatorCacheRef = useRef<StrategyIndicatorChunk[]>([]);
+  const indicatorDefinitionsRef = useRef<StrategyIndicatorDefinition[]>([]);
+  const indicatorRequestOwnerRef = useRef(createIndicatorRequestOwner());
+  const indicatorAbortRef = useRef<AbortController | null>(null);
+  const indicatorTimerRef = useRef<number | undefined>(undefined);
+  const indicatorRetryAttemptRef = useRef(0);
+  const indicatorInFlightRef = useRef(false);
+  const indicatorPollRef = useRef<(() => void) | null>(null);
+  const indicatorWarningKeysRef = useRef(new Set<string>());
+  const indicatorIdentityRef = useRef("");
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const firstCustomPaneIndexRef = useRef(1);
   const rowsByTimeRef = useRef<Map<number, MarketDataKline>>(new Map());
   const initialVisibleRangeAppliedRef = useRef(false);
@@ -695,6 +650,11 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
   const showRSI = RSI_PERIODS.some((period) => showRSIPeriods[period]);
   const rsiStateKey = RSI_PERIODS.map((period) => `${period}:${showRSIPeriods[period] ? "1" : "0"}`).join("|");
   const customDefinitions = chartState?.customIndicators.definitions ?? [];
+  const customIndicatorTail = indicatorTailState(
+    chartState?.customIndicators.chunks ?? [],
+  );
+  const isLiveIndicatorSession =
+    !isSessionTerminal(session) || session.indicator_finalization_pending;
   const customIndicatorVisibilityKey = customDefinitions
     .map((definition) => `${customIndicatorKey(definition)}:${showCustomIndicators[customIndicatorKey(definition)] === false ? "0" : "1"}`)
     .join("|");
@@ -713,6 +673,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
     session.end_time_ms ?? "",
     session.started_at ?? "",
     session.completed_at ?? "",
+    session.indicator_finalization_pending ? "indicator-pending" : "indicator-settled",
   ].join("|");
   const sessionBoundaryKey = [
     session.session_id,
@@ -726,32 +687,255 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
 
   const load = useCallback(async () => {
     if (!selectedInput) return;
-    const { startMs, endMs } = klineRangeForSession(session, selectedInput);
+    if (chartLoadInFlightRef.current) {
+      chartLoadPendingRef.current = true;
+      return;
+    }
+    chartLoadInFlightRef.current = true;
+    chartLoadPendingRef.current = false;
+    const capturedSession = session;
+    const capturedInput = selectedInput;
+    const token = chartRequestOwnerRef.current.begin(
+      capturedSession.session_id,
+      selectedInputKey,
+    );
+    const { startMs, endMs } = klineRangeForSession(capturedSession, capturedInput);
     setLoading(true);
     setError(null);
     try {
-      const [rows, fills, lifecycleEvents, customIndicators] = await Promise.all([
-        fetchKlines(selectedInput, startMs, endMs),
-        fetchAllFills(session.session_id),
-        fetchAllLifecycleEvents(session.session_id),
-        fetchCustomIndicators(session.session_id, selectedInput, startMs, endMs),
+      const [rows, fills, lifecycleEvents] = await Promise.all([
+        fetchKlines(capturedInput, startMs, endMs),
+        fetchAllFills(capturedSession.session_id),
+        fetchAllLifecycleEvents(capturedSession.session_id),
       ]);
-      setChartState({ rows, fills, lifecycleEvents, customIndicators });
+      if (!chartRequestOwnerRef.current.isCurrent(token)) return;
+      setChartState((current) => ({
+        rows,
+        fills,
+        lifecycleEvents,
+        customIndicators: current?.customIndicators ?? {
+          definitions: indicatorDefinitionsRef.current,
+          chunks: indicatorCacheRef.current,
+          error: "",
+        },
+      }));
     } catch (err) {
-      setChartState(null);
-      setError(err instanceof Error ? err.message : "Failed to load session chart");
+      if (chartRequestOwnerRef.current.isCurrent(token)) {
+        setError(err instanceof Error ? err.message : "Failed to load session chart");
+      }
     } finally {
-      setLoading(false);
+      if (chartRequestOwnerRef.current.isCurrent(token)) {
+        setLoading(false);
+      }
+      chartLoadInFlightRef.current = false;
+      if (chartLoadPendingRef.current) {
+        chartLoadPendingRef.current = false;
+        chartLoadRef.current?.();
+      }
     }
   }, [selectedInputKey, sessionRangeKey]);
+  chartLoadRef.current = () => { void load(); };
 
   useEffect(() => {
     setSelectedIndex(0);
   }, [session.session_id, inputSignature]);
 
   useEffect(() => {
+    chartRequestOwnerRef.current.invalidate();
+    rowsByTimeRef.current.clear();
+    setHoverCandle(null);
+    setChartState(null);
+    setError(null);
+    setLoading(selectedInputKey !== "");
+  }, [session.session_id, selectedInputKey]);
+
+  useEffect(() => {
+    chartRequestOwnerRef.current.invalidate();
+    chartLoadPendingRef.current = true;
     void load();
+    return () => {
+      chartRequestOwnerRef.current.invalidate();
+      chartLoadPendingRef.current = false;
+    };
   }, [load]);
+
+  useEffect(() => {
+    if (!selectedInput) return undefined;
+    const sessionID = session.session_id;
+    const streamKey = chartStreamKey(selectedInput);
+    const identityKey = `${sessionID}\u0000${streamKey}`;
+    let cancelled = false;
+    let inFlight = false;
+
+    indicatorIdentityRef.current = identityKey;
+    indicatorRequestOwnerRef.current.invalidate();
+    indicatorAbortRef.current?.abort();
+    indicatorAbortRef.current = null;
+    if (indicatorTimerRef.current !== undefined) {
+      window.clearTimeout(indicatorTimerRef.current);
+      indicatorTimerRef.current = undefined;
+    }
+    indicatorCacheRef.current = [];
+    indicatorDefinitionsRef.current = [];
+    indicatorRetryAttemptRef.current = 0;
+    indicatorInFlightRef.current = false;
+    indicatorWarningKeysRef.current.clear();
+    setChartState((current) => current ? {
+      ...current,
+      customIndicators: { definitions: [], chunks: [], error: "" },
+    } : current);
+
+    const identityIsCurrent = () =>
+      !cancelled && indicatorIdentityRef.current === identityKey;
+
+    const scheduleNext = () => {
+      if (!identityIsCurrent()) return;
+      const decision = indicatorPollDecision(
+        sessionRef.current,
+        indicatorCacheRef.current,
+        indicatorRetryAttemptRef.current,
+      );
+      if (!decision.poll) return;
+      indicatorTimerRef.current = window.setTimeout(() => {
+        indicatorTimerRef.current = undefined;
+        indicatorPollRef.current?.();
+      }, decision.delayMs);
+    };
+
+    const poll = async () => {
+      if (!identityIsCurrent() || inFlight) return;
+      inFlight = true;
+      indicatorInFlightRef.current = true;
+      const token = indicatorRequestOwnerRef.current.begin(sessionID, streamKey);
+      const controller = new AbortController();
+      indicatorAbortRef.current = controller;
+      let progressed = false;
+      try {
+        const { startMs, endMs } = klineRangeForSession(sessionRef.current, selectedInput);
+        const definitionsResponse = await getSessionIndicators(
+          sessionID,
+          streamKey,
+          controller.signal,
+        );
+        if (
+          !identityIsCurrent() ||
+          !indicatorRequestOwnerRef.current.isCurrent(token)
+        ) return;
+        const definitions = definitionsResponse.items ?? [];
+        for (const definition of definitions) {
+          if (
+            definition.protocol_version !== 2 ||
+            definition.session_id !== sessionID ||
+            definition.stream_key !== streamKey
+          ) {
+            throw new Error("invalid indicator V2 definition identity or protocol");
+          }
+        }
+        if (
+          indicatorDefinitionsRef.current.length > 0 &&
+          JSON.stringify(indicatorDefinitionsRef.current) !== JSON.stringify(definitions)
+        ) {
+          throw new Error("indicator definitions changed within a Session stream");
+        }
+        const chunksResponse = definitions.length === 0
+          ? { items: [] as StrategyIndicatorChunk[] }
+          : await getSessionIndicatorChunks(
+              sessionID,
+              {
+                stream_key: streamKey,
+                keys: definitions.map((definition) => definition.indicator_key),
+                start_time_ms: startMs,
+                end_time_ms: endMs,
+              },
+              controller.signal,
+            );
+        if (
+          !identityIsCurrent() ||
+          !indicatorRequestOwnerRef.current.isCurrent(token)
+        ) return;
+        const merge = mergeIndicatorChunksV2(
+          definitions,
+          indicatorCacheRef.current,
+          chunksResponse.items ?? [],
+        );
+        for (const conflict of merge.conflicts) {
+          const warningKey = `${conflict.key}\u0000${conflict.reason}`;
+          if (indicatorWarningKeysRef.current.has(warningKey)) continue;
+          indicatorWarningKeysRef.current.add(warningKey);
+          console.warn(`Indicator V2 chunk ignored: ${conflict.reason}`);
+        }
+        indicatorDefinitionsRef.current = definitions;
+        indicatorCacheRef.current = merge.chunks;
+        progressed = merge.progressed;
+        indicatorRetryAttemptRef.current = progressed
+          ? 0
+          : indicatorRetryAttemptRef.current + 1;
+        if (
+          !identityIsCurrent() ||
+          !indicatorRequestOwnerRef.current.isCurrent(token)
+        ) return;
+        setChartState((current) => ({
+          rows: current?.rows ?? [],
+          fills: current?.fills ?? [],
+          lifecycleEvents: current?.lifecycleEvents ?? [],
+          customIndicators: {
+            definitions,
+            chunks: merge.chunks,
+            error: merge.conflicts.length > 0
+              ? "Some indicator updates were rejected because they conflicted with durable V2 data."
+              : "",
+          },
+        }));
+      } catch (err) {
+        if (
+          controller.signal.aborted ||
+          !identityIsCurrent() ||
+          !indicatorRequestOwnerRef.current.isCurrent(token)
+        ) return;
+        indicatorRetryAttemptRef.current += 1;
+        setChartState((current) => ({
+          rows: current?.rows ?? [],
+          fills: current?.fills ?? [],
+          lifecycleEvents: current?.lifecycleEvents ?? [],
+          customIndicators: {
+            definitions: indicatorDefinitionsRef.current,
+            chunks: indicatorCacheRef.current,
+            error: err instanceof Error ? err.message : "Failed to load custom indicators",
+          },
+        }));
+      } finally {
+        if (indicatorAbortRef.current === controller) {
+          indicatorAbortRef.current = null;
+        }
+        inFlight = false;
+        if (identityIsCurrent()) {
+          indicatorInFlightRef.current = false;
+        }
+        if (
+          identityIsCurrent() &&
+          indicatorRequestOwnerRef.current.isCurrent(token)
+        ) {
+          scheduleNext();
+        }
+      }
+    };
+    indicatorPollRef.current = () => { void poll(); };
+    void poll();
+
+    return () => {
+      cancelled = true;
+      indicatorPollRef.current = null;
+      indicatorRequestOwnerRef.current.invalidate();
+      indicatorAbortRef.current?.abort();
+      indicatorAbortRef.current = null;
+      inFlight = false;
+      indicatorInFlightRef.current = false;
+      if (indicatorTimerRef.current !== undefined) {
+        window.clearTimeout(indicatorTimerRef.current);
+        indicatorTimerRef.current = undefined;
+      }
+    };
+  }, [session.session_id, selectedInputKey]);
 
   useEffect(() => {
     if (customDefinitions.length === 0) return;
@@ -771,9 +955,41 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
 
   useEffect(() => {
     if (isSessionTerminal(session)) return undefined;
-    const timer = window.setInterval(() => { void load(); }, 5000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined = window.setTimeout(async function poll() {
+      timer = undefined;
+      await load();
+      if (!cancelled) {
+        timer = window.setTimeout(poll, 5000);
+      }
+    }, 5000);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [load, session.status]);
+
+  useEffect(() => {
+    // A lifecycle transition gets its own bounded convergence window. Without
+    // resetting here, retries accumulated while the Session was running could
+    // suppress the one final fetch after finalization_pending clears.
+    indicatorRetryAttemptRef.current = 0;
+    const decision = indicatorPollDecision(
+      session,
+      indicatorCacheRef.current,
+      indicatorRetryAttemptRef.current,
+    );
+    if (!decision.poll && indicatorTimerRef.current !== undefined) {
+      window.clearTimeout(indicatorTimerRef.current);
+      indicatorTimerRef.current = undefined;
+    } else if (
+      decision.poll &&
+      indicatorTimerRef.current === undefined &&
+      !indicatorInFlightRef.current
+    ) {
+      indicatorPollRef.current?.();
+    }
+  }, [session.status, session.indicator_finalization_pending]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -896,7 +1112,7 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
       customIndicatorSeriesRefs.current.clear();
       initialVisibleRangeAppliedRef.current = false;
     };
-  }, [hasMeasuredWidth, selectedInputKey, showMACD, showRSI, showVolume, rsiStateKey]);
+  }, [hasMeasuredWidth, session.session_id, selectedInputKey, showMACD, showRSI, showVolume, rsiStateKey]);
 
   useEffect(() => {
     if (!chartRef.current || width <= 0) return;
@@ -1082,6 +1298,13 @@ export default function SessionChartPanel({ session, inputs }: SessionChartPanel
         {customDefinitions.length > 0 ? (
           <section className="session-chart__indicator-group session-chart__custom-indicators" aria-label="Strategy Custom Indicators">
             <p className="session-chart__indicator-title">Strategy Custom Indicators</p>
+            <span className="session-chart__indicator-tail" aria-live="polite">
+              {customIndicatorTail.openChunks > 0
+                ? `Live tail · ${customIndicatorTail.openChunks} open`
+                : isLiveIndicatorSession
+                  ? "Waiting for next live indicator chunk"
+                  : "Indicators finalized"}
+            </span>
             <div className="session-chart__toggles session-chart__custom-indicator-toggles">
               {customDefinitions.map((definition) => {
                 const key = customIndicatorKey(definition);

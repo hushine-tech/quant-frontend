@@ -1921,6 +1921,12 @@ table.compact {
   text-transform: uppercase;
 }
 
+.session-chart__indicator-tail {
+  color: #475569;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .session-chart__default-indicators,
 .session-chart__custom-indicators {
   width: fit-content;

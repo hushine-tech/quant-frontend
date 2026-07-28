@@ -38,6 +38,7 @@
     "test:async-loader-stability": "node scripts/async-loader-stability.test.mjs",
     "test:frontend-information-architecture": "node scripts/frontend-information-architecture.test.mjs",
     "test:session-custom-indicators": "node scripts/session-custom-indicators.test.mjs",
+    "test:session-indicator-data": "node scripts/session-indicator-data.test.mjs",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview"
   },

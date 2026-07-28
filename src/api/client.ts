@@ -1350,14 +1350,30 @@ export type Session = {
   session_type?: string;
   runtime_version?: string;
   session_name?: string;
+  indicator_finalization_pending: boolean;
   started_at: string;
   completed_at?: string;
 };
 
-const terminalSessionStatuses = new Set(["completed", "finished", "stopped", "failed", "stop_failed", "stopping_failed", "recoverable"]);
+const terminalSessionStatuses = new Set([
+  "completed",
+  "finished",
+  "stopped",
+  "failed",
+  "stop_failed",
+  "stopping_failed",
+  "recoverable",
+  "preflight_failed",
+]);
 
 export function isSessionTerminal(session: Pick<Session, "status"> | { status?: string }): boolean {
   return terminalSessionStatuses.has((session.status || "").toLowerCase());
+}
+
+export function shouldPollSessionRecord(
+  session: Pick<Session, "status" | "indicator_finalization_pending">,
+): boolean {
+  return !isSessionTerminal(session) || session.indicator_finalization_pending;
 }
 
 export async function listSessions(portfolioId: number | string, offset?: number, limit?: number): Promise<Session[]> {
@@ -1421,6 +1437,18 @@ export type StrategyIndicatorDefinition = {
   unit: string;
   description: string;
   config_json: string;
+  protocol_version: 2;
+};
+
+export type StrategyIndicatorMarkerV2 = {
+  sequence: number;
+  offset: number;
+  time_ms: number;
+  text: string;
+  price?: number;
+  color: string;
+  position: string;
+  shape: string;
 };
 
 export type StrategyIndicatorChunk = {
@@ -1428,11 +1456,18 @@ export type StrategyIndicatorChunk = {
   stream_key: string;
   indicator_key: string;
   chunk_index: number;
+  start_sequence: number;
+  end_sequence: number;
   start_time_ms: number;
   end_time_ms: number;
   interval_ms: number;
   count: number;
-  values_json: string;
+  times_ms: number[];
+  scalar_values: (number | null)[];
+  markers: StrategyIndicatorMarkerV2[];
+  revision: number;
+  finalized: boolean;
+  protocol_version: 2;
 };
 
 export type StrategyIndicatorDefinitionList = {
@@ -1446,12 +1481,16 @@ export type StrategyIndicatorChunkList = {
 export async function getSessionIndicators(
   sessionId: string,
   streamKey?: string,
+  signal?: AbortSignal,
 ): Promise<StrategyIndicatorDefinitionList> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
   const u = new URL(`${apiBase()}/api/sessions/${sessionId}/indicators`);
   if (streamKey) u.searchParams.set("stream_key", streamKey);
-  const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
+  const res = await fetch(u.toString(), {
+    headers: { Authorization: `Bearer ${t}` },
+    signal,
+  });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategyIndicatorDefinitionList;
 }
@@ -1464,6 +1503,7 @@ export async function getSessionIndicatorChunks(
     start_time_ms: number;
     end_time_ms: number;
   },
+  signal?: AbortSignal,
 ): Promise<StrategyIndicatorChunkList> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -1472,7 +1512,10 @@ export async function getSessionIndicatorChunks(
   if (params.keys?.length) u.searchParams.set("keys", params.keys.join(","));
   u.searchParams.set("start_time_ms", String(params.start_time_ms));
   u.searchParams.set("end_time_ms", String(params.end_time_ms));
-  const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${t}` } });
+  const res = await fetch(u.toString(), {
+    headers: { Authorization: `Bearer ${t}` },
+    signal,
+  });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategyIndicatorChunkList;
 }

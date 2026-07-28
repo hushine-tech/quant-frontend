@@ -11,6 +11,10 @@ const chartPanelSource = readFileSync(chartPanelPath, "utf8");
 
 assert.match(clientSource, /export type StrategyIndicatorDefinition/, "API client should type strategy indicator definitions");
 assert.match(clientSource, /export type StrategyIndicatorChunk/, "API client should type strategy indicator chunks");
+assert.match(clientSource, /times_ms:\s*number\[\]/, "V2 chunks should expose actual candle times");
+assert.match(clientSource, /scalar_values:\s*\(number \| null\)\[\]/, "V2 chunks should preserve sparse scalar values");
+assert.match(clientSource, /markers:\s*StrategyIndicatorMarkerV2\[\]/, "V2 chunks should expose typed sparse markers");
+assert.doesNotMatch(clientSource, /values_json:\s*string/, "legacy values_json must not remain in the frontend contract");
 assert.match(clientSource, /getSessionIndicators/, "API client should expose session indicator definitions");
 assert.match(clientSource, /\/api\/sessions\/\$\{sessionId\}\/indicators/, "definitions endpoint should be session-scoped");
 assert.match(clientSource, /getSessionIndicatorChunks/, "API client should expose session indicator chunks");
@@ -21,6 +25,14 @@ assert.match(chartPanelSource, /getSessionIndicatorChunks/, "Session chart shoul
 assert.match(chartPanelSource, /chartStreamKey/, "Session chart should derive the runtime stream key");
 assert.match(chartPanelSource, /expandCustomIndicatorChunks/, "Session chart should expand chunked indicator values to chart points");
 assert.match(chartPanelSource, /buildCustomIndicatorMarkers/, "Session chart should convert marker chunks to chart markers");
+assert.match(chartPanelSource, /expandScalarIndicatorV2/, "Session chart should expand typed scalar V2 chunks");
+assert.match(chartPanelSource, /buildIndicatorMarkersV2/, "Session chart should build typed marker V2 chunks");
+assert.match(chartPanelSource, /mergeIndicatorChunksV2/, "Session chart should merge V2 revisions immutably");
+assert.match(chartPanelSource, /indicatorPollDecision/, "Session chart should use the V2 polling state machine");
+assert.match(chartPanelSource, /createIndicatorRequestOwner/, "Session chart should reject superseded indicator requests");
+assert.match(chartPanelSource, /session-chart__indicator-tail/, "Session chart should expose open/finalized tail state");
+assert.doesNotMatch(chartPanelSource, /start_time_ms \+ \(offset \* intervalMs\)/, "custom indicator times must not be inferred from interval offsets");
+assert.doesNotMatch(chartPanelSource, /parseIndicatorValues/, "the chart must consume typed V2 values directly");
 assert.match(chartPanelSource, /syncCustomIndicatorSeries/, "Session chart should update custom series without recreating the chart");
 assert.match(chartPanelSource, /customIndicatorSeriesRefs/, "Session chart should retain custom indicator series refs");
 assert.match(chartPanelSource, /chart\.removeSeries/, "Session chart should remove hidden or stale custom series");

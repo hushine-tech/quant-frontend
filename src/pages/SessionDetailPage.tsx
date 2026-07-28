@@ -24,6 +24,7 @@ import {
   stopSessionResult,
   unmountStrategy,
   isSessionTerminal,
+  shouldPollSessionRecord,
   exactDecimalText,
   strategyStreamKey,
   runtimeRoleForSessionEnvironment,
@@ -689,25 +690,30 @@ export default function SessionDetailPage() {
     if (!stableSessionId) return;
     let cancelled = false;
     let timer: number | undefined;
-    async function loadSession() {
+    const capturedSessionID = stableSessionId;
+    const schedule = (delayMs: number) => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        void loadSession();
+      }, delayMs);
+    };
+    async function loadSession(): Promise<void> {
       try {
-        const item = await getSession(stableSessionId);
-        if (!cancelled) {
-          setSession(item);
-          if (isSessionTerminal(item) && timer !== undefined) {
-            window.clearInterval(timer);
-            timer = undefined;
-          }
-        }
+        const item = await getSession(capturedSessionID);
+        if (cancelled || capturedSessionID !== stableSessionId) return;
+        setSession(item);
+        if (shouldPollSessionRecord(item)) schedule(3000);
       } catch {
-        if (!cancelled) setSession(null);
+        if (!cancelled && capturedSessionID === stableSessionId) {
+          schedule(3000);
+        }
       }
     }
     void loadSession();
-    timer = window.setInterval(() => { void loadSession(); }, 3000);
     return () => {
       cancelled = true;
-      if (timer !== undefined) window.clearInterval(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [stableSessionId]);
 
@@ -766,23 +772,31 @@ export default function SessionDetailPage() {
     }
     const terminal = isSessionTerminal(session);
     let cancelled = false;
-    async function loadDeliveryHealth() {
+    let timer: number | undefined;
+    const runtimeID = session.runtime_id;
+    async function loadDeliveryHealth(): Promise<void> {
       try {
         const result = await listSessionDeliveryHealth({
           session_id: stableSessionId,
-          runtime_id: session?.runtime_id,
+          runtime_id: runtimeID,
         });
         if (!cancelled) setDeliveryHealth(result.items);
       } catch {
         if (!cancelled) setDeliveryHealth([]);
+      } finally {
+        if (!cancelled && !terminal) {
+          timer = window.setTimeout(() => {
+            timer = undefined;
+            void loadDeliveryHealth();
+          }, 5000);
+        }
       }
     }
     void loadDeliveryHealth();
-    if (terminal) {
-      return () => { cancelled = true; };
-    }
-    const timer = window.setInterval(() => { void loadDeliveryHealth(); }, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [stableSessionId, session?.runtime_id, session?.status]);
 
   if (!sessionId) return <p className="error">Missing session id</p>;
