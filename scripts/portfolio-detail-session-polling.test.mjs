@@ -2,9 +2,96 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
+
+const singleFlightSource = readFileSync(join(here, "../src/utils/singleFlight.ts"), "utf8");
+const transpiledSingleFlight = ts.transpileModule(singleFlightSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const asyncControls = await import(
+  `data:text/javascript;charset=utf-8,${encodeURIComponent(transpiledSingleFlight)}`
+);
+
+assert.equal(
+  typeof asyncControls.createRequestGenerationOwner,
+  "function",
+  "session polling should use a generation owner that invalidates superseded requests",
+);
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+const owner = asyncControls.createRequestGenerationOwner();
+const sessionA = owner.begin("session-a");
+const lateSessionAResponse = deferred();
+let activePanel = { sessionId: "session-a", status: "running" };
+let activeInterval = "session-a-interval";
+const applyLateSessionAResponse = lateSessionAResponse.promise.then((status) => {
+  if (!owner.isCurrent(sessionA)) return;
+  activePanel = { sessionId: "session-a", status };
+  activeInterval = null;
+});
+
+const sessionB = owner.begin("session-b");
+activePanel = { sessionId: "session-b", status: "running" };
+activeInterval = "session-b-interval";
+lateSessionAResponse.resolve("finished");
+await applyLateSessionAResponse;
+
+assert.deepEqual(
+  activePanel,
+  { sessionId: "session-b", status: "running" },
+  "a late response from session A must not update session B's panel",
+);
+assert.equal(
+  activeInterval,
+  "session-b-interval",
+  "a late terminal response from session A must not clear session B's interval",
+);
+assert.equal(owner.isCurrent(sessionB), true, "session B should remain the active polling generation");
+
+const firstSameSessionGeneration = owner.begin("same-session");
+const secondSameSessionGeneration = owner.begin("same-session");
+assert.equal(
+  owner.isCurrent(firstSameSessionGeneration),
+  false,
+  "restarting polling for the same session should still supersede its previous generation",
+);
+assert.equal(owner.isCurrent(secondSameSessionGeneration), true);
+
+assert.equal(
+  source.includes("const statusPollOwnerRef = useRef(createRequestGenerationOwner());") &&
+    source.includes("const pollToken = statusPollOwnerRef.current.begin(sessionId);") &&
+    source.includes("const isCurrentPoll = () => statusPollOwnerRef.current.isCurrent(pollToken);") &&
+    source.includes("statusPollOwnerRef.current.invalidate();"),
+  true,
+  "Portfolio detail should own, capture, and invalidate each polling generation",
+);
+
+assert.match(
+  source,
+  /const st = await getStrategyStatus\(sessionId\);\s+if \(!isCurrentPoll\(\)\) return;/,
+  "status responses should be rejected after their polling generation is superseded",
+);
+assert.match(
+  source,
+  /catch \(pollErr\) \{\s+if \(!isCurrentPoll\(\)\) return;/,
+  "status errors should be rejected after their polling generation is superseded",
+);
+assert.match(
+  source,
+  /finally \{\s+if \(isCurrentPoll\(\)\) \{\s+statusPollInFlightRef\.current = false;/,
+  "a superseded request should not release the active generation's in-flight guard",
+);
 
 assert.equal(
   source.includes("isSessionTerminal"),

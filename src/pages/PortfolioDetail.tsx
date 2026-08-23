@@ -71,7 +71,7 @@ import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
 import { extractStrategyInputs, extractStrategyOrderTargets, strategyDeclaresSpot } from "@/utils/strategyDeclarations";
-import { createSingleFlightGuard } from "@/utils/singleFlight";
+import { createRequestGenerationOwner, createSingleFlightGuard } from "@/utils/singleFlight";
 import { useResumeStrategyPreview } from "@/hooks/useResumeStrategyPreview";
 
 function envBannerClass(environment: number): string {
@@ -1454,6 +1454,7 @@ function StrategyPanel({
   const startSubmissionInFlightRef = useRef(false);
   const statusPollInFlightRef = useRef(false);
   const statusPollErrorCountRef = useRef(0);
+  const statusPollOwnerRef = useRef(createRequestGenerationOwner());
   const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const downloadSubmissionGuardRef = useRef(createSingleFlightGuard());
   const [startDialogOpen, setStartDialogOpen] = useState(false);
@@ -1535,7 +1536,11 @@ function StrategyPanel({
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      statusPollOwnerRef.current.invalidate();
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
       if (downloadPollRef.current) clearInterval(downloadPollRef.current);
       downloadSubmissionGuardRef.current.release();
       statusPollInFlightRef.current = false;
@@ -1734,6 +1739,8 @@ function StrategyPanel({
   }
 
   function beginSessionPoll(sessionId: string, initial?: SessionRecord) {
+    const pollToken = statusPollOwnerRef.current.begin(sessionId);
+    const isCurrentPoll = () => statusPollOwnerRef.current.isCurrent(pollToken);
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -1744,13 +1751,15 @@ function StrategyPanel({
     setActivePollSession(initial ?? { sessionId, statusLabel: "running", barsProcessed: 0, error: "", statusNote: "" });
 
     async function pollSession() {
+      if (!isCurrentPoll()) return;
       if (statusPollInFlightRef.current) return;
       statusPollInFlightRef.current = true;
       try {
         const st = await getStrategyStatus(sessionId);
+        if (!isCurrentPoll()) return;
         statusPollErrorCountRef.current = 0;
         setActivePollSession((prev) =>
-          prev
+          prev && isCurrentPoll() && prev.sessionId === sessionId
             ? {
                 ...prev,
                 statusLabel: st.status,
@@ -1761,20 +1770,26 @@ function StrategyPanel({
             : prev
         );
         if (st.status !== "running" && st.status !== "stopping") {
+          if (!isCurrentPoll()) return;
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
+          if (!isCurrentPoll()) return;
           setRunning(false);
-          setActivePollSession(null);
+          setActivePollSession((prev) =>
+            prev && isCurrentPoll() && prev.sessionId === sessionId ? null : prev
+          );
+          if (!isCurrentPoll()) return;
           onSessionsChanged();
         }
       } catch (pollErr) {
+        if (!isCurrentPoll()) return;
         statusPollErrorCountRef.current += 1;
         const message = pollErr instanceof Error ? pollErr.message : "Poll failed";
         if (statusPollErrorCountRef.current < MAX_STATUS_POLL_ERRORS) {
           return;
         }
         setActivePollSession((prev) =>
-          prev
+          prev && isCurrentPoll() && prev.sessionId === sessionId
             ? {
                 ...prev,
                 statusNote: `Status updates are delayed; still polling. Last error: ${message}`,
@@ -1782,14 +1797,23 @@ function StrategyPanel({
             : prev
         );
       } finally {
-        statusPollInFlightRef.current = false;
+        if (isCurrentPoll()) {
+          statusPollInFlightRef.current = false;
+        }
       }
     }
 
     void pollSession();
-    pollRef.current = setInterval(() => {
+    if (!isCurrentPoll()) return;
+    const interval = setInterval(() => {
+      if (!isCurrentPoll()) return;
       void pollSession();
     }, 2000);
+    if (!isCurrentPoll()) {
+      clearInterval(interval);
+      return;
+    }
+    pollRef.current = interval;
   }
 
   async function startStrategyRun(
