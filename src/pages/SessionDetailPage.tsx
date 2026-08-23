@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import {
@@ -14,21 +14,20 @@ import {
   getSessionReconciliationSummary,
   getStrategy,
   listSessionDeliveryHealth,
-  activateStrategy,
-  deactivateStrategy,
   finishSession,
   listPortfolioStrategies,
   listSessions,
-  mountStrategy,
   runStrategy,
   stopSessionResult,
-  unmountStrategy,
   isSessionTerminal,
   shouldPollSessionRecord,
   exactDecimalText,
   strategyStreamKey,
   sessionLeverageDisplayFacts,
+  strategyLeverageDisplayFact,
   strategyLeverageSourceLabel,
+  strategyStartNavigationState,
+  strategyStartResultFromNavigationState,
   runtimeRoleForSessionEnvironment,
   type Session,
   type SessionReconciliationSummary,
@@ -45,6 +44,7 @@ import {
   type StrategyInputDeclaration,
   type StrategyOrderTargetDeclaration,
   type StrategySession,
+  type PreviewRunStrategy,
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import OrderTree from "@/components/OrderTree";
@@ -53,6 +53,7 @@ import Pager from "@/components/Pager";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
 import PageTabs, { type PageTab } from "@/components/PageTabs";
 import { extractStrategyInputs, extractStrategyOrderTargets } from "@/utils/strategyDeclarations";
+import { useResumeStrategyPreview } from "@/hooks/useResumeStrategyPreview";
 
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
 
@@ -64,54 +65,21 @@ function parseMaxLossClosePct(percentText: string): number | null {
 
 async function resumeWithNewSession(portfolioId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<StrategySession> {
   const entries = await listPortfolioStrategies(portfolioId);
-  const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
   if (!targetStrategyId || targetStrategyId <= 0) {
     throw new Error("Cannot resume session: original strategy is missing");
   }
-  const targetEntry = entries.find((entry) => entry.strategy.strategy_id === targetStrategyId) ?? null;
-  const changedActive = currentActiveId !== targetStrategyId;
-  let mountedForResume = false;
-
-  try {
-    if (!targetEntry) {
-      await mountStrategy(portfolioId, targetStrategyId);
-      mountedForResume = true;
-    }
-    if (changedActive || !targetEntry?.active) {
-      await activateStrategy(portfolioId, targetStrategyId);
-    }
-    return await runStrategy(portfolioId, {
-      strategy_path: "",
-      interval: session.interval || "1m",
-      start_time_ms: session.start_time_ms,
-      end_time_ms: session.end_time_ms,
-      runtime_id: runtimeId,
-      max_loss_close_pct: maxLossClosePct,
-    });
-  } catch (err) {
-    if (changedActive) {
-      try {
-        if (currentActiveId !== null) {
-          await activateStrategy(portfolioId, currentActiveId);
-        } else {
-          await deactivateStrategy(portfolioId, targetStrategyId);
-        }
-        if (mountedForResume) {
-          await unmountStrategy(portfolioId, targetStrategyId);
-        }
-      } catch {
-        // Best-effort rollback only; preserve original error.
-      }
-    } else if (mountedForResume) {
-      try {
-        await unmountStrategy(portfolioId, targetStrategyId);
-      } catch {
-        // Best-effort rollback only; preserve original error.
-      }
-    }
-    throw err;
+  if (!entries.some((entry) => entry.active && entry.strategy.strategy_id === targetStrategyId)) {
+    throw new Error("The active strategy changed after preview. Activate this Session's original strategy and review the preview again.");
   }
+  return runStrategy(portfolioId, {
+    strategy_path: "",
+    interval: session.interval || "1m",
+    start_time_ms: session.start_time_ms,
+    end_time_ms: session.end_time_ms,
+    runtime_id: runtimeId,
+    max_loss_close_pct: maxLossClosePct,
+  });
 }
 
 function SessionLeverageFacts({ session }: { session: Session }) {
@@ -148,6 +116,47 @@ function ResumeLeverageApplyResult({ result, applying }: { result: StrategySessi
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ResumeStrategyPreview({
+  preview,
+  loading,
+  error,
+}: {
+  preview: PreviewRunStrategy | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading && !preview && !error) return <p className="muted">Checking resume preflight…</p>;
+  if (error) return <p className="error">Resume start blocked: {error}</p>;
+  if (!preview) return null;
+  const facts = (preview.order_targets ?? preview.declared_order_targets ?? [])
+    .map(strategyLeverageDisplayFact)
+    .filter((fact) => fact !== null);
+  return (
+    <div className="card" style={{ marginTop: "0.75rem", borderLeft: `4px solid ${preview.ok ? "#16a34a" : "#eab308"}` }}>
+      <p style={{ margin: 0, fontWeight: 600 }}>
+        {preview.ok ? "Resume preflight ready" : "Resume start blocked"}
+      </p>
+      {facts.length > 0 ? (
+        <div style={{ display: "grid", gap: "0.3rem", marginTop: "0.4rem", fontSize: "0.84rem" }}>
+          {facts.map((fact, index) => (
+            <div key={`${fact.symbol}-${index}`}>
+              <code>{fact.symbol}</code>{" "}<strong>{fact.effective}</strong>{" "}
+              <span>{fact.source}</span>{" · "}<span className="muted">{fact.current}</span>{" · "}<span>{fact.change}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted" style={{ marginBottom: 0 }}>No Futures leverage targets. Spot targets do not use leverage.</p>
+      )}
+      {!preview.ok && preview.failures.length > 0 ? (
+        <p className="error" style={{ marginBottom: 0 }}>
+          {preview.failures[0].code ? `${preview.failures[0].code}: ` : ""}{preview.failures[0].reason}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -542,6 +551,7 @@ function reconciliationRunCounts(run: ReconciliationRun): ReconciliationRunCount
 export default function SessionDetailPage() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [expandedSnap, setExpandedSnap] = useState<number | null>(null);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -559,6 +569,20 @@ export default function SessionDetailPage() {
   const [resuming, setResuming] = useState(false);
   const resumeSubmissionInFlightRef = useRef(false);
   const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
+  const resumePreview = useResumeStrategyPreview(
+    resumeDialogOpen,
+    session?.portfolio_id ?? Number(id ?? 0),
+    session,
+    resumeRuntimeId,
+    resumeMaxLossClosePct,
+  );
+  const [navigationStartResult, setNavigationStartResult] = useState<StrategySession | null>(() => (
+    strategyStartResultFromNavigationState(location.state, sessionId ?? "")
+  ));
+
+  useEffect(() => {
+    setNavigationStartResult(strategyStartResultFromNavigationState(location.state, sessionId ?? ""));
+  }, [location.state, sessionId]);
 
   // Orders stays the default tab. Audit tables and the chart load lazily when opened; the
   // headline PnL card has its own lightweight session-wide snapshot query.
@@ -601,6 +625,15 @@ export default function SessionDetailPage() {
   const [reconciliationSummary, setReconciliationSummary] = useState<SessionReconciliationSummary | null>(null);
 
   const stableSessionId = sessionId ?? "";
+  const visibleNavigationStartResult = session?.session_id === stableSessionId && (session.target_leverage_facts?.length ?? 0) > 0
+    ? null
+    : navigationStartResult;
+
+  useEffect(() => {
+    if (session?.session_id === stableSessionId && (session.target_leverage_facts?.length ?? 0) > 0) {
+      setNavigationStartResult(null);
+    }
+  }, [session?.session_id, session?.target_leverage_facts, stableSessionId]);
 
   const loadReconciliationSummary = useCallback(() => {
     if (!stableSessionId) return;
@@ -901,6 +934,10 @@ export default function SessionDetailPage() {
       setStopError("Enter a max loss close value from 0.01 to 100.");
       return;
     }
+    if (!resumePreview.ready) {
+      setStopError(resumePreview.error || "Resume preflight is not ready yet.");
+      return;
+    }
     const currentSession = session;
     setStopError(null);
     setStopInfo(null);
@@ -918,7 +955,9 @@ export default function SessionDetailPage() {
       setResumeDialogOpen(false);
       setResumeRuntimeId("");
       setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-      navigate(id ? `/portfolios/${id}/sessions/${resumed.session_id}` : `/portfolios/${currentSession.portfolio_id}/sessions/${resumed.session_id}`);
+      navigate(id ? `/portfolios/${id}/sessions/${resumed.session_id}` : `/portfolios/${currentSession.portfolio_id}/sessions/${resumed.session_id}`, {
+        state: strategyStartNavigationState(resumed),
+      });
     } catch (err) {
       setStopError(err instanceof Error ? err.message : "Failed to resume session");
     } finally {
@@ -1123,6 +1162,7 @@ export default function SessionDetailPage() {
               </div>
             ) : null}
             <SessionLeverageFacts session={session} />
+            <ResumeLeverageApplyResult result={visibleNavigationStartResult} applying={false} />
             {strategyContextError ? (
               <p className="error" style={{ marginTop: 0, marginBottom: 0 }}>{strategyContextError}</p>
             ) : null}
@@ -1617,7 +1657,7 @@ export default function SessionDetailPage() {
         busy={resuming}
         error={stopError}
         confirmLabel="Resume"
-        confirmDisabled={resumeMaxLossClosePct === null}
+        confirmDisabled={resumeMaxLossClosePct === null || !resumeRuntimeId || !resumePreview.ready}
         onRuntimeChange={setResumeRuntimeId}
         onCancel={() => {
           if (resuming) return;
@@ -1649,6 +1689,11 @@ export default function SessionDetailPage() {
             ) : null}
           </label>
         </div>
+        <ResumeStrategyPreview
+          preview={resumePreview.preview}
+          loading={resumePreview.loading}
+          error={resumePreview.error}
+        />
         <ResumeLeverageApplyResult result={resumeStartResult} applying={resuming} />
       </RuntimeSelectionDialog>
     </div>

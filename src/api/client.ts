@@ -1022,7 +1022,7 @@ export function strategyLeverageDisplayFact(target: StrategyOrderTargetDeclarati
   const current = Number.isFinite(target.current_leverage)
     ? `Current: ${target.current_leverage}x`
     : "Current: unavailable";
-  const change = status === "read_failed" || status === "unsupported" || status === "unknown"
+  const change = status && status !== "change_required" && status !== "unchanged"
     ? status.replaceAll("_", " ")
     : target.change_required
       ? "Will change on start"
@@ -1181,9 +1181,27 @@ export type DownloadRunJob = {
   session_id?: string;
   error?: string;
   runtime_error?: RuntimeDependencyError;
+  failures?: PreflightFailure[];
+  target_results?: StrategyLeverageTargetResult[];
+  code?: string;
+  rollback_failed?: boolean;
   created_at: string;
   updated_at: string;
 };
+
+export function downloadRunJobStrategyResult(job: DownloadRunJob): StrategySession | null {
+  if (job.status !== "ready" && job.status !== "error") return null;
+  const sessionID = job.session_id?.trim() ?? "";
+  const ok = job.status === "ready" && sessionID.length > 0;
+  return {
+    session_id: sessionID,
+    ok,
+    failures: job.failures ?? [],
+    target_results: job.target_results ?? [],
+    code: job.code?.trim() || (ok ? "" : job.status === "ready" ? "STRATEGY_SESSION_ID_MISSING" : "STRATEGY_START_FAILED"),
+    rollback_failed: Boolean(job.rollback_failed),
+  };
+}
 
 export async function previewBacktestCoverage(
   portfolioId: number | string,
@@ -1289,6 +1307,14 @@ export type PortfolioStrategy = {
   active: boolean;
   mounted_at: string;
 };
+
+export function activeStrategyMatchesSession(
+  entries: Array<{ strategy: { strategy_id: number }; active: boolean }>,
+  sessionStrategyID: number | null | undefined,
+): boolean {
+  if (!sessionStrategyID || sessionStrategyID <= 0) return false;
+  return entries.some((entry) => entry.active && entry.strategy.strategy_id === sessionStrategyID);
+}
 
 export type CreateStrategyPayload = {
   name: string;
@@ -1432,6 +1458,24 @@ export type Session = {
   started_at: string;
   completed_at?: string;
 };
+
+export type StrategyStartNavigationState = {
+  strategyStartResult: StrategySession;
+};
+
+export function strategyStartNavigationState(result: StrategySession): StrategyStartNavigationState {
+  return { strategyStartResult: result };
+}
+
+export function strategyStartResultFromNavigationState(state: unknown, sessionID: string): StrategySession | null {
+  if (!state || typeof state !== "object" || !("strategyStartResult" in state)) return null;
+  const result = (state as { strategyStartResult?: unknown }).strategyStartResult;
+  if (!result || typeof result !== "object") return null;
+  const candidate = result as Partial<StrategySession>;
+  if (candidate.session_id !== sessionID || typeof candidate.ok !== "boolean") return null;
+  if (!Array.isArray(candidate.failures) || !Array.isArray(candidate.target_results)) return null;
+  return candidate as StrategySession;
+}
 
 export type SessionTargetLeverageFact = {
   session_id: string;

@@ -32,6 +32,8 @@ import {
   strategySpotCapabilityDecision,
   strategyLeverageDisplayFact,
   strategyLeverageSourceLabel,
+  downloadRunJobStrategyResult,
+  strategyStartNavigationState,
   strategyStreamKey,
   queryMarketDataKlines,
   runtimeRoleForSessionEnvironment,
@@ -69,6 +71,8 @@ import { portfolioEnvironmentLabel } from "@/utils/portfolioEnvironment";
 import { collectFilteredPage } from "@/utils/asyncSelectPagination";
 import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@/utils/returnTo";
 import { extractStrategyInputs, extractStrategyOrderTargets, strategyDeclaresSpot } from "@/utils/strategyDeclarations";
+import { createSingleFlightGuard } from "@/utils/singleFlight";
+import { useResumeStrategyPreview } from "@/hooks/useResumeStrategyPreview";
 
 function envBannerClass(environment: number): string {
   switch (environment) {
@@ -148,54 +152,21 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
 
 async function resumeWithNewSession(portfolioId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<StrategySession> {
   const entries = await listPortfolioStrategies(portfolioId);
-  const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
   if (!targetStrategyId || targetStrategyId <= 0) {
     throw new Error("Cannot resume session: original strategy is missing");
   }
-  const targetEntry = entries.find((entry) => entry.strategy.strategy_id === targetStrategyId) ?? null;
-  const changedActive = currentActiveId !== targetStrategyId;
-  let mountedForResume = false;
-
-  try {
-    if (!targetEntry) {
-      await mountStrategy(portfolioId, targetStrategyId);
-      mountedForResume = true;
-    }
-    if (changedActive || !targetEntry?.active) {
-      await activateStrategy(portfolioId, targetStrategyId);
-    }
-    return await runStrategy(portfolioId, {
-      strategy_path: "",
-      interval: session.interval || "1m",
-      start_time_ms: session.start_time_ms,
-      end_time_ms: session.end_time_ms,
-      runtime_id: runtimeId,
-      max_loss_close_pct: maxLossClosePct,
-    });
-  } catch (err) {
-    if (changedActive) {
-      try {
-        if (currentActiveId !== null) {
-          await activateStrategy(portfolioId, currentActiveId);
-        } else {
-          await deactivateStrategy(portfolioId, targetStrategyId);
-        }
-        if (mountedForResume) {
-          await unmountStrategy(portfolioId, targetStrategyId);
-        }
-      } catch {
-        // Best-effort rollback only; preserve the original error.
-      }
-    } else if (mountedForResume) {
-      try {
-        await unmountStrategy(portfolioId, targetStrategyId);
-      } catch {
-        // Best-effort rollback only; preserve the original error.
-      }
-    }
-    throw err;
+  if (!entries.some((entry) => entry.active && entry.strategy.strategy_id === targetStrategyId)) {
+    throw new Error("The active strategy changed after preview. Activate this Session's original strategy and review the preview again.");
   }
+  return runStrategy(portfolioId, {
+    strategy_path: "",
+    interval: session.interval || "1m",
+    start_time_ms: session.start_time_ms,
+    end_time_ms: session.end_time_ms,
+    runtime_id: runtimeId,
+    max_loss_close_pct: maxLossClosePct,
+  });
 }
 
 async function requiredSpotSymbolsForSnapshot(summary: PortfolioVenueWallets): Promise<RequiredSnapshotSymbol[]> {
@@ -863,16 +834,18 @@ function LiveStartReadinessHint({
   preview,
   loading,
   error,
+  label = "Strategy",
 }: {
   preview: PreviewRunStrategy | null;
   loading: boolean;
   error: string | null;
+  label?: string;
 }) {
   if (loading && !preview && !error) {
     return (
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #3b82f6" }}>
         <p style={{ margin: 0, fontSize: "0.9rem" }}>
-          <strong>Checking demo preflight...</strong>
+          <strong>Checking {label.toLowerCase()} preflight...</strong>
         </p>
       </div>
     );
@@ -881,7 +854,7 @@ function LiveStartReadinessHint({
     return (
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
         <p style={{ margin: 0, fontSize: "0.9rem" }}>
-          <strong>Demo start blocked:</strong>{" "}
+          <strong>{label} start blocked:</strong>{" "}
           <span className="muted">{error}</span>
         </p>
       </div>
@@ -942,7 +915,7 @@ function LiveStartReadinessHint({
   return (
       <div className="card" style={{ marginBottom: "0.75rem", borderLeft: "4px solid #eab308" }}>
         <p style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>
-        <strong>Demo start blocked:</strong>{" "}
+        <strong>{label} start blocked:</strong>{" "}
         {preview.failures.length} declared input(s) not ready.
       </p>
       <div style={{ display: "grid", gap: "0.35rem", marginBottom: "0.5rem", fontSize: "0.82rem" }}>
@@ -1001,6 +974,7 @@ function BacktestCoverageGate({
   endTimeMs,
   runtimeSelected,
   busy,
+  startReady,
   onRefresh,
   onDownloadAndRun,
 }: {
@@ -1012,6 +986,7 @@ function BacktestCoverageGate({
   endTimeMs?: number;
   runtimeSelected: boolean;
   busy: boolean;
+  startReady: boolean;
   onRefresh: () => void;
   onDownloadAndRun: () => void;
 }) {
@@ -1057,7 +1032,7 @@ function BacktestCoverageGate({
   }
 
   const blocked = !preview?.complete;
-  const canDownloadAndRun = Boolean(preview && !preview.complete && preview.can_auto_download && !busy);
+  const canDownloadAndRun = Boolean(preview && !preview.complete && preview.can_auto_download && !busy && startReady);
   const jobRuntimeError = job ? formatRuntimeDependencyError(job.runtime_error) : null;
   const jobError = jobRuntimeError ?? job?.error;
 
@@ -1480,6 +1455,7 @@ function StrategyPanel({
   const statusPollInFlightRef = useRef(false);
   const statusPollErrorCountRef = useRef(0);
   const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const downloadSubmissionGuardRef = useRef(createSingleFlightGuard());
   const [startDialogOpen, setStartDialogOpen] = useState(false);
   const navigate = useNavigate();
   const [startRuntimeId, setStartRuntimeId] = useState(initialRuntimeId);
@@ -1496,9 +1472,9 @@ function StrategyPanel({
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [downloadJob, setDownloadJob] = useState<DownloadRunJob | null>(null);
-  const [demoPreview, setDemoPreview] = useState<PreviewRunStrategy | null>(null);
-  const [demoPreviewLoading, setDemoPreviewLoading] = useState(false);
-  const [demoPreviewError, setDemoPreviewError] = useState<string | null>(null);
+  const [strategyStartPreview, setStrategyStartPreview] = useState<PreviewRunStrategy | null>(null);
+  const [strategyStartPreviewLoading, setStrategyStartPreviewLoading] = useState(false);
+  const [strategyStartPreviewError, setStrategyStartPreviewError] = useState<string | null>(null);
   const [lastStartResult, setLastStartResult] = useState<StrategySession | null>(null);
   const [activeRunDeclaredTargets, setActiveRunDeclaredTargets] = useState<StrategyOrderTargetDeclaration[]>([]);
 
@@ -1539,9 +1515,9 @@ function StrategyPanel({
       }
     : null;
   const selectedCapabilityPreview = pendingStart?.kind === "demo"
-    ? demoPreview ?? sourceDeclarationPreview
+    ? strategyStartPreview ?? sourceDeclarationPreview
     : pendingStart?.kind === "backtest"
-      ? coverageSpotPreview ?? sourceDeclarationPreview
+      ? strategyStartPreview ?? coverageSpotPreview ?? sourceDeclarationPreview
       : sourceDeclarationPreview;
   const runCapabilityDecision = strategySpotCapabilityDecision(
     selectedCapabilityPreview,
@@ -1552,8 +1528,8 @@ function StrategyPanel({
   const activeStrategyDeclaredTargets = activeRunDeclaredTargets.length > 0
     ? activeRunDeclaredTargets
     : sourceDeclaredTargets;
-  const demoStartPreflightReady = pendingStart?.kind !== "demo" || (
-    Boolean(demoPreview?.ok) && !demoPreviewLoading && !demoPreviewError && runCapabilityDecision.enabled
+  const strategyStartPreflightReady = !pendingStart || (
+    Boolean(strategyStartPreview?.ok) && !strategyStartPreviewLoading && !strategyStartPreviewError && runCapabilityDecision.enabled
   );
   const activeSessionInRunPanel = Boolean(activePollSession && isRunPanelActiveStatus(activePollSession.statusLabel));
 
@@ -1561,6 +1537,7 @@ function StrategyPanel({
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (downloadPollRef.current) clearInterval(downloadPollRef.current);
+      downloadSubmissionGuardRef.current.release();
       statusPollInFlightRef.current = false;
       statusPollErrorCountRef.current = 0;
     };
@@ -1643,12 +1620,12 @@ function StrategyPanel({
   }, [pendingStart, startRuntimeId, startRuntime]);
 
   useEffect(() => {
-    setDemoPreview(null);
-    setDemoPreviewError(null);
-    setDemoPreviewLoading(false);
+    setStrategyStartPreview(null);
+    setStrategyStartPreviewError(null);
+    setStrategyStartPreviewLoading(false);
     if (
       !startDialogOpen ||
-      pendingStart?.kind !== "demo" ||
+      !pendingStart ||
       !startRuntimeId ||
       maxLossClosePct === null
     ) {
@@ -1658,36 +1635,38 @@ function StrategyPanel({
     const preflightMaxLossClosePct = maxLossClosePct;
     let cancelled = false;
     let timer: number | null = null;
-    async function loadDemoPreflight() {
-      setDemoPreviewLoading(true);
+    async function loadStrategyStartPreflight() {
+      setStrategyStartPreviewLoading(true);
       try {
         const preview = await previewRunStrategy(portfolioId, {
+          start_time_ms: pendingStart?.startTimeMs,
+          end_time_ms: pendingStart?.endTimeMs,
           runtime_id: startRuntimeId,
           max_loss_close_pct: preflightMaxLossClosePct,
         });
         if (!cancelled) {
-          setDemoPreview(preview);
+          setStrategyStartPreview(preview);
           setActiveRunDeclaredTargets(previewOrderTargets(preview));
-          setDemoPreviewError(null);
+          setStrategyStartPreviewError(null);
         }
       } catch (err) {
         if (!cancelled) {
-          setDemoPreview(null);
-          setDemoPreviewError(formatAPIError(err, "Demo preflight failed"));
+          setStrategyStartPreview(null);
+          setStrategyStartPreviewError(formatAPIError(err, "Strategy preflight failed"));
         }
       } finally {
         if (!cancelled) {
-          setDemoPreviewLoading(false);
-          timer = window.setTimeout(loadDemoPreflight, 15_000);
+          setStrategyStartPreviewLoading(false);
+          timer = window.setTimeout(loadStrategyStartPreflight, 15_000);
         }
       }
     }
-    void loadDemoPreflight();
+    void loadStrategyStartPreflight();
     return () => {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [portfolioId, startDialogOpen, pendingStart?.kind, startRuntimeId, maxLossClosePct]);
+  }, [portfolioId, startDialogOpen, pendingStart?.kind, pendingStart?.startTimeMs, pendingStart?.endTimeMs, activeStrat?.strategy.strategy_id, startRuntimeId, maxLossClosePct]);
 
   async function loadPortfolioStrats() {
     try {
@@ -1893,8 +1872,11 @@ function StrategyPanel({
 
   function handleDownloadJobUpdate(job: DownloadRunJob) {
     setDownloadJob(job);
+    const terminalResult = downloadRunJobStrategyResult(job);
+    if (terminalResult) setLastStartResult(terminalResult);
     if (job.status === "ready" && job.session_id) {
       clearDownloadPoll();
+      downloadSubmissionGuardRef.current.release();
       setStartDialogOpen(false);
       setPendingStart(null);
       setDownloadJob(null);
@@ -1903,9 +1885,15 @@ function StrategyPanel({
       setRunning(false);
       return;
     }
-    if (job.status === "error") {
+    if (job.status === "error" || job.status === "ready") {
       clearDownloadPoll();
-      setError(formatRuntimeDependencyError(job.runtime_error) ?? job.error ?? "Download data and run backtest failed");
+      downloadSubmissionGuardRef.current.release();
+      const structuredReason = job.failures?.[0]?.reason;
+      const structuredCode = job.code || job.failures?.[0]?.code;
+      const structuredError = structuredCode
+        ? `${structuredCode}: ${structuredReason || job.error || "Backtest did not start."}`
+        : structuredReason;
+      setError(formatRuntimeDependencyError(job.runtime_error) ?? structuredError ?? job.error ?? "Download data and run backtest failed");
       setRunning(false);
     }
   }
@@ -1917,6 +1905,7 @@ function StrategyPanel({
         handleDownloadJobUpdate(await getDownloadAndRunJob(jobId));
       } catch (err) {
         clearDownloadPoll();
+        downloadSubmissionGuardRef.current.release();
         setError(err instanceof Error ? err.message : "Download job polling failed");
         setRunning(false);
       }
@@ -1933,8 +1922,14 @@ function StrategyPanel({
       setError("Select a runtime before starting the session.");
       return;
     }
+    if (!strategyStartPreflightReady) {
+      setError(strategyStartPreviewError || "Strategy preflight is not ready yet.");
+      return;
+    }
+    if (!downloadSubmissionGuardRef.current.tryAcquire()) return;
     setRunning(true);
     setError(null);
+    setLastStartResult(null);
     try {
       const job = await startDownloadAndRunBacktest(portfolioId, {
         strategy_path: "",
@@ -1949,6 +1944,7 @@ function StrategyPanel({
         pollDownloadAndRunJob(job.job_id);
       }
     } catch (err) {
+      downloadSubmissionGuardRef.current.release();
       setError(formatAPIError(err, "Download data and run backtest failed"));
       setRunning(false);
     }
@@ -1979,8 +1975,8 @@ function StrategyPanel({
       setError("Activate a strategy before running a backtest.");
       return;
     }
-    if (pendingStart.kind === "demo" && !demoStartPreflightReady) {
-      setError(demoPreviewError || "Demo preflight is not ready yet.");
+    if (!strategyStartPreflightReady) {
+      setError(strategyStartPreviewError || "Strategy preflight is not ready yet.");
       return;
     }
     await startStrategyRun(pendingStart, startRuntimeId);
@@ -2376,7 +2372,7 @@ function StrategyPanel({
         confirmDisabled={
           maxLossClosePct === null ||
           !runCapabilityDecision.enabled ||
-          (pendingStart?.kind === "demo" && !demoStartPreflightReady) ||
+          !strategyStartPreflightReady ||
           (pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error")))
         }
         onRuntimeChange={(runtimeId, runtime) => {
@@ -2385,6 +2381,8 @@ function StrategyPanel({
         }}
         onCancel={() => {
           if (running) return;
+          clearDownloadPoll();
+          downloadSubmissionGuardRef.current.release();
           setStartDialogOpen(false);
           setPendingStart(null);
           setError(null);
@@ -2412,20 +2410,33 @@ function StrategyPanel({
           </label>
         </div>
         {pendingStart?.kind === "backtest" ? (
-          <BacktestCoverageGate
-            preview={coveragePreview}
-            loading={coverageLoading}
-            error={coverageError}
-            job={downloadJob}
-            startTimeMs={pendingStart.startTimeMs}
-            endTimeMs={pendingStart.endTimeMs}
-            runtimeSelected={Boolean(startRuntimeId)}
-            busy={running}
-            onRefresh={() => {
-              if (pendingStart && startRuntimeId) void loadBacktestCoverage(pendingStart, startRuntimeId);
-            }}
-            onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
-          />
+          <>
+            <BacktestCoverageGate
+              preview={coveragePreview}
+              loading={coverageLoading}
+              error={coverageError}
+              job={downloadJob}
+              startTimeMs={pendingStart.startTimeMs}
+              endTimeMs={pendingStart.endTimeMs}
+              runtimeSelected={Boolean(startRuntimeId)}
+              busy={running}
+              startReady={strategyStartPreflightReady}
+              onRefresh={() => {
+                if (pendingStart && startRuntimeId) void loadBacktestCoverage(pendingStart, startRuntimeId);
+              }}
+              onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
+            />
+            {!runCapabilityDecision.enabled ? (
+              <p className="error"><code>{runCapabilityDecision.code}</code>: {runCapabilityDecision.reason}</p>
+            ) : null}
+            <LiveStartReadinessHint
+              label="Backtest"
+              preview={strategyStartPreview}
+              loading={strategyStartPreviewLoading}
+              error={strategyStartPreviewError}
+            />
+            <StrategyLeverageApplyResult result={lastStartResult} applying={running && Boolean(downloadJob)} />
+          </>
         ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null ? (
           <>
             {!runCapabilityDecision.enabled ? (
@@ -2433,7 +2444,7 @@ function StrategyPanel({
                 <code>{runCapabilityDecision.code}</code>: {runCapabilityDecision.reason}
               </p>
             ) : null}
-            <LiveStartReadinessHint preview={demoPreview} loading={demoPreviewLoading} error={demoPreviewError} />
+            <LiveStartReadinessHint label="Demo" preview={strategyStartPreview} loading={strategyStartPreviewLoading} error={strategyStartPreviewError} />
             <StrategyLeverageApplyResult result={lastStartResult} applying={running} />
           </>
         ) : null}
@@ -2464,6 +2475,13 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
   const [resuming, setResuming] = useState(false);
   const resumeSubmissionInFlightRef = useRef(false);
   const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
+  const resumePreview = useResumeStrategyPreview(
+    resumeDialogSession !== null,
+    portfolioId,
+    resumeDialogSession,
+    resumeRuntimeId,
+    resumeMaxLossClosePct,
+  );
 
   useEffect(() => {
     setTableRefresh((v) => v + 1);
@@ -2553,6 +2571,10 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       setStopError("Enter a max loss close value from 0.01 to 100.");
       return;
     }
+    if (!resumePreview.ready) {
+      setStopError(resumePreview.error || "Resume preflight is not ready yet.");
+      return;
+    }
     resumeSubmissionInFlightRef.current = true;
     setResuming(true);
     setResumeStartResult(null);
@@ -2568,7 +2590,9 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       setResumeDialogSession(null);
       setResumeRuntimeId("");
       setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-      navigate(`/portfolios/${portfolioId}/sessions/${resumed.session_id}`);
+      navigate(`/portfolios/${portfolioId}/sessions/${resumed.session_id}`, {
+        state: strategyStartNavigationState(resumed),
+      });
     } catch (err) {
       setStopError(formatAPIError(err, "Failed to resume session"));
     } finally {
@@ -2712,7 +2736,7 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       busy={resuming}
       error={stopError}
       confirmLabel="Resume"
-      confirmDisabled={resumeMaxLossClosePct === null}
+      confirmDisabled={resumeMaxLossClosePct === null || !resumeRuntimeId || !resumePreview.ready}
       onRuntimeChange={setResumeRuntimeId}
       onCancel={() => {
         if (resuming) return;
@@ -2746,6 +2770,12 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
           ) : null}
         </label>
       </div>
+      <LiveStartReadinessHint
+        label="Resume"
+        preview={resumePreview.preview}
+        loading={resumePreview.loading}
+        error={resumePreview.error}
+      />
       <StrategyLeverageApplyResult result={resumeStartResult} applying={resuming} />
     </RuntimeSelectionDialog>
     </>

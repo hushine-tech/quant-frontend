@@ -7,21 +7,27 @@ const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
 
 assert.equal(
-  source.includes("const demoStartPreflightReady ="),
+  source.includes("const strategyStartPreflightReady ="),
   true,
-  "PortfolioDetail should track whether demo start preflight has passed",
+  "PortfolioDetail should track whether the selected strategy start preflight has passed",
 );
 
 assert.equal(
-  /pendingStart\?\.kind === "demo" && !demoStartPreflightReady/.test(source),
+  source.includes("!strategyStartPreflightReady"),
   true,
-  "RuntimeSelectionDialog should disable demo start while preflight is not ready",
+  "RuntimeSelectionDialog should disable both Demo and Backtest start while preflight is not ready",
 );
 
 assert.equal(
-  source.includes('pendingStart?.kind !== "demo"'),
+  /<BacktestCoverageGate[\s\S]*?startReady=\{strategyStartPreflightReady\}/.test(source),
   true,
-  "PortfolioDetail should run demo preflight only for the demo start dialog",
+  "download-and-run must also wait until the rendered read-only strategy preview is current and ready",
+);
+
+assert.equal(
+  source.includes("pendingStart?.startTimeMs") && source.includes("pendingStart?.endTimeMs"),
+  true,
+  "Backtest preflight should include the selected historical range",
 );
 
 assert.equal(
