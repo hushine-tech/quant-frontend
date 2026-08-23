@@ -880,6 +880,7 @@ export type RunStrategyParams = {
   end_time_ms?: number;
   runtime_id?: string;
   max_loss_close_pct?: number;
+  resume_session_id?: string;
 };
 
 export type StrategyLeverageTargetResult = {

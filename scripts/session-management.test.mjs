@@ -33,6 +33,11 @@ for (const token of [
 for (const [name, detailSource] of [["Portfolio session list", portfolioDetail], ["Session detail", sessionDetail]]) {
   assert.equal(detailSource.includes("resumeLeverageText"), false, `${name} resume must not own leverage input state`);
   assert.equal(detailSource.includes("parseSessionLeverage"), false, `${name} resume must not validate a leverage override`);
+  assert.equal(
+    detailSource.includes("resume_session_id: session.session_id"),
+    true,
+    `${name} Resume must explicitly bind the recoverable/stopped predecessor Session`,
+  );
 }
 
 const legacyPortfolioModeToken = String.fromCharCode(109, 111, 100, 101);

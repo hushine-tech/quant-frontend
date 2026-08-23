@@ -166,6 +166,7 @@ async function resumeWithNewSession(portfolioId: number, session: Session, runti
     end_time_ms: session.end_time_ms,
     runtime_id: runtimeId,
     max_loss_close_pct: maxLossClosePct,
+    resume_session_id: session.session_id,
   });
 }
 
