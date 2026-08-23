@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "../src/pages/SessionManagement.tsx"), "utf8");
+const portfolioDetail = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
+const sessionDetail = readFileSync(join(here, "../src/pages/SessionDetailPage.tsx"), "utf8");
 
 for (const token of [
   "PageHeader",
@@ -26,6 +28,11 @@ for (const token of [
   '<option value="2">Live (2)</option>',
 ]) {
   assert.equal(source.includes(token), true, `Session Management should include ${token}`);
+}
+
+for (const [name, detailSource] of [["Portfolio session list", portfolioDetail], ["Session detail", sessionDetail]]) {
+  assert.equal(detailSource.includes("resumeLeverageText"), false, `${name} resume must not own leverage input state`);
+  assert.equal(detailSource.includes("parseSessionLeverage"), false, `${name} resume must not validate a leverage override`);
 }
 
 const legacyPortfolioModeToken = String.fromCharCode(109, 111, 100, 101);

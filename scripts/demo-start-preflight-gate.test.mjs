@@ -29,3 +29,10 @@ assert.equal(
   true,
   "Demo preflight should call PreviewRunStrategy with the selected runtime",
 );
+
+const previewCall = source.match(/previewRunStrategy\(portfolioId,\s*\{([\s\S]*?)\}\);/)?.[1] ?? "";
+assert.equal(
+  previewCall.includes("leverage"),
+  false,
+  "Demo preflight must not send an editable leverage override",
+);

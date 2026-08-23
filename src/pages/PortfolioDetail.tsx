@@ -30,6 +30,8 @@ import {
   buildDebugPackageRequest,
   normalizeProductCapabilities,
   strategySpotCapabilityDecision,
+  strategyLeverageDisplayFact,
+  strategyLeverageSourceLabel,
   strategyStreamKey,
   queryMarketDataKlines,
   runtimeRoleForSessionEnvironment,
@@ -52,6 +54,7 @@ import {
   type ProductCapabilities,
   type RequiredSnapshotSymbol,
   type StrategyOrderTargetDeclaration,
+  type StrategySession,
 } from "@/api/client";
 import StopSessionDialog from "@/components/StopSessionDialog";
 import RuntimeSelectionDialog from "@/components/RuntimeSelectionDialog";
@@ -95,7 +98,6 @@ function normalizePortfolioDetailTab(value: string | null): PortfolioDetailTab {
 }
 
 const DEFAULT_MAX_LOSS_CLOSE_PERCENT = 30;
-const DEFAULT_SESSION_LEVERAGE = 1;
 
 function formatAPIError(error: unknown, fallback: string): string {
   if (error instanceof APIError) {
@@ -120,20 +122,9 @@ function parseMaxLossClosePct(percentText: string): number | null {
   return value / 100;
 }
 
-function parseSessionLeverage(leverageText: string): number | null {
-  const value = Number(leverageText);
-  if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) return null;
-  return value;
-}
-
 function formatRiskPercent(value: number | undefined): string {
   if (!Number.isFinite(value ?? NaN) || !value) return `${DEFAULT_MAX_LOSS_CLOSE_PERCENT}%`;
   return `${((value ?? 0) * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
-}
-
-function formatLeverage(value: number | undefined): string {
-  if (!Number.isFinite(value ?? NaN) || !value) return `${DEFAULT_SESSION_LEVERAGE}x`;
-  return `${(value ?? DEFAULT_SESSION_LEVERAGE).toFixed(2).replace(/\.?0+$/, "")}x`;
 }
 
 function sessionStartedAtMs(session: Session): number {
@@ -155,7 +146,7 @@ function canResumeSession(session: Session, allSessions: Session[]): boolean {
   ));
 }
 
-async function resumeWithNewSession(portfolioId: number, session: Session, runtimeId: string, maxLossClosePct: number, leverage: number): Promise<{ session_id: string }> {
+async function resumeWithNewSession(portfolioId: number, session: Session, runtimeId: string, maxLossClosePct: number): Promise<StrategySession> {
   const entries = await listPortfolioStrategies(portfolioId);
   const currentActiveId = entries.find((entry) => entry.active)?.strategy.strategy_id ?? null;
   const targetStrategyId = session.strategy_id;
@@ -181,7 +172,6 @@ async function resumeWithNewSession(portfolioId: number, session: Session, runti
       end_time_ms: session.end_time_ms,
       runtime_id: runtimeId,
       max_loss_close_pct: maxLossClosePct,
-      leverage,
     });
   } catch (err) {
     if (changedActive) {
@@ -816,6 +806,51 @@ function previewRoutes(preview: PreviewRunStrategy): NonNullable<PreviewRunStrat
   return preview.required_routes ?? [];
 }
 
+function StrategyLeveragePreviewList({ targets }: { targets: StrategyOrderTargetDeclaration[] }) {
+  const facts = targets.map(strategyLeverageDisplayFact).filter((fact) => fact !== null);
+  if (facts.length === 0) return null;
+  return (
+    <div style={{ display: "grid", gap: "0.3rem", marginTop: "0.35rem" }}>
+      {facts.map((fact, index) => (
+        <div key={`${fact.effective}-${fact.source}-${index}`} style={{ display: "flex", gap: "0.45rem", alignItems: "baseline", flexWrap: "wrap" }}>
+          <code>{fact.symbol}</code>
+          <strong>{fact.effective}</strong>
+          <span>{fact.source}</span>
+          <span className="muted">{fact.current}</span>
+          <span className={fact.change === "No change" ? "muted" : undefined}>{fact.change}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StrategyLeverageApplyResult({ result, applying }: { result: StrategySession | null; applying: boolean }) {
+  if (applying && !result) {
+    return <p className="muted" style={{ margin: 0 }}>Applying and confirming strategy leverage…</p>;
+  }
+  if (!result || (result.target_results?.length ?? 0) === 0) return null;
+  return (
+    <div className="card" style={{ marginTop: "0.75rem", borderLeft: `4px solid ${result.rollback_failed || !result.ok ? "#ef4444" : "#16a34a"}` }}>
+      <p style={{ margin: "0 0 0.4rem", fontWeight: 600 }}>
+        {result.rollback_failed ? "Leverage rollback requires attention" : result.ok ? "Strategy leverage confirmed" : "Strategy leverage apply failed"}
+        {result.code ? <> · <code>{result.code}</code></> : null}
+      </p>
+      <div style={{ display: "grid", gap: "0.3rem", fontSize: "0.84rem" }}>
+        {result.target_results.map((target, index) => (
+          <div key={`${target.venue_id}-${target.market}-${index}`}>
+            <code>{target.symbol}</code>{" "}
+            <strong>{target.effective_leverage}x</strong>{" "}
+            <span>{strategyLeverageSourceLabel(target.leverage_source)}</span>{" · "}
+            <span>{target.status.replaceAll("_", " ")}</span>
+            {target.current_leverage != null ? <span className="muted"> · Current: {target.current_leverage}x</span> : null}
+            {target.error_code ? <span className="error"> · {target.error_code}: {target.error_message || "failed"}</span> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Demo-start readiness hint.
 //
 // Asks strategy-service's PreviewRunStrategy — the same evaluator the real
@@ -887,18 +922,14 @@ function LiveStartReadinessHint({
               <span className="muted"> · {preview.risk_controls.max_loss_close_source}</span>
             ) : null}
           </div>
-          <div>
-            <span className="muted">Leverage:</span>{" "}
-            {formatLeverage(preview.risk_controls?.leverage)}
-            {preview.risk_controls?.leverage_source ? (
-              <span className="muted"> · {preview.risk_controls.leverage_source}</span>
-            ) : null}
-          </div>
           {inputs.length > 0 ? (
             <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
           ) : null}
           {orderTargets.length > 0 ? (
-            <div><span className="muted">Order targets:</span> {orderTargets.slice(0, 3).map(declarationText).join("; ")}{orderTargets.length > 3 ? " …" : ""}</div>
+            <div>
+              <span className="muted">Order targets:</span> {orderTargets.slice(0, 3).map(declarationText).join("; ")}{orderTargets.length > 3 ? " …" : ""}
+              <StrategyLeveragePreviewList targets={orderTargets} />
+            </div>
           ) : (
             <div><span className="muted">Order targets:</span> read-only strategy</div>
           )}
@@ -922,18 +953,14 @@ function LiveStartReadinessHint({
             <span className="muted"> · {preview.risk_controls.max_loss_close_source}</span>
           ) : null}
         </div>
-        <div>
-          <span className="muted">Leverage:</span>{" "}
-          {formatLeverage(preview.risk_controls?.leverage)}
-          {preview.risk_controls?.leverage_source ? (
-            <span className="muted"> · {preview.risk_controls.leverage_source}</span>
-          ) : null}
-        </div>
         {inputs.length > 0 ? (
           <div><span className="muted">Inputs:</span> {inputs.slice(0, 3).map(declarationText).join("; ")}{inputs.length > 3 ? " …" : ""}</div>
         ) : null}
         {orderTargets.length > 0 ? (
-          <div><span className="muted">Order targets:</span> {orderTargets.slice(0, 3).map(declarationText).join("; ")}{orderTargets.length > 3 ? " …" : ""}</div>
+          <div>
+            <span className="muted">Order targets:</span> {orderTargets.slice(0, 3).map(declarationText).join("; ")}{orderTargets.length > 3 ? " …" : ""}
+            <StrategyLeveragePreviewList targets={orderTargets} />
+          </div>
         ) : null}
       </div>
       <ul style={{ margin: 0, paddingLeft: "1.25rem", fontSize: "0.85rem" }}>
@@ -1449,6 +1476,7 @@ function StrategyPanel({
   const [activePollSession, setActivePollSession] = useState<SessionRecord | null>(null);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startSubmissionInFlightRef = useRef(false);
   const statusPollInFlightRef = useRef(false);
   const statusPollErrorCountRef = useRef(0);
   const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1458,7 +1486,6 @@ function StrategyPanel({
   const [startRuntime, setStartRuntime] = useState<Runtime | null>(null);
   const quickStartMode = isQuickStartReturnTo(returnTo);
   const [maxLossClosePercent, setMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-  const [sessionLeverageText, setSessionLeverageText] = useState(String(DEFAULT_SESSION_LEVERAGE));
   const [pendingStart, setPendingStart] = useState<{
     kind: "backtest" | "demo";
     interval: string;
@@ -1472,6 +1499,7 @@ function StrategyPanel({
   const [demoPreview, setDemoPreview] = useState<PreviewRunStrategy | null>(null);
   const [demoPreviewLoading, setDemoPreviewLoading] = useState(false);
   const [demoPreviewError, setDemoPreviewError] = useState<string | null>(null);
+  const [lastStartResult, setLastStartResult] = useState<StrategySession | null>(null);
   const [activeRunDeclaredTargets, setActiveRunDeclaredTargets] = useState<StrategyOrderTargetDeclaration[]>([]);
 
   // Portfolio strategies (mounting panel)
@@ -1484,7 +1512,6 @@ function StrategyPanel({
   const activeStrat = portfolioStrats.find((item) => item.active);
   const mountedIds = new Set(portfolioStrats.map((item) => item.strategy.strategy_id));
   const maxLossClosePct = parseMaxLossClosePct(maxLossClosePercent);
-  const sessionLeverage = parseSessionLeverage(sessionLeverageText);
   const sourceDeclaredInputs = extractStrategyInputs(activeStrategyCode ?? activeStrat?.strategy.code);
   const sourceDeclaredTargets = extractStrategyOrderTargets(activeStrategyCode ?? activeStrat?.strategy.code);
   const activeStrategyDeclaresSpot = [...sourceDeclaredInputs, ...sourceDeclaredTargets]
@@ -1623,14 +1650,12 @@ function StrategyPanel({
       !startDialogOpen ||
       pendingStart?.kind !== "demo" ||
       !startRuntimeId ||
-      maxLossClosePct === null ||
-      sessionLeverage === null
+      maxLossClosePct === null
     ) {
       return;
     }
 
     const preflightMaxLossClosePct = maxLossClosePct;
-    const preflightLeverage = sessionLeverage;
     let cancelled = false;
     let timer: number | null = null;
     async function loadDemoPreflight() {
@@ -1639,7 +1664,6 @@ function StrategyPanel({
         const preview = await previewRunStrategy(portfolioId, {
           runtime_id: startRuntimeId,
           max_loss_close_pct: preflightMaxLossClosePct,
-          leverage: preflightLeverage,
         });
         if (!cancelled) {
           setDemoPreview(preview);
@@ -1663,7 +1687,7 @@ function StrategyPanel({
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [portfolioId, startDialogOpen, pendingStart?.kind, startRuntimeId, maxLossClosePct, sessionLeverage]);
+  }, [portfolioId, startDialogOpen, pendingStart?.kind, startRuntimeId, maxLossClosePct]);
 
   async function loadPortfolioStrats() {
     try {
@@ -1793,6 +1817,7 @@ function StrategyPanel({
     params: { interval: string; startTimeMs?: number; endTimeMs?: number },
     runtimeId: string,
   ) {
+    if (startSubmissionInFlightRef.current) return;
     if (!runCapabilityDecision.enabled) {
       setError(`${runCapabilityDecision.code}: ${runCapabilityDecision.reason}`);
       return;
@@ -1801,16 +1826,14 @@ function StrategyPanel({
       setError("Max loss close must be greater than 0 and no more than 100%.");
       return;
     }
-    if (sessionLeverage === null) {
-      setError("Leverage must be a positive whole number.");
-      return;
-    }
     if (!runtimeId) {
       setError("Select a runtime before starting the session.");
       return;
     }
+    startSubmissionInFlightRef.current = true;
     setRunning(true);
     setError(null);
+    setLastStartResult(null);
 
     try {
       const sess = await runStrategy(portfolioId, {
@@ -1820,14 +1843,20 @@ function StrategyPanel({
         end_time_ms: params.endTimeMs,
         runtime_id: runtimeId,
         max_loss_close_pct: maxLossClosePct,
-        leverage: sessionLeverage,
       });
+      setLastStartResult(sess);
+      if (!sess.session_id) {
+        const failure = sess.failures?.[0];
+        setError(`${sess.code || failure?.code || "STRATEGY_START_FAILED"}: ${failure?.reason || "Session did not start. Review the per-target results below."}`);
+        return;
+      }
       setStartDialogOpen(false);
       setPendingStart(null);
       beginSessionPoll(sess.session_id);
-      setRunning(false);
     } catch (err) {
       setError(formatAPIError(err, "Failed to start"));
+    } finally {
+      startSubmissionInFlightRef.current = false;
       setRunning(false);
     }
   }
@@ -1900,10 +1929,6 @@ function StrategyPanel({
       setError("Max loss close must be greater than 0 and no more than 100%.");
       return;
     }
-    if (sessionLeverage === null) {
-      setError("Leverage must be a positive whole number.");
-      return;
-    }
     if (!startRuntimeId) {
       setError("Select a runtime before starting the session.");
       return;
@@ -1918,7 +1943,6 @@ function StrategyPanel({
         end_time_ms: pendingStart.endTimeMs,
         runtime_id: startRuntimeId,
         max_loss_close_pct: maxLossClosePct,
-        leverage: sessionLeverage,
       });
       handleDownloadJobUpdate(job);
       if (job.status !== "ready" && job.status !== "error") {
@@ -1932,6 +1956,7 @@ function StrategyPanel({
 
   function openStartDialog(params: { kind: "backtest" | "demo"; interval: string; startTimeMs?: number; endTimeMs?: number }) {
     setError(null);
+    setLastStartResult(null);
     setPendingStart(params);
     setStartDialogOpen(true);
   }
@@ -1944,10 +1969,6 @@ function StrategyPanel({
     }
     if (maxLossClosePct === null) {
       setError("Max loss close must be greater than 0 and no more than 100%.");
-      return;
-    }
-    if (sessionLeverage === null) {
-      setError("Leverage must be a positive whole number.");
       return;
     }
     if (pendingStart.kind === "backtest" && !coveragePreview?.complete) {
@@ -2190,6 +2211,8 @@ function StrategyPanel({
         </div>
       ) : null}
 
+      <StrategyLeverageApplyResult result={lastStartResult} applying={running && pendingStart?.kind === "demo"} />
+
       {/* ── Run backtest ── */}
       {environment === 0 ? (
       <div className="card">
@@ -2352,7 +2375,6 @@ function StrategyPanel({
         confirmLabel={pendingStart?.kind === "demo" ? "Start Session" : "Run Backtest"}
         confirmDisabled={
           maxLossClosePct === null ||
-          sessionLeverage === null ||
           !runCapabilityDecision.enabled ||
           (pendingStart?.kind === "demo" && !demoStartPreflightReady) ||
           (pendingStart?.kind === "backtest" && (!coveragePreview?.complete || coverageLoading || Boolean(downloadJob && downloadJob.status !== "error")))
@@ -2388,23 +2410,6 @@ function StrategyPanel({
               </span>
             ) : null}
           </label>
-          <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
-            <span>Leverage (x)</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={sessionLeverageText}
-              onChange={(event) => setSessionLeverageText(event.target.value)}
-              disabled={running}
-              style={{ maxWidth: "10rem" }}
-            />
-            {sessionLeverage === null ? (
-              <span className="error" style={{ fontSize: "0.82rem" }}>
-                Enter a positive whole number.
-              </span>
-            ) : null}
-          </label>
         </div>
         {pendingStart?.kind === "backtest" ? (
           <BacktestCoverageGate
@@ -2421,7 +2426,7 @@ function StrategyPanel({
             }}
             onDownloadAndRun={() => { void handleDownloadDataAndRun(); }}
           />
-        ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null && sessionLeverage !== null ? (
+        ) : pendingStart?.kind === "demo" && startRuntimeId && maxLossClosePct !== null ? (
           <>
             {!runCapabilityDecision.enabled ? (
               <p className="error">
@@ -2429,6 +2434,7 @@ function StrategyPanel({
               </p>
             ) : null}
             <LiveStartReadinessHint preview={demoPreview} loading={demoPreviewLoading} error={demoPreviewError} />
+            <StrategyLeverageApplyResult result={lastStartResult} applying={running} />
           </>
         ) : null}
       </RuntimeSelectionDialog>
@@ -2454,10 +2460,10 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
   const [resumeDialogSession, setResumeDialogSession] = useState<Session | null>(null);
   const [resumeRuntimeId, setResumeRuntimeId] = useState("");
   const [resumeMaxLossClosePercent, setResumeMaxLossClosePercent] = useState(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-  const [resumeLeverageText, setResumeLeverageText] = useState(String(DEFAULT_SESSION_LEVERAGE));
+  const [resumeStartResult, setResumeStartResult] = useState<StrategySession | null>(null);
   const [resuming, setResuming] = useState(false);
+  const resumeSubmissionInFlightRef = useRef(false);
   const resumeMaxLossClosePct = parseMaxLossClosePct(resumeMaxLossClosePercent);
-  const resumeLeverage = parseSessionLeverage(resumeLeverageText);
 
   useEffect(() => {
     setTableRefresh((v) => v + 1);
@@ -2537,6 +2543,7 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
   }
 
   async function handleResumeWithNewSession(session: Session) {
+    if (resumeSubmissionInFlightRef.current) return;
     setStopError(null);
     if (!resumeRuntimeId) {
       setStopError("Select a runtime before resuming.");
@@ -2546,22 +2553,26 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       setStopError("Enter a max loss close value from 0.01 to 100.");
       return;
     }
-    if (resumeLeverage === null) {
-      setStopError("Enter a positive whole-number leverage value.");
-      return;
-    }
+    resumeSubmissionInFlightRef.current = true;
     setResuming(true);
+    setResumeStartResult(null);
     try {
-      const resumed = await resumeWithNewSession(portfolioId, session, resumeRuntimeId, resumeMaxLossClosePct, resumeLeverage);
+      const resumed = await resumeWithNewSession(portfolioId, session, resumeRuntimeId, resumeMaxLossClosePct);
+      setResumeStartResult(resumed);
+      if (!resumed.session_id) {
+        const failure = resumed.failures?.[0];
+        setStopError(`${resumed.code || failure?.code || "STRATEGY_RESUME_FAILED"}: ${failure?.reason || "Session did not resume. Review the per-target results below."}`);
+        return;
+      }
       setTableRefresh((v) => v + 1);
       setResumeDialogSession(null);
       setResumeRuntimeId("");
       setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-      setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
       navigate(`/portfolios/${portfolioId}/sessions/${resumed.session_id}`);
     } catch (err) {
       setStopError(formatAPIError(err, "Failed to resume session"));
     } finally {
+      resumeSubmissionInFlightRef.current = false;
       setResuming(false);
     }
   }
@@ -2570,7 +2581,7 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
     setStopError(null);
     setResumeRuntimeId("");
     setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-    setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
+    setResumeStartResult(null);
     setResumeDialogSession(session);
   }
 
@@ -2701,14 +2712,14 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
       busy={resuming}
       error={stopError}
       confirmLabel="Resume"
-      confirmDisabled={resumeMaxLossClosePct === null || resumeLeverage === null}
+      confirmDisabled={resumeMaxLossClosePct === null}
       onRuntimeChange={setResumeRuntimeId}
       onCancel={() => {
         if (resuming) return;
         setResumeDialogSession(null);
         setResumeRuntimeId("");
         setResumeMaxLossClosePercent(String(DEFAULT_MAX_LOSS_CLOSE_PERCENT));
-        setResumeLeverageText(String(DEFAULT_SESSION_LEVERAGE));
+        setResumeStartResult(null);
         setStopError(null);
       }}
       onConfirm={() => {
@@ -2734,24 +2745,8 @@ function SessionPanel({ portfolioId, refreshTick }: { portfolioId: number; refre
             </span>
           ) : null}
         </label>
-        <label style={{ display: "grid", gap: "0.35rem", fontSize: "0.88rem", fontWeight: 600 }}>
-          <span>Leverage (x)</span>
-          <input
-            type="number"
-            min="1"
-            step="1"
-            value={resumeLeverageText}
-            onChange={(event) => setResumeLeverageText(event.target.value)}
-            disabled={resuming}
-            style={{ maxWidth: "10rem" }}
-          />
-          {resumeLeverage === null ? (
-            <span className="error" style={{ fontSize: "0.82rem" }}>
-              Enter a positive whole number.
-            </span>
-          ) : null}
-        </label>
       </div>
+      <StrategyLeverageApplyResult result={resumeStartResult} applying={resuming} />
     </RuntimeSelectionDialog>
     </>
   );

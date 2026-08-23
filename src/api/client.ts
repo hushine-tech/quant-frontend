@@ -9,6 +9,11 @@ export type Portfolio = {
 const COVERAGE_PREVIEW_TIMEOUT_MS = 20_000;
 const SESSION_STATUS_TIMEOUT_MS = 8_000;
 
+function withoutLegacyLeverage<T extends object>(params: T): Omit<T, "leverage"> {
+  const { leverage: _ignored, ...request } = params as T & { leverage?: unknown };
+  return request;
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -875,10 +880,35 @@ export type RunStrategyParams = {
   end_time_ms?: number;
   runtime_id?: string;
   max_loss_close_pct?: number;
-  leverage?: number;
 };
 
-export type StrategySession = { session_id: string };
+export type StrategyLeverageTargetResult = {
+  venue_id: number;
+  exchange: number;
+  exchange_label?: string;
+  market: number;
+  market_label?: string;
+  symbol: string;
+  effective_leverage: number;
+  leverage_source: string;
+  previous_leverage?: number;
+  current_leverage?: number;
+  confirmed_leverage?: number;
+  change_required: boolean;
+  status: string;
+  error_code?: string;
+  error_message?: string;
+  retryable: boolean;
+};
+
+export type StrategySession = {
+  session_id: string;
+  ok: boolean;
+  failures: PreflightFailure[];
+  target_results: StrategyLeverageTargetResult[];
+  code: string;
+  rollback_failed: boolean;
+};
 
 export type StrategyStatus = {
   status: string;         // "running" | "finished" | "failed" | "stopped" ("completed" = legacy)
@@ -900,7 +930,7 @@ export async function runStrategy(
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify(withoutLegacyLeverage(params)),
   });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategySession;
@@ -958,7 +988,53 @@ export type StrategyOrderTargetDeclaration = {
   exchange: string;
   market: string;
   symbol: string;
+  effective_leverage?: number;
+  leverage_source?: string;
+  current_leverage?: number;
+  change_required?: boolean;
+  venue_id?: number;
+  leverage_status?: string;
 };
+
+export type StrategyLeverageDisplayFact = {
+  symbol: string;
+  effective: string;
+  source: string;
+  current: string;
+  change: string;
+};
+
+export function strategyLeverageSourceLabel(source: string | undefined): string {
+  switch ((source || "").trim().toLowerCase()) {
+    case "order_target": return "Target override";
+    case "strategy_default": return "Strategy default";
+    case "platform_default": return "Platform default";
+    default: return source?.trim() || "Unknown source";
+  }
+}
+
+export function strategyLeverageDisplayFact(target: StrategyOrderTargetDeclaration): StrategyLeverageDisplayFact | null {
+  const market = target.market.trim().toLowerCase();
+  if (!market.includes("futures")) return null;
+  const effective = target.effective_leverage;
+  if (!Number.isFinite(effective) || !effective || effective <= 0) return null;
+  const status = (target.leverage_status || "").trim().toLowerCase();
+  const current = Number.isFinite(target.current_leverage)
+    ? `Current: ${target.current_leverage}x`
+    : "Current: unavailable";
+  const change = status === "read_failed" || status === "unsupported" || status === "unknown"
+    ? status.replaceAll("_", " ")
+    : target.change_required
+      ? "Will change on start"
+      : "No change";
+  return {
+    symbol: target.symbol,
+    effective: `${effective}x`,
+    source: strategyLeverageSourceLabel(target.leverage_source),
+    current,
+    change,
+  };
+}
 
 export type StrategyRouteDeclaration = {
   exchange: string;
@@ -979,8 +1055,8 @@ export type PreviewRunStrategy = {
   risk_controls?: {
     max_loss_close_pct: number;
     max_loss_close_source: string;
-    leverage: number;
-    leverage_source: string;
+    leverage?: number;
+    leverage_source?: string;
   };
 };
 
@@ -1050,7 +1126,7 @@ export function strategySpotCapabilityDecision(
 
 export async function previewRunStrategy(
   portfolioId: number | string,
-  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number; leverage?: number },
+  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<PreviewRunStrategy> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -1060,7 +1136,7 @@ export async function previewRunStrategy(
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(params ?? {}),
+    body: JSON.stringify(withoutLegacyLeverage(params ?? {})),
   });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as PreviewRunStrategy;
@@ -1129,7 +1205,7 @@ export async function previewBacktestCoverage(
 
 export async function startDownloadAndRunBacktest(
   portfolioId: number | string,
-  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number; leverage?: number },
+  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<DownloadRunJob> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -1139,7 +1215,7 @@ export async function startDownloadAndRunBacktest(
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify(withoutLegacyLeverage(params)),
   });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DownloadRunJob;
@@ -1350,10 +1426,59 @@ export type Session = {
   session_type?: string;
   runtime_version?: string;
   session_name?: string;
+  leverage?: number;
+  target_leverage_facts?: SessionTargetLeverageFact[];
   indicator_finalization_pending: boolean;
   started_at: string;
   completed_at?: string;
 };
+
+export type SessionTargetLeverageFact = {
+  session_id: string;
+  venue_id: number;
+  exchange: number;
+  exchange_label?: string;
+  environment: number;
+  market: number;
+  market_label?: string;
+  symbol: string;
+  effective_leverage: number;
+  leverage_source: string;
+  previous_leverage?: number;
+  confirmed_leverage: number;
+  confirmed_at?: string;
+  created_at?: string;
+};
+
+export type SessionLeverageDisplayFact = {
+  symbol: string;
+  leverage: string;
+  source: string;
+  historical: boolean;
+};
+
+export function sessionLeverageDisplayFacts(
+  session: Pick<Session, "target_leverage_facts" | "leverage">,
+): SessionLeverageDisplayFact[] {
+  const facts = session.target_leverage_facts ?? [];
+  if (facts.length > 0) {
+    return facts.map((fact) => ({
+      symbol: fact.symbol,
+      leverage: `${fact.confirmed_leverage || fact.effective_leverage}x`,
+      source: strategyLeverageSourceLabel(fact.leverage_source),
+      historical: false,
+    }));
+  }
+  if (Number.isFinite(session.leverage) && (session.leverage ?? 0) > 0) {
+    return [{
+      symbol: "Historical session",
+      leverage: `${session.leverage}x`,
+      source: "Legacy session value",
+      historical: true,
+    }];
+  }
+  return [];
+}
 
 const terminalSessionStatuses = new Set([
   "completed",

@@ -27,6 +27,7 @@ function stepMatches(value, minText, stepText) {
 let checked = 0;
 for (const file of files) {
   const source = readFileSync(join(here, file), "utf8");
+	assert.equal(source.includes("<span>Leverage (x)</span>"), false, `${file} must not expose an editable leverage control`);
   const matches = source.matchAll(/<span>Max loss close \(%\)<\/span>[\s\S]*?<input([\s\S]*?)\/>/g);
   for (const match of matches) {
     checked += 1;
