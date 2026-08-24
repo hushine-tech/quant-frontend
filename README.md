@@ -27,7 +27,7 @@ FRONTEND_API_BASE_URL=http://api.example.com:8090 make build
 ## Local stack
 
 1. TimescaleDB + backend services, including **core-service** and **control-panel-service**.
-2. **quant-handler** with `QUANT_HANDLER_JWT_SECRET`, `CORE_SERVICE_GRPC_ADDR`, `CONTROL_PANEL_SERVICE_GRPC_ADDR`, and CORS allowing the Vite origin (`http://localhost:5173` by default on handler).
+2. **quant-handler** with `AUTH_JWT_SECRET`, `DEPENDENCIES_CORE_SERVICE_GRPC`, `DEPENDENCIES_ORDER_SERVICE_GRPC`, `DEPENDENCIES_CONTROL_PANEL_SERVICE_GRPC`, and `AUTH_CORS_ORIGINS` allowing the Vite origin (`http://localhost:5173` by default).
 3. This app: `npm run dev`, open the printed URL, sign up or log in with a user account, and manage Portfolio, Venue, runtime, and market-data flows.
 
 ## Manual UI check (Portfolio/Venue flow)
