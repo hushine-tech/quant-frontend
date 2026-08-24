@@ -1504,12 +1504,10 @@ export function sessionLeverageDisplayFacts(
 }
 
 const terminalSessionStatuses = new Set([
-  "completed",
   "finished",
   "stopped",
   "failed",
   "stop_failed",
-  "stopping_failed",
   "recoverable",
   "preflight_failed",
 ]);

@@ -30,12 +30,10 @@ export type IndicatorRequestOwner = {
 };
 
 const TERMINAL_SESSION_STATUSES = new Set([
-  "completed",
   "finished",
   "stopped",
   "failed",
   "stop_failed",
-  "stopping_failed",
   "recoverable",
   "preflight_failed",
 ]);
@@ -443,7 +441,6 @@ export function indicatorPollDecision(
     if (
       chunks.length !== 0 ||
       status === "preflight_failed" ||
-      status === "stopping_failed" ||
       retryAttempt >= 5
     ) {
       return { poll: false, delayMs: 0 };

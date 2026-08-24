@@ -27,12 +27,10 @@ for (const status of nonTerminalStatuses) {
 }
 
 const terminalSessionStatuses = [
-  "completed",
   "finished",
   "stopped",
   "failed",
   "stop_failed",
-  "stopping_failed",
   "recoverable",
   "preflight_failed",
 ];
@@ -50,6 +48,14 @@ for (const status of activeSessionStatuses) {
     isSessionTerminal({ status }),
     false,
     `${status || "(empty)"} must not be treated as a terminal session status`,
+  );
+}
+
+for (const removedStatus of ["completed", "stopping_failed"]) {
+  assert.equal(
+    isSessionTerminal({ status: removedStatus }),
+    false,
+    `${removedStatus} is not part of the current Session status contract`,
   );
 }
 

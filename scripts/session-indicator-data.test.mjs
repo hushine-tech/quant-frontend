@@ -295,7 +295,7 @@ assert.equal(
   false,
   "terminal empty-result retries must be bounded",
 );
-for (const status of ["stopping_failed", "preflight_failed"]) {
+for (const status of ["preflight_failed"]) {
   assert.equal(
     indicators.indicatorPollDecision(
       { status, indicator_finalization_pending: false },

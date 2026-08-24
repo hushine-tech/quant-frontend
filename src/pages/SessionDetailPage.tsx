@@ -316,12 +316,10 @@ function badgeClass(status: string): string {
   switch (status) {
     case "running": return "status-badge status-badge--running";
     case "stopping": return "status-badge status-badge--stopping";
-    case "completed":
     case "finished": return "status-badge status-badge--completed";
     case "failed": return "status-badge status-badge--failed";
     case "recoverable": return "status-badge status-badge--recoverable";
     case "stop_failed": return "status-badge status-badge--stop-failed";
-    case "stopping_failed": return "status-badge status-badge--stop-failed";
     case "stopped": return "status-badge status-badge--stopped";
     default: return "status-badge status-badge--idle";
   }
@@ -983,7 +981,7 @@ export default function SessionDetailPage() {
 
   const initialLoading = pnlSummaryLoading && !pnlReady && !session;
   const stopFailureStatus = (session?.status || "").toLowerCase();
-  const showStopFailureModal = (stopFailureStatus === "stop_failed" || stopFailureStatus === "stopping_failed")
+  const showStopFailureModal = stopFailureStatus === "stop_failed"
     && !stopFailureAcknowledged;
   const structuredFailures = sessionFailureDetails(session);
 

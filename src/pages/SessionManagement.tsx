@@ -163,7 +163,6 @@ export default function SessionManagement() {
               <option value="running">running</option>
               <option value="stopping">stopping</option>
               <option value="finished">finished</option>
-              <option value="completed">completed</option>
               <option value="stopped">stopped</option>
               <option value="failed">failed</option>
               <option value="recoverable">recoverable</option>
