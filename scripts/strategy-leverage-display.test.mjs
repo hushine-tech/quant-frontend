@@ -18,8 +18,13 @@ import {
 import { createSingleFlightGuard } from "../src/utils/singleFlight.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const clientSource = readFileSync(join(here, "../src/api/client.ts"), "utf8");
 const portfolioDetail = readFileSync(join(here, "../src/pages/PortfolioDetail.tsx"), "utf8");
 const sessionDetail = readFileSync(join(here, "../src/pages/SessionDetailPage.tsx"), "utf8");
+
+assert.equal(clientSource.includes("withoutLegacyLeverage"), false);
+assert.equal(clientSource.includes("Legacy session value"), false);
+assert.equal(clientSource.includes("Historical session"), false);
 
 assert.deepEqual(
   strategyLeverageDisplayFact({
@@ -112,13 +117,9 @@ const durable = sessionLeverageDisplayFacts({
     confirmed_at: "2026-08-23T01:02:03Z",
     created_at: "2026-08-23T01:02:03Z",
   }],
-  leverage: 99,
 });
 assert.deepEqual(durable, [{ symbol: "BTCUSDT", leverage: "5x", source: "Strategy default", historical: false }]);
-
-const historical = sessionLeverageDisplayFacts({ target_leverage_facts: [], leverage: 7 });
-assert.deepEqual(historical, [{ symbol: "Historical session", leverage: "7x", source: "Legacy session value", historical: true }]);
-assert.deepEqual(sessionLeverageDisplayFacts({ target_leverage_facts: [], leverage: 0 }), [], "new coordinated Spot sessions must not invent a historical Futures scalar");
+assert.deepEqual(sessionLeverageDisplayFacts({ target_leverage_facts: [] }), [], "sessions without target facts must not invent session-wide leverage");
 
 const originalStrategy = { strategy: { strategy_id: 12 }, active: true };
 assert.equal(activeStrategyMatchesSession([originalStrategy], 12), true);
@@ -169,15 +170,15 @@ globalThis.fetch = async (input, init = {}) => {
   });
 };
 try {
-  await previewRunStrategy(7, { runtime_id: "rt-1", start_time_ms: 100, end_time_ms: 200, max_loss_close_pct: 0.3, leverage: 25 });
-  await runStrategy(7, { strategy_path: "", interval: "1m", runtime_id: "rt-1", max_loss_close_pct: 0.3, leverage: 25 });
-  await startDownloadAndRunBacktest(7, { interval: "1m", start_time_ms: 1, end_time_ms: 2, runtime_id: "rt-1", max_loss_close_pct: 0.3, leverage: 25 });
+  await previewRunStrategy(7, { runtime_id: "rt-1", start_time_ms: 100, end_time_ms: 200, max_loss_close_pct: 0.3 });
+  await runStrategy(7, { strategy_path: "", interval: "1m", runtime_id: "rt-1", max_loss_close_pct: 0.3 });
+  await startDownloadAndRunBacktest(7, { interval: "1m", start_time_ms: 1, end_time_ms: 2, runtime_id: "rt-1", max_loss_close_pct: 0.3 });
 } finally {
   globalThis.fetch = originalFetch;
   setToken(null);
 }
 for (const request of requests) {
-  assert.equal("leverage" in request.body, false, `${request.input} must strip legacy leverage from new frontend requests`);
+  assert.equal("leverage" in request.body, false, `${request.input} must use the target-only request shape`);
   assert.equal(request.body.max_loss_close_pct, 0.3, `${request.input} must preserve max-loss semantics`);
 }
 assert.equal(requests[0].body.start_time_ms, 100, "read-only Backtest/Resume preview must preserve the Session time range");
@@ -196,6 +197,6 @@ assert.equal(sessionDetail.includes("useResumeStrategyPreview"), true, "Session-
 assert.equal(portfolioDetail.includes("downloadSubmissionGuardRef"), true, "download-and-run must hold a synchronous guard through terminal completion");
 assert.equal(sessionDetail.includes("strategyStartResultFromNavigationState"), true, "Session detail should render navigation-carried leverage results until durable facts load");
 assert.equal(portfolioDetail.includes("rollback_failed"), true, "start result UI should preserve rollback failure state");
-assert.equal(sessionDetail.includes("sessionLeverageDisplayFacts"), true, "Session detail should prefer durable target facts and use historical fallback only when absent");
+assert.equal(sessionDetail.includes("sessionLeverageDisplayFacts"), true, "Session detail should render durable target facts");
 
 console.log("strategy-owned leverage display contract checks passed");
