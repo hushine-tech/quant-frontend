@@ -281,7 +281,6 @@ export type CreateVenuePayload = {
   credential_info?: Record<string, unknown>;
   margin_mode?: "cross" | "isolated" | "none";
   position_mode?: "one_way" | "hedge" | "none";
-  initial_balance?: number;
   spot?: {
     assets: SpotAsset[];
   };

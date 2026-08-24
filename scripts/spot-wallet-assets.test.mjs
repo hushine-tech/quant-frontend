@@ -56,6 +56,8 @@ const createVenuePayload = clientSource.slice(
   clientSource.indexOf("export type CreateVenuePayload = {"),
   clientSource.indexOf("export const PRODUCT_CAPABILITY_NAMES"),
 );
+const createVenueTopLevel = createVenuePayload.slice(0, createVenuePayload.indexOf("  spot?:"));
+assert.doesNotMatch(createVenueTopLevel, /\binitial_balance\??:/, "Venue requests must use market-specific wallet payloads");
 assert.doesNotMatch(createVenuePayload, /\bleverage\??:/, "Venue requests must not carry strategy-owned leverage");
 assert.doesNotMatch(venueSource, /<th>Leverage<\/th>/, "Venue Management must not render an editable leverage column");
 assert.doesNotMatch(venueSource, /\bleverage\s*:/, "Venue Management must not construct a leverage payload");
