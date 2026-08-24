@@ -1530,6 +1530,19 @@ function StrategyPanel({
   const strategyStartPreflightReady = !pendingStart || (
     Boolean(strategyStartPreview?.ok) && !strategyStartPreviewLoading && !strategyStartPreviewError && runCapabilityDecision.enabled
   );
+  const strategyDownloadPreflightReady = !pendingStart || (
+    strategyStartPreview !== null &&
+    !strategyStartPreviewLoading &&
+    !strategyStartPreviewError &&
+    runCapabilityDecision.enabled &&
+    (
+      strategyStartPreview.ok ||
+      (
+        strategyStartPreview.failures.length > 0 &&
+        strategyStartPreview.failures.every((failure) => failure.kind === "historical_data")
+      )
+    )
+  );
   const activeSessionInRunPanel = Boolean(activePollSession && isRunPanelActiveStatus(activePollSession.statusLabel));
 
   useEffect(() => {
@@ -1942,7 +1955,7 @@ function StrategyPanel({
       setError("Select a runtime before starting the session.");
       return;
     }
-    if (!strategyStartPreflightReady) {
+    if (!strategyDownloadPreflightReady) {
       setError(strategyStartPreviewError || "Strategy preflight is not ready yet.");
       return;
     }
@@ -2439,7 +2452,7 @@ function StrategyPanel({
               endTimeMs={pendingStart.endTimeMs}
               runtimeSelected={Boolean(startRuntimeId)}
               busy={running}
-              startReady={strategyStartPreflightReady}
+              startReady={strategyDownloadPreflightReady}
               onRefresh={() => {
                 if (pendingStart && startRuntimeId) void loadBacktestCoverage(pendingStart, startRuntimeId);
               }}

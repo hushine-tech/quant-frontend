@@ -19,9 +19,21 @@ assert.equal(
 );
 
 assert.equal(
-  /<BacktestCoverageGate[\s\S]*?startReady=\{strategyStartPreflightReady\}/.test(source),
+  source.includes("const strategyDownloadPreflightReady ="),
   true,
-  "download-and-run must also wait until the rendered read-only strategy preview is current and ready",
+  "download-and-run should have a readiness gate separate from direct strategy start",
+);
+
+assert.equal(
+  /strategyStartPreview\.failures\.length > 0[\s\S]*?every\(\(failure\) => failure\.kind === "historical_data"\)/.test(source),
+  true,
+  "download-and-run may bypass only historical-data preflight failures",
+);
+
+assert.equal(
+  /<BacktestCoverageGate[\s\S]*?startReady=\{strategyDownloadPreflightReady\}/.test(source),
+  true,
+  "download-and-run must use its historical-download-specific preflight gate",
 );
 
 assert.equal(
