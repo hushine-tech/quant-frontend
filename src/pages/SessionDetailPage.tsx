@@ -91,7 +91,7 @@ function SessionLeverageFacts({ session }: { session: Session }) {
       <div className="muted" style={{ fontSize: "0.78rem", marginBottom: "0.25rem" }}>Futures leverage</div>
       <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
         {facts.map((fact) => (
-          <span key={`${fact.symbol}-${fact.historical}`} className="status-badge status-badge--idle">
+          <span key={fact.symbol} className="status-badge status-badge--idle">
             <code>{fact.symbol}</code>{" "}<strong>{fact.leverage}</strong>{" "}<span className="muted">{fact.source}</span>
           </span>
         ))}

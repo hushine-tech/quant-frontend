@@ -9,11 +9,6 @@ export type Portfolio = {
 const COVERAGE_PREVIEW_TIMEOUT_MS = 20_000;
 const SESSION_STATUS_TIMEOUT_MS = 8_000;
 
-function withoutLegacyLeverage<T extends object>(params: T): Omit<T, "leverage"> {
-  const { leverage: _ignored, ...request } = params as T & { leverage?: unknown };
-  return request;
-}
-
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -931,7 +926,7 @@ export async function runStrategy(
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(withoutLegacyLeverage(params)),
+    body: JSON.stringify(params),
   });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as StrategySession;
@@ -1056,8 +1051,6 @@ export type PreviewRunStrategy = {
   risk_controls?: {
     max_loss_close_pct: number;
     max_loss_close_source: string;
-    leverage?: number;
-    leverage_source?: string;
   };
 };
 
@@ -1137,7 +1130,7 @@ export async function previewRunStrategy(
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(withoutLegacyLeverage(params ?? {})),
+    body: JSON.stringify(params ?? {}),
   });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as PreviewRunStrategy;
@@ -1234,7 +1227,7 @@ export async function startDownloadAndRunBacktest(
       Authorization: `Bearer ${t}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(withoutLegacyLeverage(params)),
+    body: JSON.stringify(params),
   });
   if (!res.ok) throw await parseErr(res);
   return (await res.json()) as DownloadRunJob;
@@ -1453,7 +1446,6 @@ export type Session = {
   session_type?: string;
   runtime_version?: string;
   session_name?: string;
-  leverage?: number;
   target_leverage_facts?: SessionTargetLeverageFact[];
   indicator_finalization_pending: boolean;
   started_at: string;
@@ -1499,30 +1491,17 @@ export type SessionLeverageDisplayFact = {
   symbol: string;
   leverage: string;
   source: string;
-  historical: boolean;
 };
 
 export function sessionLeverageDisplayFacts(
-  session: Pick<Session, "target_leverage_facts" | "leverage">,
+  session: Pick<Session, "target_leverage_facts">,
 ): SessionLeverageDisplayFact[] {
   const facts = session.target_leverage_facts ?? [];
-  if (facts.length > 0) {
-    return facts.map((fact) => ({
-      symbol: fact.symbol,
-      leverage: `${fact.confirmed_leverage || fact.effective_leverage}x`,
-      source: strategyLeverageSourceLabel(fact.leverage_source),
-      historical: false,
-    }));
-  }
-  if (Number.isFinite(session.leverage) && (session.leverage ?? 0) > 0) {
-    return [{
-      symbol: "Historical session",
-      leverage: `${session.leverage}x`,
-      source: "Legacy session value",
-      historical: true,
-    }];
-  }
-  return [];
+  return facts.map((fact) => ({
+    symbol: fact.symbol,
+    leverage: `${fact.confirmed_leverage}x`,
+    source: strategyLeverageSourceLabel(fact.leverage_source),
+  }));
 }
 
 const terminalSessionStatuses = new Set([

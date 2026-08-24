@@ -118,7 +118,7 @@ const durable = sessionLeverageDisplayFacts({
     created_at: "2026-08-23T01:02:03Z",
   }],
 });
-assert.deepEqual(durable, [{ symbol: "BTCUSDT", leverage: "5x", source: "Strategy default", historical: false }]);
+assert.deepEqual(durable, [{ symbol: "BTCUSDT", leverage: "5x", source: "Strategy default" }]);
 assert.deepEqual(sessionLeverageDisplayFacts({ target_leverage_facts: [] }), [], "sessions without target facts must not invent session-wide leverage");
 
 const originalStrategy = { strategy: { strategy_id: 12 }, active: true };
