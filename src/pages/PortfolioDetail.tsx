@@ -160,7 +160,6 @@ async function resumeWithNewSession(portfolioId: number, session: Session, runti
     throw new Error("The active strategy changed after preview. Activate this Session's original strategy and review the preview again.");
   }
   return runStrategy(portfolioId, {
-    strategy_path: "",
     interval: session.interval || "1m",
     start_time_ms: session.start_time_ms,
     end_time_ms: session.end_time_ms,
@@ -1839,7 +1838,6 @@ function StrategyPanel({
 
     try {
       const sess = await runStrategy(portfolioId, {
-        strategy_path: "",
         interval: params.interval,
         start_time_ms: params.startTimeMs,
         end_time_ms: params.endTimeMs,
@@ -1872,7 +1870,6 @@ function StrategyPanel({
     setCoverageError(null);
     try {
       const result = await previewBacktestCoverage(portfolioId, {
-        strategy_path: "",
         start_time_ms: params.startTimeMs,
         end_time_ms: params.endTimeMs,
         runtime_id: runtimeId,
@@ -1955,7 +1952,6 @@ function StrategyPanel({
     setLastStartResult(null);
     try {
       const job = await startDownloadAndRunBacktest(portfolioId, {
-        strategy_path: "",
         interval: pendingStart.interval,
         start_time_ms: pendingStart.startTimeMs,
         end_time_ms: pendingStart.endTimeMs,

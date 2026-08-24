@@ -867,7 +867,6 @@ export async function getPortfolioPortfolioSnapshot(
 // ── Strategy execution ───────────────────────────────────────────────────────
 
 export type RunStrategyParams = {
-  strategy_path: string;
   interval: string;
   start_time_ms?: number;
   end_time_ms?: number;
@@ -1118,7 +1117,7 @@ export function strategySpotCapabilityDecision(
 
 export async function previewRunStrategy(
   portfolioId: number | string,
-  params?: { start_time_ms?: number; end_time_ms?: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
+  params?: { start_time_ms?: number; end_time_ms?: number; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<PreviewRunStrategy> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -1197,7 +1196,7 @@ export function downloadRunJobStrategyResult(job: DownloadRunJob): StrategySessi
 
 export async function previewBacktestCoverage(
   portfolioId: number | string,
-  params: { start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string },
+  params: { start_time_ms: number; end_time_ms: number; runtime_id?: string },
 ): Promise<BacktestCoveragePreview> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");
@@ -1215,7 +1214,7 @@ export async function previewBacktestCoverage(
 
 export async function startDownloadAndRunBacktest(
   portfolioId: number | string,
-  params: { interval: string; start_time_ms: number; end_time_ms: number; strategy_path?: string; runtime_id?: string; max_loss_close_pct?: number },
+  params: { interval: string; start_time_ms: number; end_time_ms: number; runtime_id?: string; max_loss_close_pct?: number },
 ): Promise<DownloadRunJob> {
   const t = getToken();
   if (!t) throw new Error("Not logged in");

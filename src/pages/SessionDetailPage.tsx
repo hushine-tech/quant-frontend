@@ -73,7 +73,6 @@ async function resumeWithNewSession(portfolioId: number, session: Session, runti
     throw new Error("The active strategy changed after preview. Activate this Session's original strategy and review the preview again.");
   }
   return runStrategy(portfolioId, {
-    strategy_path: "",
     interval: session.interval || "1m",
     start_time_ms: session.start_time_ms,
     end_time_ms: session.end_time_ms,

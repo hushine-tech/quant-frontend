@@ -171,7 +171,7 @@ globalThis.fetch = async (input, init = {}) => {
 };
 try {
   await previewRunStrategy(7, { runtime_id: "rt-1", start_time_ms: 100, end_time_ms: 200, max_loss_close_pct: 0.3 });
-  await runStrategy(7, { strategy_path: "", interval: "1m", runtime_id: "rt-1", max_loss_close_pct: 0.3 });
+  await runStrategy(7, { interval: "1m", runtime_id: "rt-1", max_loss_close_pct: 0.3 });
   await startDownloadAndRunBacktest(7, { interval: "1m", start_time_ms: 1, end_time_ms: 2, runtime_id: "rt-1", max_loss_close_pct: 0.3 });
 } finally {
   globalThis.fetch = originalFetch;
@@ -179,6 +179,7 @@ try {
 }
 for (const request of requests) {
   assert.equal("leverage" in request.body, false, `${request.input} must use the target-only request shape`);
+  assert.equal("strategy_path" in request.body, false, `${request.input} must use only the mounted active strategy`);
   assert.equal(request.body.max_loss_close_pct, 0.3, `${request.input} must preserve max-loss semantics`);
 }
 assert.equal(requests[0].body.start_time_ms, 100, "read-only Backtest/Resume preview must preserve the Session time range");
