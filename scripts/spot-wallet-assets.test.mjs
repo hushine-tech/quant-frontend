@@ -11,6 +11,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const venueSource = readFileSync(join(here, "../src/pages/VenueManagement.tsx"), "utf8");
+const clientSource = readFileSync(join(here, "../src/api/client.ts"), "utf8");
 const pickerSource = readFileSync(join(here, "../src/components/SymbolPicker.tsx"), "utf8");
 
 assert.deepEqual(defaultSpotWalletAssets(), [
@@ -50,5 +51,14 @@ assert.match(venueSource, /defaultSpotWalletAssets\(\)/, "Spot Backtest must alw
 assert.doesNotMatch(venueSource, /replace\([^)]*USDT/, "Venue editor must not derive assets by stripping a suffix");
 assert.doesNotMatch(venueSource, /asset:\s*selectedSymbol/, "Venue editor must not store a trading symbol as an asset");
 assert.match(pickerSource, /entries/, "SymbolPicker must return authoritative catalog metadata");
+
+const createVenuePayload = clientSource.slice(
+  clientSource.indexOf("export type CreateVenuePayload = {"),
+  clientSource.indexOf("export const PRODUCT_CAPABILITY_NAMES"),
+);
+assert.doesNotMatch(createVenuePayload, /\bleverage\??:/, "Venue requests must not carry strategy-owned leverage");
+assert.doesNotMatch(venueSource, /<th>Leverage<\/th>/, "Venue Management must not render an editable leverage column");
+assert.doesNotMatch(venueSource, /\bleverage\s*:/, "Venue Management must not construct a leverage payload");
+assert.doesNotMatch(venueSource, /\.leverage\b/, "Venue Management must not retain leverage row state");
 
 console.log("spot wallet asset contracts passed");

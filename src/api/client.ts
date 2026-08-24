@@ -293,7 +293,6 @@ export type CreateVenuePayload = {
       symbol: string;
       direction: number;
       initial_balance?: number;
-      leverage?: number;
       fee_rate?: number;
     }>;
   };
@@ -345,9 +344,9 @@ export function normalizeProductCapabilities(
   return { states, discovery_failed: discoveryFailed };
 }
 
-export function exactDecimalText(exact: string | null | undefined, legacy: number | null | undefined): string {
+export function exactDecimalText(exact: string | null | undefined): string {
   if (typeof exact === "string" && exact.trim() !== "") return exact;
-  return typeof legacy === "number" && Number.isFinite(legacy) ? String(legacy) : "-";
+  return "-";
 }
 
 export function strategyStreamKey(value: {
@@ -1687,8 +1686,6 @@ export type SessionOrderIntent = {
   portfolio_id: number;
   symbol: string;
   side: string;
-  requested_qty: number;
-  requested_price: number;
   requested_qty_decimal: string;
   requested_price_decimal?: string;
   strategy_id: number;
@@ -1715,11 +1712,6 @@ export type SessionOrder = {
   intent_id?: string;
   symbol: string;
   side: string;
-  orig_qty: number;
-  executed_qty: number;
-  remaining_qty: number;
-  avg_price: number;
-  price: number;
   orig_qty_decimal: string;
   executed_qty_decimal: string;
   remaining_qty_decimal: string;
@@ -1748,9 +1740,6 @@ export type SessionOrderAttempt = {
   client_order_id?: string;
   symbol: string;
   side: string;
-  requested_qty: number;
-  requested_price: number;
-  mark_price: number;
   requested_qty_decimal: string;
   requested_price_decimal?: string;
   mark_price_decimal: string;
@@ -1780,9 +1769,6 @@ export type SessionOrderFill = {
   intent_id?: string;
   symbol: string;
   side: string;
-  qty: number;
-  fill_price: number;
-  fee: number;
   qty_decimal: string;
   fill_price_decimal: string;
   fee_decimal: string;
@@ -1804,9 +1790,6 @@ export type OrderLifecycleFillDelta = {
   exchange_trade_id?: string;
   exchange_order_id?: string;
   symbol: string;
-  qty: number;
-  fill_price: number;
-  fee: number;
   qty_decimal: string;
   fill_price_decimal: string;
   fee_decimal: string;
@@ -1821,10 +1804,6 @@ export type OrderLifecycleState = {
   client_order_id?: string;
   symbol: string;
   status: string;
-  orig_qty: number;
-  executed_qty: number;
-  remaining_qty: number;
-  avg_price: number;
   orig_qty_decimal: string;
   executed_qty_decimal: string;
   remaining_qty_decimal: string;
@@ -2078,8 +2057,6 @@ export type OrderIntentEntry = {
   portfolio_id: number;
   symbol: string;
   side: string;
-  requested_qty: number;
-  requested_price: number;
   requested_qty_decimal: string;
   requested_price_decimal?: string;
   strategy_id: number;
@@ -2110,11 +2087,6 @@ export type OrderEntry = {
   portfolio_id: number;
   symbol: string;
   side: string;
-  orig_qty: number;
-  executed_qty: number;
-  remaining_qty: number;
-  avg_price: number;
-  price: number;
   orig_qty_decimal: string;
   executed_qty_decimal: string;
   remaining_qty_decimal: string;
@@ -2158,9 +2130,6 @@ export type OrderAttemptEntry = {
   portfolio_id: number;
   symbol: string;
   side: string;
-  requested_qty: number;
-  requested_price: number;
-  mark_price: number;
   requested_qty_decimal: string;
   requested_price_decimal?: string;
   mark_price_decimal: string;
@@ -2195,9 +2164,6 @@ export type OrderFillEntry = {
   portfolio_id: number;
   symbol: string;
   side: string;
-  qty: number;
-  fill_price: number;
-  fee: number;
   qty_decimal: string;
   fill_price_decimal: string;
   fee_decimal: string;

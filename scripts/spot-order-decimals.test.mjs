@@ -10,9 +10,11 @@ const client = readFileSync(join(here, "../src/api/client.ts"), "utf8");
 const session = readFileSync(join(here, "../src/pages/SessionDetailPage.tsx"), "utf8");
 
 const beyondBinaryFloat = "9007199254740993.00000000";
-assert.equal(exactDecimalText(beyondBinaryFloat, 9007199254740992), beyondBinaryFloat);
-assert.equal(exactDecimalText("0.00000001", 1e-8), "0.00000001");
-assert.equal(exactDecimalText(undefined, 12.5), "12.5");
+assert.equal(exactDecimalText.length, 1, "exactDecimalText must expose an exact-only one-argument contract");
+assert.equal(exactDecimalText(beyondBinaryFloat), beyondBinaryFloat);
+assert.equal(exactDecimalText("0.00000001"), "0.00000001");
+assert.equal(exactDecimalText("0"), "0", "exact zero must remain visible");
+assert.equal(exactDecimalText(undefined), "-", "missing exact text must remain unavailable");
 
 for (const field of [
   "requested_qty_decimal",

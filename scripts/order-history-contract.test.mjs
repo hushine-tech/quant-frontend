@@ -49,9 +49,10 @@ const orderTreeContracts = [
 test("exactDecimalText renders only authoritative exact text", () => {
   const beyondBinaryFloat = "9007199254740993.00000000";
 
-  assert.equal(exactDecimalText(beyondBinaryFloat, 9007199254740992), beyondBinaryFloat);
+  assert.equal(exactDecimalText.length, 1, "the rendering contract accepts exact text only");
+  assert.equal(exactDecimalText(beyondBinaryFloat), beyondBinaryFloat);
   assert.equal(
-    exactDecimalText(undefined, 12.5),
+    exactDecimalText(undefined),
     "-",
     "missing exact text must render unavailable instead of a legacy float fallback",
   );

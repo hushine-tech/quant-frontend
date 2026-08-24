@@ -17,9 +17,7 @@ export type TreeIntent = {
   strategy_id?: number;
   symbol: string;
   side: string;
-  requested_qty: number;
-  requested_price: number;
-  requested_qty_decimal?: string;
+  requested_qty_decimal: string;
   requested_price_decimal?: string;
   venue_id?: number;
   exchange?: number | string;
@@ -44,12 +42,9 @@ export type TreeAttempt = {
   time: string;
   attempt_id: string;
   status: string;
-  mark_price: number;
-  requested_qty?: number;
-  requested_price?: number;
-  requested_qty_decimal?: string;
+  requested_qty_decimal: string;
   requested_price_decimal?: string;
-  mark_price_decimal?: string;
+  mark_price_decimal: string;
   venue_id?: number;
   exchange?: number | string;
   exchange_label?: string;
@@ -69,17 +64,12 @@ export type TreeOrder = {
   time: string;
   order_id: string;
   status: string;
-  executed_qty: number;
-  orig_qty: number;
-  remaining_qty?: number;
-  avg_price: number;
-  price?: number;
-  orig_qty_decimal?: string;
-  executed_qty_decimal?: string;
-  remaining_qty_decimal?: string;
-  avg_price_decimal?: string;
+  orig_qty_decimal: string;
+  executed_qty_decimal: string;
+  remaining_qty_decimal: string;
+  avg_price_decimal: string;
   price_decimal?: string;
-  cumulative_quote_qty_decimal?: string;
+  cumulative_quote_qty_decimal: string;
   venue_id?: number;
   exchange?: number | string;
   exchange_label?: string;
@@ -100,13 +90,10 @@ export type TreeOrder = {
 export type TreeFill = {
   time: string;
   fill_id: string;
-  qty: number;
-  fill_price: number;
-  fee: number;
-  qty_decimal?: string;
-  fill_price_decimal?: string;
-  fee_decimal?: string;
-  quote_qty_decimal?: string;
+  qty_decimal: string;
+  fill_price_decimal: string;
+  fee_decimal: string;
+  quote_qty_decimal: string;
   fee_asset?: string;
   status: string;
   venue_id?: number;
@@ -182,8 +169,8 @@ export function orderBadgeClass(status: string): string {
   }
 }
 
-export function isFillPendingOrder(order: Pick<TreeOrder, "executed_qty" | "error_message">): boolean {
-  return order.executed_qty > 0 && Boolean(order.error_message?.trim());
+export function isFillPendingOrder(order: Pick<TreeOrder, "executed_qty_decimal" | "error_message">): boolean {
+  return Number(order.executed_qty_decimal) > 0 && Boolean(order.error_message?.trim());
 }
 
 function riskBadgeClass(status: string): string {
@@ -449,9 +436,9 @@ function IntentRow<
           {intent.intent_id}
         </span>
         <span><strong>{intent.symbol}</strong> {intent.side}</span>
-        <span className="muted">qty {exactDecimalText(intent.requested_qty_decimal, intent.requested_qty)}</span>
+        <span className="muted">qty {exactDecimalText(intent.requested_qty_decimal)}</span>
         <span className="muted">
-          req px {exactDecimalText(intent.requested_price_decimal, intent.requested_price)}
+          req px {exactDecimalText(intent.requested_price_decimal)}
         </span>
         <OrderSemanticBadges item={intent} />
         <span className="muted">{routeFactText(intent)}</span>
@@ -603,11 +590,11 @@ function AttemptRow<
           </span>
         ) : null}
         <span className="muted">
-          mark {exactDecimalText(attempt.mark_price_decimal, attempt.mark_price)}
+          mark {exactDecimalText(attempt.mark_price_decimal)}
         </span>
         {attempt.requested_qty_decimal || attempt.requested_price_decimal ? (
           <span className="muted">
-            requested {exactDecimalText(attempt.requested_qty_decimal, attempt.requested_qty)} @ {exactDecimalText(attempt.requested_price_decimal, attempt.requested_price)}
+            requested {exactDecimalText(attempt.requested_qty_decimal)} @ {exactDecimalText(attempt.requested_price_decimal)}
           </span>
         ) : null}
         <span className="muted">{routeFactText(attempt)}</span>
@@ -726,12 +713,12 @@ function OrderRow<
           </span>
         ) : null}
         <span className="muted">
-          {exactDecimalText(order.executed_qty_decimal, order.executed_qty)} / {exactDecimalText(order.orig_qty_decimal, order.orig_qty)}
+          {exactDecimalText(order.executed_qty_decimal)} / {exactDecimalText(order.orig_qty_decimal)}
         </span>
         <span className="muted">
-          remain {exactDecimalText(order.remaining_qty_decimal, order.remaining_qty)}
-          {" · "}avg {exactDecimalText(order.avg_price_decimal, order.avg_price)}
-          {" · "}price {exactDecimalText(order.price_decimal, order.price)}
+          remain {exactDecimalText(order.remaining_qty_decimal)}
+          {" · "}avg {exactDecimalText(order.avg_price_decimal)}
+          {" · "}price {exactDecimalText(order.price_decimal)}
           {order.cumulative_quote_qty_decimal ? ` · quote ${order.cumulative_quote_qty_decimal}` : ""}
         </span>
         <span className="muted">{routeFactText(order)}</span>
@@ -808,10 +795,10 @@ function OrderFills<F extends TreeFill>({
                 <tr key={f.fill_id}>
                   <td style={{ whiteSpace: "nowrap" }}>{formatUTCWithLocal(f.time)}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{f.fill_id}</td>
-                  <td>{exactDecimalText(f.qty_decimal, f.qty)}</td>
-                  <td>{exactDecimalText(f.fill_price_decimal, f.fill_price)}</td>
-                  <td>{exactDecimalText(f.quote_qty_decimal, undefined)}</td>
-                  <td>{exactDecimalText(f.fee_decimal, f.fee)} {f.fee_asset || "-"}</td>
+                  <td>{exactDecimalText(f.qty_decimal)}</td>
+                  <td>{exactDecimalText(f.fill_price_decimal)}</td>
+                  <td>{exactDecimalText(f.quote_qty_decimal)}</td>
+                  <td>{exactDecimalText(f.fee_decimal)} {f.fee_asset || "-"}</td>
                   <td>{routeFactText(f)}</td>
                   <td><span className={orderBadgeClass(f.status)}>{f.status}</span></td>
                 </tr>

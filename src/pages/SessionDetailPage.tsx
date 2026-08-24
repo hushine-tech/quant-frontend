@@ -356,39 +356,39 @@ function formatRangeEndpoint(ms?: number): string {
 function withExactIntentDecimals(item: SessionOrderIntent): SessionOrderIntent {
   return {
     ...item,
-    requested_qty_decimal: exactDecimalText(item.requested_qty_decimal, item.requested_qty),
-    requested_price_decimal: exactDecimalText(item.requested_price_decimal, item.requested_price),
+    requested_qty_decimal: exactDecimalText(item.requested_qty_decimal),
+    requested_price_decimal: exactDecimalText(item.requested_price_decimal),
   };
 }
 
 function withExactAttemptDecimals(item: SessionOrderAttempt): SessionOrderAttempt {
   return {
     ...item,
-    requested_qty_decimal: exactDecimalText(item.requested_qty_decimal, item.requested_qty),
-    requested_price_decimal: exactDecimalText(item.requested_price_decimal, item.requested_price),
-    mark_price_decimal: exactDecimalText(item.mark_price_decimal, item.mark_price),
+    requested_qty_decimal: exactDecimalText(item.requested_qty_decimal),
+    requested_price_decimal: exactDecimalText(item.requested_price_decimal),
+    mark_price_decimal: exactDecimalText(item.mark_price_decimal),
   };
 }
 
 function withExactOrderDecimals(item: SessionOrder): SessionOrder {
   return {
     ...item,
-    orig_qty_decimal: exactDecimalText(item.orig_qty_decimal, item.orig_qty),
-    executed_qty_decimal: exactDecimalText(item.executed_qty_decimal, item.executed_qty),
-    remaining_qty_decimal: exactDecimalText(item.remaining_qty_decimal, item.remaining_qty),
-    avg_price_decimal: exactDecimalText(item.avg_price_decimal, item.avg_price),
-    price_decimal: exactDecimalText(item.price_decimal, item.price),
-    cumulative_quote_qty_decimal: exactDecimalText(item.cumulative_quote_qty_decimal, undefined),
+    orig_qty_decimal: exactDecimalText(item.orig_qty_decimal),
+    executed_qty_decimal: exactDecimalText(item.executed_qty_decimal),
+    remaining_qty_decimal: exactDecimalText(item.remaining_qty_decimal),
+    avg_price_decimal: exactDecimalText(item.avg_price_decimal),
+    price_decimal: exactDecimalText(item.price_decimal),
+    cumulative_quote_qty_decimal: exactDecimalText(item.cumulative_quote_qty_decimal),
   };
 }
 
 function withExactFillDecimals(item: SessionOrderFill): SessionOrderFill {
   return {
     ...item,
-    qty_decimal: exactDecimalText(item.qty_decimal, item.qty),
-    fill_price_decimal: exactDecimalText(item.fill_price_decimal, item.fill_price),
-    fee_decimal: exactDecimalText(item.fee_decimal, item.fee),
-    quote_qty_decimal: exactDecimalText(item.quote_qty_decimal, undefined),
+    qty_decimal: exactDecimalText(item.qty_decimal),
+    fill_price_decimal: exactDecimalText(item.fill_price_decimal),
+    fee_decimal: exactDecimalText(item.fee_decimal),
+    quote_qty_decimal: exactDecimalText(item.quote_qty_decimal),
     fee_asset: item.fee_asset || "-",
   };
 }
@@ -1549,11 +1549,11 @@ export default function SessionDetailPage() {
                               <td>
                                 {event.fill_delta ? (
                                   <>
-                                    {event.fill_delta.symbol} {exactDecimalText(event.fill_delta.qty_decimal, event.fill_delta.qty)}
+                                    {event.fill_delta.symbol} {exactDecimalText(event.fill_delta.qty_decimal)}
                                     <div className="muted">
-                                      px {exactDecimalText(event.fill_delta.fill_price_decimal, event.fill_delta.fill_price)}
-                                      {" · "}quote {exactDecimalText(event.fill_delta.quote_qty_decimal, undefined)}
-                                      {" · "}fee {exactDecimalText(event.fill_delta.fee_decimal, event.fill_delta.fee)} {event.fill_delta.fee_asset || "-"}
+                                      px {exactDecimalText(event.fill_delta.fill_price_decimal)}
+                                      {" · "}quote {exactDecimalText(event.fill_delta.quote_qty_decimal)}
+                                      {" · "}fee {exactDecimalText(event.fill_delta.fee_decimal)} {event.fill_delta.fee_asset || "-"}
                                     </div>
                                   </>
                                 ) : "-"}
@@ -1563,11 +1563,11 @@ export default function SessionDetailPage() {
                                   <>
                                     {event.order_state.status || "-"}
                                     <div className="muted">
-                                      filled {exactDecimalText(event.order_state.executed_qty_decimal, event.order_state.executed_qty)}
-                                      {" / "}{exactDecimalText(event.order_state.orig_qty_decimal, event.order_state.orig_qty)}
-                                      {" · "}remain {exactDecimalText(event.order_state.remaining_qty_decimal, event.order_state.remaining_qty)}
-                                      {" · "}avg {exactDecimalText(event.order_state.avg_price_decimal, event.order_state.avg_price)}
-                                      {" · "}price {exactDecimalText(event.order_state.price_decimal, undefined)}
+                                      filled {exactDecimalText(event.order_state.executed_qty_decimal)}
+                                      {" / "}{exactDecimalText(event.order_state.orig_qty_decimal)}
+                                      {" · "}remain {exactDecimalText(event.order_state.remaining_qty_decimal)}
+                                      {" · "}avg {exactDecimalText(event.order_state.avg_price_decimal)}
+                                      {" · "}price {exactDecimalText(event.order_state.price_decimal)}
                                     </div>
                                   </>
                                 ) : "-"}

@@ -477,7 +477,7 @@ function buildFillMarkers(fills: SessionOrderFill[], stepMs: number, enabled: bo
         position: isBuy ? "belowBar" : "aboveBar",
         shape: isBuy ? "arrowUp" : "arrowDown",
         color: isBuy ? "#16a34a" : "#dc2626",
-        text: `${fill.side} ${fill.qty} @ ${fill.fill_price.toFixed(2)}`,
+        text: `${fill.side} ${fill.qty_decimal} @ ${fill.fill_price_decimal}`,
       } satisfies SeriesMarker<Time>;
     });
 }

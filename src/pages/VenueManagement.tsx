@@ -30,7 +30,7 @@ import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@
 
 type VenueTab = "venues" | "create";
 type SpotRow = SpotAsset & { symbol?: string };
-type FutRow = { symbol: string; direction: string; initial_balance: string; leverage: string; fee_rate: string };
+type FutRow = { symbol: string; direction: string; initial_balance: string; fee_rate: string };
 type VenueCreatedResult = { reusedExisting?: boolean };
 
 const tabs: Array<PageTab<VenueTab>> = [
@@ -547,7 +547,7 @@ function CreateVenueForm({
   function addFut(sym: string) {
     const u = sym.toUpperCase();
     if (futRows.some((r) => r.symbol === u)) return;
-    setFutRows((r) => [...r, { symbol: u, direction: "0", initial_balance: "1000", leverage: "10", fee_rate: "0.0004" }]);
+    setFutRows((r) => [...r, { symbol: u, direction: "0", initial_balance: "1000", fee_rate: "0.0004" }]);
     setShowFutAdd(false);
   }
 
@@ -583,7 +583,6 @@ function CreateVenueForm({
           symbol: r.symbol,
           direction: Number.isFinite(dir) ? dir : 0,
           initial_balance: marginMode === "isolated" ? (parseFloat(r.initial_balance) || 0) : undefined,
-          leverage: parseFloat(r.leverage) || 10,
           fee_rate: parseFloat(r.fee_rate) || 0.0004,
         };
       }),
@@ -816,7 +815,7 @@ function CreateVenueForm({
               {futRows.length > 0 ? (
                 <table className="compact">
                   <thead>
-                    <tr><th>Symbol</th><th>Direction</th><th>Initial balance</th><th>Leverage</th><th>Fee rate</th><th></th></tr>
+                    <tr><th>Symbol</th><th>Direction</th><th>Initial balance</th><th>Fee rate</th><th></th></tr>
                   </thead>
                   <tbody>
                     {futRows.map((r) => (
@@ -830,7 +829,6 @@ function CreateVenueForm({
                           </select>
                         </td>
                         <td><input type="number" step="0.0001" value={r.initial_balance} disabled={marginMode === "cross"} onChange={(e) => updateFutRow(r.symbol, "initial_balance", e.target.value)} /></td>
-                        <td><input type="number" step="1" value={r.leverage} onChange={(e) => updateFutRow(r.symbol, "leverage", e.target.value)} /></td>
                         <td><input type="number" step="0.0001" value={r.fee_rate} onChange={(e) => updateFutRow(r.symbol, "fee_rate", e.target.value)} /></td>
                         <td><button type="button" onClick={() => setFutRows((rows) => rows.filter((x) => x.symbol !== r.symbol))}>Remove</button></td>
                       </tr>
