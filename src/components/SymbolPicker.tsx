@@ -31,7 +31,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   const [err, setErr] = useState<string | null>(null);
   // Single-select: result list visibility is controlled; opens on focus,
   // closes on pick / outside click / Escape.
-  // Add-to-list: always expanded, matching the legacy behavior PortfolioNew expects.
+  // Add-to-list: always expanded, matching PortfolioNew's current interaction.
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -101,7 +101,7 @@ export default function SymbolPicker({ market, label, onAdd, disabled, extraSymb
   // What the text box shows right now:
   //   - single-select + closed: the chosen symbol (acts like a native <select>)
   //   - single-select + open  : the live search query (user is typing)
-  //   - add-to-list mode       : always the live search query (legacy behavior)
+  //   - add-to-list mode       : always the live search query
   const displayValue = singleSelect && !open ? (selected ?? "") : q;
 
   const rootClasses = [

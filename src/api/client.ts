@@ -906,7 +906,7 @@ export type StrategySession = {
 };
 
 export type StrategyStatus = {
-  status: string;         // "running" | "finished" | "failed" | "stopped" ("completed" = legacy)
+  status: string;         // "running" | "finished" | "failed" | "stopped"
   bars_processed: number;
   error: string;
   status_stale?: boolean;
