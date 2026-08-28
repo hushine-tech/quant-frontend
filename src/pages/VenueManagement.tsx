@@ -13,6 +13,7 @@ import {
   defaultSpotWalletAssets,
   type Portfolio,
   type CreateVenuePayload,
+  type FuturesPositionSide,
   type SpotAsset,
   type SpotSymbolCatalogEntry,
   type Venue,
@@ -30,7 +31,7 @@ import { appendReturnParam, isQuickStartReturnTo, safeInternalReturnTo } from "@
 
 type VenueTab = "venues" | "create";
 type SpotRow = SpotAsset & { symbol?: string };
-type FutRow = { symbol: string; direction: string; initial_balance: string; fee_rate: string };
+type FutRow = { symbol: string; position_side: FuturesPositionSide; initial_balance: string; fee_rate: string };
 type VenueCreatedResult = { reusedExisting?: boolean };
 
 const tabs: Array<PageTab<VenueTab>> = [
@@ -119,6 +120,36 @@ function isActiveVenue(venue: Venue): boolean {
 function isDuplicateVenueRouteError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes(duplicateVenueRouteMessage);
+}
+
+function futuresPositionRowKey(row: Pick<FutRow, "symbol" | "position_side">): string {
+  return `${row.symbol}:${row.position_side}`;
+}
+
+function dedupeFuturesRows(rows: FutRow[]): FutRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = futuresPositionRowKey(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function transitionFuturesPositionMode(rows: FutRow[], nextMode: "one_way" | "hedge"): FutRow[] {
+  if (nextMode === "one_way") {
+    const bySymbol = new Map<string, FutRow>();
+    for (const row of rows) {
+      const existing = bySymbol.get(row.symbol);
+      if (!existing || row.position_side === "BOTH") {
+        bySymbol.set(row.symbol, { ...row, position_side: "BOTH" });
+      }
+    }
+    return [...bySymbol.values()];
+  }
+  return dedupeFuturesRows(rows.map((row) => (
+    row.position_side === "BOTH" ? { ...row, position_side: "LONG" } : row
+  )));
 }
 
 export default function VenueManagement() {
@@ -546,8 +577,13 @@ function CreateVenueForm({
 
   function addFut(sym: string) {
     const u = sym.toUpperCase();
-    if (futRows.some((r) => r.symbol === u)) return;
-    setFutRows((r) => [...r, { symbol: u, direction: "0", initial_balance: "1000", fee_rate: "0.0004" }]);
+    setFutRows((rows) => {
+      const positionSide: FuturesPositionSide = positionMode === "one_way"
+        ? "BOTH"
+        : rows.some((row) => row.symbol === u && row.position_side === "LONG") ? "SHORT" : "LONG";
+      const candidate = { symbol: u, position_side: positionSide, initial_balance: "1000", fee_rate: "0.0004" };
+      return rows.some((row) => futuresPositionRowKey(row) === futuresPositionRowKey(candidate)) ? rows : [...rows, candidate];
+    });
     setShowFutAdd(false);
   }
 
@@ -555,8 +591,10 @@ function CreateVenueForm({
     setSpotRows((rows) => rows.map((row) => (row.asset === asset ? { ...row, [field]: val } : row)));
   }
 
-  function updateFutRow(sym: string, field: keyof FutRow, val: string) {
-    setFutRows((rows) => rows.map((x) => (x.symbol === sym ? { ...x, [field]: val } : x)));
+  function updateFutRow(key: string, field: keyof FutRow, val: string) {
+    setFutRows((rows) => dedupeFuturesRows(rows.map((row) => (
+      futuresPositionRowKey(row) === key ? { ...row, [field]: val } as FutRow : row
+    ))));
   }
 
   function applyBacktestWalletPayload(payload: CreateVenuePayload) {
@@ -578,10 +616,9 @@ function CreateVenueForm({
       position_mode: positionMode === "hedge" ? "hedge" : "one_way",
       initial_balance: marginMode === "cross" ? (parseFloat(futInitial) || 0) : 0,
       positions: futRows.map((r) => {
-        const dir = parseInt(r.direction, 10);
         return {
           symbol: r.symbol,
-          direction: Number.isFinite(dir) ? dir : 0,
+          position_side: r.position_side,
           initial_balance: marginMode === "isolated" ? (parseFloat(r.initial_balance) || 0) : undefined,
           fee_rate: parseFloat(r.fee_rate) || 0.0004,
         };
@@ -758,7 +795,11 @@ function CreateVenueForm({
             </label>
             <label className="field">
               <span>Position mode</span>
-              <select value={positionMode} onChange={(e) => setPositionMode(e.target.value as NonNullable<CreateVenuePayload["position_mode"]>)}>
+              <select value={positionMode} onChange={(e) => {
+                const nextMode = e.target.value === "hedge" ? "hedge" : "one_way";
+                setPositionMode(nextMode);
+                setFutRows((rows) => transitionFuturesPositionMode(rows, nextMode));
+              }}>
                 <option value="one_way">One-way</option>
                 <option value="hedge">Hedge</option>
               </select>
@@ -815,22 +856,22 @@ function CreateVenueForm({
               {futRows.length > 0 ? (
                 <table className="compact">
                   <thead>
-                    <tr><th>Symbol</th><th>Direction</th><th>Initial balance</th><th>Fee rate</th><th></th></tr>
+                    <tr><th>Symbol</th><th>Position side</th><th>Initial balance</th><th>Fee rate</th><th></th></tr>
                   </thead>
                   <tbody>
                     {futRows.map((r) => (
-                      <tr key={r.symbol}>
+                      <tr key={futuresPositionRowKey(r)}>
                         <td><strong>{r.symbol}</strong></td>
                         <td>
-                          <select value={r.direction} onChange={(e) => updateFutRow(r.symbol, "direction", e.target.value)}>
-                            <option value="0">Flat</option>
-                            <option value="1">Long</option>
-                            <option value="-1">Short</option>
+                          <select value={r.position_side} onChange={(e) => updateFutRow(futuresPositionRowKey(r), "position_side", e.target.value)}>
+                            {positionMode === "one_way" ? <option value="BOTH">Both</option> : null}
+                            {positionMode === "hedge" ? <option value="LONG">Long</option> : null}
+                            {positionMode === "hedge" ? <option value="SHORT">Short</option> : null}
                           </select>
                         </td>
-                        <td><input type="number" step="0.0001" value={r.initial_balance} disabled={marginMode === "cross"} onChange={(e) => updateFutRow(r.symbol, "initial_balance", e.target.value)} /></td>
-                        <td><input type="number" step="0.0001" value={r.fee_rate} onChange={(e) => updateFutRow(r.symbol, "fee_rate", e.target.value)} /></td>
-                        <td><button type="button" onClick={() => setFutRows((rows) => rows.filter((x) => x.symbol !== r.symbol))}>Remove</button></td>
+                        <td><input type="number" step="0.0001" value={r.initial_balance} disabled={marginMode === "cross"} onChange={(e) => updateFutRow(futuresPositionRowKey(r), "initial_balance", e.target.value)} /></td>
+                        <td><input type="number" step="0.0001" value={r.fee_rate} onChange={(e) => updateFutRow(futuresPositionRowKey(r), "fee_rate", e.target.value)} /></td>
+                        <td><button type="button" onClick={() => setFutRows((rows) => rows.filter((row) => futuresPositionRowKey(row) !== futuresPositionRowKey(r)))}>Remove</button></td>
                       </tr>
                     ))}
                   </tbody>

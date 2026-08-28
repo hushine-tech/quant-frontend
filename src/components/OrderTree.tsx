@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { formatUTCWithLocal } from "@/utils/time";
 import Pager from "@/components/Pager";
 import { exactDecimalText, type Page } from "@/api/client";
+import type { FuturesPositionSide } from "@/api/client";
 
 // Row shapes used by the tree. Both the global Order History page and the
 // Session Detail page have richer types (with portfolio_id / session_id); those
@@ -24,7 +25,7 @@ export type TreeIntent = {
   exchange_label?: string;
   market?: number | string;
   market_label?: string;
-  position_side?: string | number;
+  position_side?: FuturesPositionSide;
   post_only?: boolean;
   good_till_date?: string;
   reduce_only?: boolean;
@@ -50,7 +51,7 @@ export type TreeAttempt = {
   exchange_label?: string;
   market?: number | string;
   market_label?: string;
-  position_side?: string | number;
+  position_side?: FuturesPositionSide;
   error_message?: string;
   recovery_error?: string;
   post_only?: boolean;
@@ -75,7 +76,7 @@ export type TreeOrder = {
   exchange_label?: string;
   market?: number | string;
   market_label?: string;
-  position_side?: string | number;
+  position_side?: FuturesPositionSide;
   error_message?: string;
   post_only?: boolean;
   good_till_date?: string;
@@ -101,7 +102,7 @@ export type TreeFill = {
   exchange_label?: string;
   market?: number | string;
   market_label?: string;
-  position_side?: string | number;
+  position_side?: FuturesPositionSide;
 };
 
 // TreePage is just the canonical Page<T> shape from the API client — the
@@ -271,7 +272,7 @@ type RouteFacts = {
   exchange_label?: string;
   market?: number | string;
   market_label?: string;
-  position_side?: string | number;
+  position_side?: FuturesPositionSide;
 };
 
 function routeFactText(item: RouteFacts): string {
@@ -282,9 +283,7 @@ function routeFactText(item: RouteFacts): string {
   return `${exchange} / ${market} · venue ${venue} · position ${position}`;
 }
 
-function positionSideText(value?: string | number): string {
-  if (value === 1) return "LONG";
-  if (value === 2) return "SHORT";
+function positionSideText(value?: FuturesPositionSide): string {
   const raw = String(value || "").trim();
   return raw || "BOTH";
 }

@@ -55,6 +55,8 @@ export type SpotAsset = {
   price?: string;
 };
 
+export type FuturesPositionSide = "BOTH" | "LONG" | "SHORT";
+
 export type SpotSymbolCatalogEntry = {
   symbol: string;
   base_asset: string;
@@ -164,7 +166,6 @@ export type WalletSnapshot = {
     portfolio_margin: boolean;
     positions: Array<{
       symbol: string;
-      direction: number;
       initial_balance: number;
       leverage: number;
       fee_rate: number;
@@ -172,7 +173,7 @@ export type WalletSnapshot = {
       entry_price: number;
       mark_price: number;
       unrealized_pnl: number;
-      position_side: string;
+      position_side: FuturesPositionSide;
       display_equity?: number;
     }>;
   } | null;
@@ -259,7 +260,7 @@ export type VenuePortfolioSnapshot = {
   }>;
   positions: Array<{
     symbol: string;
-    position_side: string;
+    position_side: FuturesPositionSide;
     qty: number;
     entry_price: number;
     mark_price: number;
@@ -290,7 +291,7 @@ export type CreateVenuePayload = {
     initial_balance?: number;
     positions?: Array<{
       symbol: string;
-      direction: number;
+      position_side: FuturesPositionSide;
       initial_balance?: number;
       fee_rate?: number;
     }>;
@@ -1690,7 +1691,7 @@ export type SessionOrderIntent = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   session_id?: string;
   status?: string;
   reject_code?: string;
@@ -1720,7 +1721,7 @@ export type SessionOrder = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   strategy_id: number;
   error_message?: string;
   environment: number;
@@ -1745,7 +1746,7 @@ export type SessionOrderAttempt = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   strategy_id: number;
   error_message?: string;
   recovery_error?: string;
@@ -1776,7 +1777,7 @@ export type SessionOrderFill = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   strategy_id: number;
   environment: number;
   environment_label?: string;
@@ -1827,7 +1828,7 @@ export type OrderLifecycleEvent = {
   exchange_label?: string;
   market: number;
   market_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   side?: string;
   fill_delta?: OrderLifecycleFillDelta;
   order_state?: OrderLifecycleState;
@@ -2061,7 +2062,7 @@ export type OrderIntentEntry = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   session_id?: string;
   status?: string;
   reject_code?: string;
@@ -2095,7 +2096,7 @@ export type OrderEntry = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   strategy_id: number;
   session_id?: string;
   error_message?: string;
@@ -2135,7 +2136,7 @@ export type OrderAttemptEntry = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   strategy_id: number;
   session_id?: string;
   error_message?: string;
@@ -2171,7 +2172,7 @@ export type OrderFillEntry = {
   venue_id?: number;
   exchange?: number;
   exchange_label?: string;
-  position_side?: string;
+  position_side?: FuturesPositionSide;
   strategy_id: number;
   session_id?: string;
   environment: number;
